@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
+using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 
 namespace Iteration.Orchestrator.Application.Workflows;
@@ -37,7 +38,6 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var workflow = await _config.GetWorkflowAsync(backlog.WorkflowCode, ct);
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
-        var overlay = await _config.GetSolutionOverlayAsync(solution.SolutionOverlayCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
         var run = new WorkflowRun(backlog.Id, solution.Id, backlog.WorkflowCode, command.RequestedBy);
@@ -56,6 +56,8 @@ public sealed class StartAnalyzeSolutionRunHandler
             sampleFiles[hit.RelativePath] = await _bridge.ReadFileAsync(solution, hit.RelativePath, ct);
         }
 
+        var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
+
         var request = new SolutionAnalysisRequest(
             run.Id,
             workflow.Code,
@@ -65,7 +67,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             backlog.Description,
             BuildProfileSummary(profile),
             profile.Rules,
-            overlay.KnowledgeDocuments,
+            solutionKnowledgeDocuments,
             workflow.ExecutionRules,
             snapshot,
             hits,
@@ -113,17 +115,64 @@ public sealed class StartAnalyzeSolutionRunHandler
         }
     }
 
+    private async Task<IReadOnlyList<TextDocumentInput>> LoadSolutionKnowledgeDocumentsAsync(
+        SolutionTarget solution,
+        CancellationToken ct)
+    {
+        var relativePaths = new[]
+        {
+            $"ai/solutions/{solution.Code}/context/overview.md",
+            $"ai/solutions/{solution.Code}/business/business-rules.md",
+            $"ai/solutions/{solution.Code}/business/workflows.md",
+            $"ai/solutions/{solution.Code}/architecture/architecture-overview.md",
+            $"ai/solutions/{solution.Code}/architecture/module-map.md",
+            $"ai/solutions/{solution.Code}/history/decisions.md",
+            $"ai/solutions/{solution.Code}/history/open-questions.md",
+            $"ai/solutions/{solution.Code}/history/known-gaps.md",
+            $"ai/solutions/{solution.Code}/analysis/latest-analysis.md"
+        };
+
+        var docs = new List<TextDocumentInput>();
+
+        foreach (var relativePath in relativePaths)
+        {
+            var fullPath = Path.Combine(
+                solution.RepositoryPath,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                var content = await _bridge.ReadFileAsync(solution, relativePath, ct);
+                docs.Add(new TextDocumentInput(relativePath, content));
+            }
+            catch
+            {
+                // ignore individual file failures so analysis can continue
+            }
+        }
+
+        return docs;
+    }
+
     private static string BuildProfileSummary(ProfileDefinition profile)
     {
         var sb = new StringBuilder();
         sb.AppendLine(profile.Name);
         sb.AppendLine(profile.Description);
-        sb.AppendLine();
-        sb.AppendLine("Rule files:");
 
-        foreach (var rule in profile.Rules)
+        if (profile.Rules.Count > 0)
         {
-            sb.AppendLine($"- {rule.Path}");
+            sb.AppendLine();
+            sb.AppendLine("Rules included:");
+            foreach (var rule in profile.Rules)
+            {
+                sb.AppendLine($"- {rule.Path}");
+            }
         }
 
         return sb.ToString().Trim();
