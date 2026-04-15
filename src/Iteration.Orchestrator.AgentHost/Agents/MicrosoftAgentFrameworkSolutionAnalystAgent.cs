@@ -19,6 +19,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
     public async Task<SolutionAnalysisResult> AnalyzeAsync(SolutionAnalysisRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         var chatClient = new OllamaChatClient(new Uri(_endpoint), modelId: _model);
 
         AIAgent agent = chatClient.AsAIAgent(
@@ -54,7 +56,7 @@ Rules:
         return new SolutionAnalysisResult(
             parsed.Summary,
             parsed.ImpactedAreas
-                .Select(x => new ImpactedAreaResult(x.Area, x.Reason, x.Confidence))
+                .Select(x => new ImpactedAreaResult(x.Area, x.Reason, NormalizeConfidence(x.Confidence)))
                 .ToList(),
             parsed.Risks,
             parsed.Assumptions,
@@ -71,19 +73,19 @@ Rules:
         sb.AppendLine();
 
         sb.AppendLine("BACKLOG TITLE:");
-        sb.AppendLine(request.BacklogTitle);
+        sb.AppendLine(request.BacklogTitle ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("BACKLOG DESCRIPTION:");
-        sb.AppendLine(request.BacklogDescription);
+        sb.AppendLine(request.BacklogDescription ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("PROFILE SUMMARY:");
-        sb.AppendLine(request.ProfileSummary);
+        sb.AppendLine(request.ProfileSummary ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("SOLUTION KNOWLEDGE:");
-        sb.AppendLine(request.SolutionKnowledge);
+        sb.AppendLine(request.SolutionKnowledge ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("SOLUTION SNAPSHOT:");
@@ -134,6 +136,16 @@ Rules:
         }
 
         return raw[start..(end + 1)];
+    }
+
+    private static string NormalizeConfidence(string? confidence)
+    {
+        return confidence?.Trim().ToLowerInvariant() switch
+        {
+            "low" => "low",
+            "high" => "high",
+            _ => "medium"
+        };
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
