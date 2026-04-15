@@ -1,0 +1,89 @@
+using Iteration.Orchestrator.Application.Abstractions;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+namespace Iteration.Orchestrator.Infrastructure.Config;
+
+public sealed class FileSystemConfigCatalog : IConfigCatalog
+{
+    private readonly string _root;
+    private readonly IDeserializer _yaml;
+
+    public FileSystemConfigCatalog(string root)
+    {
+        _root = root;
+        _yaml = new DeserializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .Build();
+    }
+
+    public async Task<WorkflowDefinition> GetWorkflowAsync(string workflowCode, CancellationToken ct)
+    {
+        var path = Path.Combine(_root, "workflows", workflowCode, "workflow.yaml");
+        var yaml = await File.ReadAllTextAsync(path, ct);
+        var dto = _yaml.Deserialize<WorkflowYaml>(yaml);
+        return new WorkflowDefinition(dto.Code, dto.Name, dto.Description, dto.ApplicableProfiles ?? [], dto.Agents ?? []);
+    }
+
+    public async Task<AgentDefinition> GetAgentAsync(string agentCode, CancellationToken ct)
+    {
+        var folder = Path.Combine(_root, "agents", agentCode);
+        var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "agent.yaml"), ct);
+        var dto = _yaml.Deserialize<AgentYaml>(yaml);
+        var prompt = await File.ReadAllTextAsync(Path.Combine(folder, dto.PromptFile), ct);
+        var schema = await File.ReadAllTextAsync(Path.Combine(folder, dto.OutputSchema), ct);
+        return new AgentDefinition(dto.Code, dto.Name, dto.Description, dto.AllowedTools ?? [], prompt, schema);
+    }
+
+    public async Task<ProfileDefinition> GetProfileAsync(string profileCode, CancellationToken ct)
+    {
+        var folder = Path.Combine(_root, "profiles", profileCode);
+        var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "profile.yaml"), ct);
+        var dto = _yaml.Deserialize<ProfileYaml>(yaml);
+        return new ProfileDefinition(dto.Code, dto.Name, dto.Description, dto.Rules ?? []);
+    }
+
+    public async Task<SolutionOverlayDefinition> GetSolutionOverlayAsync(string solutionCode, CancellationToken ct)
+    {
+        var folder = Path.Combine(_root, "solutions", solutionCode);
+        var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "solution.yaml"), ct);
+        var dto = _yaml.Deserialize<SolutionYaml>(yaml);
+        return new SolutionOverlayDefinition(dto.Code, dto.Name, dto.Profile, dto.KnowledgeFiles ?? []);
+    }
+
+    private sealed class WorkflowYaml
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public List<string>? ApplicableProfiles { get; set; }
+        public List<string>? Agents { get; set; }
+    }
+
+    private sealed class AgentYaml
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public List<string>? AllowedTools { get; set; }
+        public string OutputSchema { get; set; } = "output.schema.json";
+        public string PromptFile { get; set; } = "prompt.md";
+    }
+
+    private sealed class ProfileYaml
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public List<string>? Rules { get; set; }
+    }
+
+    private sealed class SolutionYaml
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Profile { get; set; } = "";
+        public List<string>? KnowledgeFiles { get; set; }
+    }
+}

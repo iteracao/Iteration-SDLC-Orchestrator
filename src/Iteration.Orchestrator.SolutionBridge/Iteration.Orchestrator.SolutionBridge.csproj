@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Iteration.Orchestrator.Application/Iteration.Orchestrator.Application.csproj" />
+    <ProjectReference Include="../Iteration.Orchestrator.Domain/Iteration.Orchestrator.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

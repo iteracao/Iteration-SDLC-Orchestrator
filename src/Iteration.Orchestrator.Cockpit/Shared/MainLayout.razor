@@ -1,0 +1,16 @@
+@inherits LayoutComponentBase
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h6">Iteration Cockpit</MudText>
+    </MudAppBar>
+    <MudDrawer Open="true" Variant="DrawerVariant.Mini">
+        <MudNavMenu>
+            <MudNavLink Href="/">Home</MudNavLink>
+            <MudNavLink Href="/solutions">Solutions</MudNavLink>
+            <MudNavLink Href="/backlog">Backlog</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+    <MudMainContent Class="pa-4">
+        @Body
+    </MudMainContent>
+</MudLayout>

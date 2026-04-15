@@ -1,0 +1,8 @@
+Write-Host "Add the projects to the solution:"
+Write-Host "dotnet sln add src/**/*.csproj"
+Write-Host "Restore:"
+Write-Host "dotnet restore"
+Write-Host "Run API:"
+Write-Host "dotnet run --project src/Iteration.Orchestrator.Api"
+Write-Host "Run Cockpit:"
+Write-Host "dotnet run --project src/Iteration.Orchestrator.Cockpit"

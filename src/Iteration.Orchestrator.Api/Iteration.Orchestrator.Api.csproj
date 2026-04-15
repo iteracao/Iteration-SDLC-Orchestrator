@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Iteration.Orchestrator.Application/Iteration.Orchestrator.Application.csproj" />
+    <ProjectReference Include="../Iteration.Orchestrator.Infrastructure/Iteration.Orchestrator.Infrastructure.csproj" />
+    <ProjectReference Include="../Iteration.Orchestrator.SolutionBridge/Iteration.Orchestrator.SolutionBridge.csproj" />
+    <ProjectReference Include="../Iteration.Orchestrator.AgentHost/Iteration.Orchestrator.AgentHost.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+code: analyze-solution
+name: Analyze Solution
+description: Read-only grounded solution analysis.
+
+applicableProfiles:
+  - dotnet-web-enterprise
+
+agents:
+  - solution-analyst
+
+stages:
+  - code: solution-analysis
+    agent: solution-analyst
+    output: analysis-report
