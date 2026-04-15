@@ -28,7 +28,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             instructions: """
 You are a senior .NET solution analyst for an SDLC orchestrator.
 
-Analyze the provided backlog item against the provided solution context.
+Analyze the provided request against the provided workflow guidance, profile rules,
+solution knowledge, and repository evidence.
 Return ONLY valid JSON with this exact shape:
 {
   "summary": "string",
@@ -44,7 +45,9 @@ Rules:
 - Do not include markdown.
 - Do not include commentary outside JSON.
 - Be concise but specific.
-- Base the result only on the provided context.
+- Use solution knowledge as the current truth unless repository evidence clearly contradicts it.
+- Use repository evidence as proof, not as a replacement for canonical docs.
+- Separate risks from assumptions.
 """);
 
         var prompt = BuildPrompt(request);
@@ -72,11 +75,19 @@ Rules:
         sb.AppendLine(request.WorkflowRunId.ToString());
         sb.AppendLine();
 
-        sb.AppendLine("BACKLOG TITLE:");
+        sb.AppendLine("WORKFLOW:");
+        sb.AppendLine($"{request.WorkflowCode} - {request.WorkflowName}");
+        sb.AppendLine();
+
+        sb.AppendLine("WORKFLOW PURPOSE:");
+        sb.AppendLine(request.WorkflowPurpose ?? string.Empty);
+        sb.AppendLine();
+
+        sb.AppendLine("REQUEST TITLE:");
         sb.AppendLine(request.BacklogTitle ?? string.Empty);
         sb.AppendLine();
 
-        sb.AppendLine("BACKLOG DESCRIPTION:");
+        sb.AppendLine("REQUEST DESCRIPTION:");
         sb.AppendLine(request.BacklogDescription ?? string.Empty);
         sb.AppendLine();
 
@@ -84,8 +95,19 @@ Rules:
         sb.AppendLine(request.ProfileSummary ?? string.Empty);
         sb.AppendLine();
 
-        sb.AppendLine("SOLUTION KNOWLEDGE:");
-        sb.AppendLine(request.SolutionKnowledge ?? string.Empty);
+        sb.AppendLine("PROFILE RULES:");
+        AppendDocuments(sb, request.ProfileRules);
+        sb.AppendLine();
+
+        sb.AppendLine("SOLUTION KNOWLEDGE DOCUMENTS:");
+        AppendDocuments(sb, request.SolutionKnowledgeDocuments);
+        sb.AppendLine();
+
+        sb.AppendLine("WORKFLOW EXECUTION RULES:");
+        foreach (var rule in request.ExecutionRules)
+        {
+            sb.AppendLine($"- {rule}");
+        }
         sb.AppendLine();
 
         sb.AppendLine("SOLUTION SNAPSHOT:");
@@ -102,6 +124,22 @@ Rules:
         return sb.ToString();
     }
 
+    private static void AppendDocuments(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)
+    {
+        if (documents.Count == 0)
+        {
+            sb.AppendLine("(none)");
+            return;
+        }
+
+        foreach (var document in documents)
+        {
+            sb.AppendLine($"FILE: {document.Path}");
+            sb.AppendLine(document.Content);
+            sb.AppendLine();
+        }
+    }
+
     private static AgentResponse Parse(string raw)
     {
         var cleaned = ExtractJsonObject(raw);
@@ -109,7 +147,7 @@ Rules:
 
         if (parsed is null)
         {
-            throw new InvalidOperationException("Agent returned an empty or invalid JSON payload.");
+            throw new InvalidOperationException($"Agent returned an empty or invalid JSON payload. Raw response: {raw}");
         }
 
         parsed.ImpactedAreas ??= [];
@@ -132,7 +170,7 @@ Rules:
 
         if (start < 0 || end <= start)
         {
-            throw new InvalidOperationException("Agent response did not contain a valid JSON object.");
+            throw new InvalidOperationException($"Agent response did not contain a valid JSON object. Raw response: {raw}");
         }
 
         return raw[start..(end + 1)];

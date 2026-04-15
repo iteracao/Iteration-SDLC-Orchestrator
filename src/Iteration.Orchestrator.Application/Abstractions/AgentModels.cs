@@ -2,10 +2,15 @@ namespace Iteration.Orchestrator.Application.Abstractions;
 
 public sealed record SolutionAnalysisRequest(
     Guid WorkflowRunId,
+    string WorkflowCode,
+    string WorkflowName,
+    string WorkflowPurpose,
     string BacklogTitle,
     string BacklogDescription,
     string ProfileSummary,
-    string SolutionKnowledge,
+    IReadOnlyList<TextDocumentInput> ProfileRules,
+    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<string> ExecutionRules,
     SolutionSnapshot Snapshot,
     IReadOnlyList<FileSearchHit> SearchHits,
     IReadOnlyDictionary<string, string> SampleFiles);

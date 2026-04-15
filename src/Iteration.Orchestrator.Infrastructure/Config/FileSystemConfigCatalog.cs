@@ -23,7 +23,23 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         var path = Path.Combine(_root, "workflows", workflowCode, "workflow.yaml");
         var yaml = await File.ReadAllTextAsync(path, ct);
         var dto = _yaml.Deserialize<WorkflowYaml>(yaml);
-        return new WorkflowDefinition(dto.Code, dto.Name, dto.Description, dto.ApplicableProfiles ?? [], dto.Agents ?? []);
+
+        return new WorkflowDefinition(
+            dto.Code,
+            dto.Name,
+            dto.Phase,
+            dto.Purpose,
+            dto.PrimaryAgent,
+            (dto.RequiredInputs ?? [])
+                .Select(x => new WorkflowInputDefinition(x.Name, x.Type, x.Required))
+                .ToList(),
+            dto.KnowledgeReads ?? [],
+            (dto.ProducedArtifacts ?? [])
+                .Select(x => new WorkflowArtifactDefinition(x.Type, x.Name))
+                .ToList(),
+            dto.KnowledgeUpdates ?? [],
+            dto.ExecutionRules ?? [],
+            dto.NextWorkflows ?? []);
     }
 
     public async Task<AgentDefinition> GetAgentAsync(string agentCode, CancellationToken ct)
@@ -41,7 +57,16 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         var folder = Path.Combine(_root, "profiles", profileCode);
         var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "profile.yaml"), ct);
         var dto = _yaml.Deserialize<ProfileYaml>(yaml);
-        return new ProfileDefinition(dto.Code, dto.Name, dto.Description, dto.Rules ?? []);
+
+        var rules = new List<TextDocumentInput>();
+        foreach (var relativePath in dto.Rules ?? [])
+        {
+            var path = Path.Combine(folder, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var content = await File.ReadAllTextAsync(path, ct);
+            rules.Add(new TextDocumentInput(relativePath, content));
+        }
+
+        return new ProfileDefinition(dto.Code, dto.Name, dto.Description, rules);
     }
 
     public async Task<SolutionOverlayDefinition> GetSolutionOverlayAsync(string solutionCode, CancellationToken ct)
@@ -49,16 +74,49 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         var folder = Path.Combine(_root, "solutions", solutionCode);
         var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "solution.yaml"), ct);
         var dto = _yaml.Deserialize<SolutionYaml>(yaml);
-        return new SolutionOverlayDefinition(dto.Code, dto.Name, dto.Profile, dto.KnowledgeFiles ?? []);
+
+        var knowledgeDocuments = new List<TextDocumentInput>();
+        foreach (var relativePath in dto.KnowledgeFiles ?? [])
+        {
+            var path = Path.Combine(folder, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var content = await File.ReadAllTextAsync(path, ct);
+            knowledgeDocuments.Add(new TextDocumentInput(relativePath, content));
+        }
+
+        return new SolutionOverlayDefinition(
+            dto.Code,
+            dto.Name,
+            dto.Profile,
+            dto.EntryPoints?.SolutionFile,
+            knowledgeDocuments);
     }
 
     private sealed class WorkflowYaml
     {
         public string Code { get; set; } = "";
         public string Name { get; set; } = "";
-        public string Description { get; set; } = "";
-        public List<string>? ApplicableProfiles { get; set; }
-        public List<string>? Agents { get; set; }
+        public string Phase { get; set; } = "";
+        public string Purpose { get; set; } = "";
+        public string PrimaryAgent { get; set; } = "";
+        public List<WorkflowInputYaml>? RequiredInputs { get; set; }
+        public List<string>? KnowledgeReads { get; set; }
+        public List<WorkflowArtifactYaml>? ProducedArtifacts { get; set; }
+        public List<string>? KnowledgeUpdates { get; set; }
+        public List<string>? ExecutionRules { get; set; }
+        public List<string>? NextWorkflows { get; set; }
+    }
+
+    private sealed class WorkflowInputYaml
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "string";
+        public bool Required { get; set; }
+    }
+
+    private sealed class WorkflowArtifactYaml
+    {
+        public string Type { get; set; } = "";
+        public string Name { get; set; } = "";
     }
 
     private sealed class AgentYaml
@@ -84,6 +142,12 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         public string Code { get; set; } = "";
         public string Name { get; set; } = "";
         public string Profile { get; set; } = "";
+        public SolutionEntryPointsYaml? EntryPoints { get; set; }
         public List<string>? KnowledgeFiles { get; set; }
+    }
+
+    private sealed class SolutionEntryPointsYaml
+    {
+        public string? SolutionFile { get; set; }
     }
 }

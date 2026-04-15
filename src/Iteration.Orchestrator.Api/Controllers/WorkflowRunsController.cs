@@ -10,7 +10,7 @@ namespace Iteration.Orchestrator.Api.Controllers;
 [Route("api/workflow-runs")]
 public sealed class WorkflowRunsController : ControllerBase
 {
-    [HttpPost("analyze-solution")]
+    [HttpPost("analyze-request")]
     public async Task<IActionResult> StartAnalyze(
         [FromBody] StartAnalyzeRunRequest request,
         [FromServices] StartAnalyzeSolutionRunHandler handler,

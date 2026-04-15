@@ -1,10 +1,23 @@
 namespace Iteration.Orchestrator.Application.Abstractions;
 
+public sealed record TextDocumentInput(
+    string Path,
+    string Content);
+
+public sealed record WorkflowInputDefinition(
+    string Name,
+    string Type,
+    bool Required);
+
+public sealed record WorkflowArtifactDefinition(
+    string Type,
+    string Name);
+
 public sealed record ProfileDefinition(
     string Code,
     string Name,
     string Description,
-    IReadOnlyList<string> RuleFiles);
+    IReadOnlyList<TextDocumentInput> Rules);
 
 public sealed record AgentDefinition(
     string Code,
@@ -17,12 +30,19 @@ public sealed record AgentDefinition(
 public sealed record WorkflowDefinition(
     string Code,
     string Name,
-    string Description,
-    IReadOnlyList<string> ApplicableProfiles,
-    IReadOnlyList<string> AgentCodes);
+    string Phase,
+    string Purpose,
+    string PrimaryAgent,
+    IReadOnlyList<WorkflowInputDefinition> RequiredInputs,
+    IReadOnlyList<string> KnowledgeReads,
+    IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
+    IReadOnlyList<string> KnowledgeUpdates,
+    IReadOnlyList<string> ExecutionRules,
+    IReadOnlyList<string> NextWorkflows);
 
 public sealed record SolutionOverlayDefinition(
     string Code,
     string Name,
     string ProfileCode,
-    IReadOnlyList<string> KnowledgeFiles);
+    string? EntryPointSolutionFile,
+    IReadOnlyList<TextDocumentInput> KnowledgeDocuments);
