@@ -1,0 +1,12 @@
+code: base-template
+name: Base Template
+profile: dotnet-web-enterprise
+
+entryPoints:
+  solutionFile: src/Platform.sln
+
+knowledgeFiles:
+  - knowledge/overview.md
+  - knowledge/architecture.md
+  - knowledge/shell.md
+  - knowledge/auth.md

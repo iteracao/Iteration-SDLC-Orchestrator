@@ -1,0 +1,11 @@
+code: solution-analyst
+name: Solution Analyst
+description: Reads the target solution and returns a grounded structured analysis.
+
+allowedTools:
+  - solution.snapshot
+  - solution.search
+  - solution.readFile
+
+outputSchema: output.schema.json
+promptFile: prompt.md

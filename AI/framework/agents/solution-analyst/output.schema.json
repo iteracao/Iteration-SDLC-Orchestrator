@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "required": [
+    "summary",
+    "impactedAreas",
+    "risks",
+    "assumptions",
+    "recommendedNextSteps"
+  ],
+  "properties": {
+    "summary": { "type": "string" },
+    "impactedAreas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["area", "reason", "confidence"],
+        "properties": {
+          "area": { "type": "string" },
+          "reason": { "type": "string" },
+          "confidence": { "type": "string" }
+        }
+      }
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "recommendedNextSteps": { "type": "array", "items": { "type": "string" } }
+  }
+}
