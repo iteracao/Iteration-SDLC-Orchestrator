@@ -3,6 +3,7 @@ using Iteration.Orchestrator.Application.Backlog;
 using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Application.Workflows;
 using Iteration.Orchestrator.Application.Agents;
+using Iteration.Orchestrator.Application.AI;
 using Iteration.Orchestrator.AgentHost.Agents;
 using Iteration.Orchestrator.Infrastructure.Artifacts;
 using Iteration.Orchestrator.Infrastructure.Config;
@@ -10,7 +11,6 @@ using Iteration.Orchestrator.Infrastructure.Persistence;
 using Iteration.Orchestrator.Infrastructure.AI;
 using Iteration.Orchestrator.SolutionBridge.Services;
 using Microsoft.EntityFrameworkCore;
-
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,9 +24,8 @@ builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connect
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama"));
 
-builder.Services.AddScoped<ICodeAgent, CodeAgent>();
-
 builder.Services.AddHttpClient<IOllamaService, OllamaService>();
+builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<RegisterSolutionTargetHandler>();
 builder.Services.AddScoped<CreateBacklogItemHandler>();

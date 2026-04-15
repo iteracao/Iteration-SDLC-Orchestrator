@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Net.Http.Json;
+using Iteration.Orchestrator.Application.AI;
 
 namespace Iteration.Orchestrator.Infrastructure.AI;
 

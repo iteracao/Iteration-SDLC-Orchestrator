@@ -1,21 +1,26 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Iteration.Orchestrator.Infrastructure.AI;
+﻿using Iteration.Orchestrator.Application.Agents;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Iteration.Orchestrator.Api.Controllers;
 
 [ApiController]
 [Route("api/ai")]
 public class AiController : ControllerBase
 {
-    private readonly IOllamaService _ollama;
+    private readonly ICodeAgent _agent;
 
-    public AiController(IOllamaService ollama)
+    public AiController(ICodeAgent agent)
     {
-        _ollama = ollama;
+        _agent = agent;
     }
 
-    [HttpGet("test")]
-    public async Task<IActionResult> Test()
+    [HttpPost("analyze")]
+    public async Task<IActionResult> Analyze([FromBody] string code, CancellationToken ct)
     {
-        var result = await _ollama.GenerateAsync("Say hello in one sentence.");
+        if (string.IsNullOrWhiteSpace(code))
+            return BadRequest("Code is required.");
+
+        var result = await _agent.AnalyzeCodeAsync(code, ct);
         return Ok(result);
     }
 }
