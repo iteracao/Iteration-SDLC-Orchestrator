@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "knowledgeRoot": { "type": "string" },
+    "repositoryCreated": { "type": "boolean" },
+    "gitInitialized": { "type": "boolean" },
+    "remoteConfigured": { "type": "boolean" },
+    "createdDocuments": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "existingDocuments": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "knowledgeRoot",
+    "repositoryCreated",
+    "gitInitialized",
+    "remoteConfigured",
+    "createdDocuments",
+    "existingDocuments"
+  ]
+}

@@ -9,6 +9,7 @@ using Iteration.Orchestrator.Infrastructure.Artifacts;
 using Iteration.Orchestrator.Infrastructure.Config;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Iteration.Orchestrator.Infrastructure.AI;
+using Iteration.Orchestrator.Infrastructure.Solutions;
 using Iteration.Orchestrator.SolutionBridge.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,13 +29,14 @@ builder.Services.AddHttpClient<IOllamaService, OllamaService>();
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<RegisterSolutionTargetHandler>();
+builder.Services.AddScoped<SetupSolutionHandler>();
 builder.Services.AddScoped<CreateBacklogItemHandler>();
 builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 
 builder.Services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
 var configRoot = builder.Configuration["ConfigRoot"]
-    ?? Path.Combine("..", "..", "..", "..", "..", "config");
+    ?? Path.Combine("..", "..", "..", "..", "..", "AI", "framework");
 
 var resolvedConfigRoot = Path.GetFullPath(
     Path.Combine(AppContext.BaseDirectory, configRoot));
@@ -49,6 +51,8 @@ builder.Services.AddSingleton<ISolutionAnalystAgent>(_ =>
     new MicrosoftAgentFrameworkSolutionAnalystAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
+
+builder.Services.AddSingleton<ISolutionSetupService, FileSystemSolutionSetupService>();
 
 var artifactRoot = builder.Configuration["ArtifactRoot"] ?? "data";
 builder.Services.AddSingleton<IArtifactStore>(_ => new FileSystemArtifactStore(

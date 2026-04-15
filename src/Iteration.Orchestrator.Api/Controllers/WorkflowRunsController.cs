@@ -1,4 +1,5 @@
 using Iteration.Orchestrator.Api.Contracts;
+using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Application.Workflows;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +11,37 @@ namespace Iteration.Orchestrator.Api.Controllers;
 [Route("api/workflow-runs")]
 public sealed class WorkflowRunsController : ControllerBase
 {
+    [HttpPost("setup-solution")]
+    public async Task<IActionResult> SetupSolution(
+        [FromBody] SetupSolutionRequest request,
+        [FromServices] SetupSolutionHandler handler,
+        CancellationToken ct)
+    {
+        var result = await handler.HandleAsync(
+            new SetupSolutionCommand(
+                request.Code,
+                request.Name,
+                request.RepositoryPath,
+                request.MainSolutionFile,
+                request.ProfileCode,
+                request.SolutionOverlayCode,
+                request.RemoteRepositoryUrl,
+                request.RequestedBy),
+            ct);
+
+        return Ok(new
+        {
+            id = result.WorkflowRunId,
+            result.SolutionId,
+            result.KnowledgeRoot,
+            result.RepositoryCreated,
+            result.GitInitialized,
+            result.RemoteConfigured,
+            result.CreatedDocuments,
+            result.ExistingDocuments
+        });
+    }
+
     [HttpPost("analyze-request")]
     public async Task<IActionResult> StartAnalyze(
         [FromBody] StartAnalyzeRunRequest request,

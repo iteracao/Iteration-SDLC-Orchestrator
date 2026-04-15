@@ -1,0 +1,10 @@
+code: solution-onboarding
+name: Solution Onboarding
+description: Prepares a solution workspace, repository baseline, and SDLC documentation structure.
+
+allowedTools:
+  - solution.setup
+  - solution.bootstrapDocs
+
+outputSchema: output.schema.json
+promptFile: prompt.md
