@@ -45,7 +45,10 @@ builder.Services.AddSingleton<IConfigCatalog>(_ =>
     new FileSystemConfigCatalog(resolvedConfigRoot));
 
 builder.Services.AddSingleton<ISolutionBridge, LocalFileSystemSolutionBridge>();
-builder.Services.AddSingleton<ISolutionAnalystAgent, OllamaSolutionAnalystAgent>();
+builder.Services.AddSingleton<ISolutionAnalystAgent>(_ =>
+    new MicrosoftAgentFrameworkSolutionAnalystAgent(
+        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
 
 var artifactRoot = builder.Configuration["ArtifactRoot"] ?? "data";
 builder.Services.AddSingleton<IArtifactStore>(_ => new FileSystemArtifactStore(
