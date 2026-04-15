@@ -1,0 +1,44 @@
+code: update-solution-history
+name: Update Solution History
+phase: history
+
+purpose: >
+  Maintain the long-term continuity of the solution by recording milestones,
+  decisions, resolved questions, known gaps, and important evolution notes.
+
+primaryAgent: solution-historian
+
+requiredInputs:
+  - name: targetSolutionId
+    type: guid
+    required: true
+  - name: sourceWorkflowRunId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - history/decisions.md
+  - history/open-questions.md
+  - history/known-gaps.md
+  - history/changelog.md
+
+producedArtifacts:
+  - type: history-update-summary
+    name: History Update Summary
+  - type: resolved-question-summary
+    name: Resolved Question Summary
+  - type: milestone-summary
+    name: Milestone Summary
+
+knowledgeUpdates:
+  - history/decisions.md
+  - history/open-questions.md
+  - history/known-gaps.md
+  - history/changelog.md
+
+executionRules:
+  - Record what changed, why it changed, and what remains unresolved.
+  - Mark superseded items clearly instead of deleting history.
+  - Keep the history view concise, traceable, and solution-focused.
+
+nextWorkflows: []

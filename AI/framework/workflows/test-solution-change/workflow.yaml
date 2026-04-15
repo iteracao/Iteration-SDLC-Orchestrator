@@ -1,0 +1,51 @@
+code: test-solution-change
+name: Test Solution Change
+phase: testing
+
+purpose: >
+  Validate the implemented change through technical and functional testing,
+  identify failures, and assess test coverage and quality risks.
+
+primaryAgent: test-agent
+
+requiredInputs:
+  - name: implementationResultId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - business/business-rules.md
+  - business/workflows.md
+  - application/api.md
+  - application/ui-ux.md
+  - delivery/test-strategy.md
+  - analysis/latest-analysis.md
+  - architecture/technical-decisions.md
+
+producedArtifacts:
+  - type: test-report
+    name: Test Report
+  - type: coverage-summary
+    name: Coverage Summary
+  - type: failed-scenarios
+    name: Failed Scenarios
+  - type: missing-test-cases
+    name: Missing Test Cases
+  - type: quality-risk-list
+    name: Quality Risks
+
+knowledgeUpdates:
+  - delivery/test-strategy.md
+  - history/known-gaps.md
+  - history/open-questions.md
+
+executionRules:
+  - Validate both expected success paths and relevant failure/edge paths.
+  - Record missing coverage explicitly.
+  - Keep technical failures distinct from design or requirement issues.
+
+nextWorkflows:
+  - review-implementation

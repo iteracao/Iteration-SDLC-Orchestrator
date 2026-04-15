@@ -1,0 +1,50 @@
+code: deliver-solution-change
+name: Deliver Solution Change
+phase: delivery
+
+purpose: >
+  Make the approved change official in the repository through commit and push,
+  and record release/use information for the solution.
+
+primaryAgent: delivery-agent
+
+requiredInputs:
+  - name: implementationResultId
+    type: guid
+    required: true
+  - name: reviewReportId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - delivery/deployment-notes.md
+  - delivery/test-strategy.md
+  - history/decisions.md
+  - history/known-gaps.md
+
+producedArtifacts:
+  - type: delivery-report
+    name: Delivery Report
+  - type: commit-metadata
+    name: Commit Metadata
+  - type: release-summary
+    name: Release Summary
+  - type: rollback-notes
+    name: Rollback Notes
+
+knowledgeUpdates:
+  - delivery/deployment-notes.md
+  - history/changelog.md
+  - history/known-gaps.md
+
+executionRules:
+  - Only commit and push after successful review or explicit approved override.
+  - Generate structured commit messages from workflow context and artifacts.
+  - Push only to the configured target branch or approved working branch.
+  - Persist commit hash and delivery result as output artifacts.
+
+nextWorkflows:
+  - update-solution-history

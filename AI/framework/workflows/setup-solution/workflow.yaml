@@ -1,0 +1,56 @@
+code: setup-solution
+name: Setup Solution
+phase: setup
+
+purpose: >
+  Initialize or validate a solution workspace, local repository folder,
+  SDLC knowledge structure, and optional remote Git repository.
+
+primaryAgent: solution-onboarding
+
+requiredInputs:
+  - name: solutionCode
+    type: string
+    required: true
+  - name: solutionName
+    type: string
+    required: true
+  - name: repositoryRoot
+    type: string
+    required: true
+  - name: remoteRepositoryUrl
+    type: string
+    required: false
+  - name: profileCode
+    type: string
+    required: true
+
+knowledgeReads: []
+
+producedArtifacts:
+  - type: solution-setup-result
+    name: Solution Setup Result
+  - type: repository-setup-summary
+    name: Repository Setup Summary
+
+knowledgeUpdates:
+  - context/overview.md
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+  - history/decisions.md
+  - history/open-questions.md
+  - history/known-gaps.md
+  - analysis/latest-analysis.md
+
+executionRules:
+  - Create repository root if it does not exist.
+  - Initialize Git if .git does not exist.
+  - Configure remote origin if remoteRepositoryUrl is provided.
+  - Create /ai/solutions/<solutionCode>/ knowledge workspace if missing.
+  - Seed required documentation files with fixed baseline structure if missing.
+  - Do not overwrite existing documents blindly; preserve existing content.
+
+nextWorkflows:
+  - analyze-request

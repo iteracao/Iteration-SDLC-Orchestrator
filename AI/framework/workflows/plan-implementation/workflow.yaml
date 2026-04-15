@@ -1,0 +1,59 @@
+code: plan-implementation
+name: Plan Implementation
+phase: planning
+
+purpose: >
+  Convert an approved design into an executable implementation plan,
+  delivery slices, dependencies, and test approach.
+
+primaryAgent: implementation-planner
+
+requiredInputs:
+  - name: requestId
+    type: guid
+    required: true
+  - name: designReportId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - analysis/latest-analysis.md
+  - architecture/technical-decisions.md
+  - architecture/module-map.md
+  - application/api.md
+  - application/ui-ux.md
+  - application/integrations.md
+  - history/decisions.md
+  - history/open-questions.md
+
+producedArtifacts:
+  - type: implementation-plan
+    name: Implementation Plan
+  - type: work-breakdown
+    name: Work Breakdown
+  - type: delivery-slices
+    name: Delivery Slices
+  - type: dependency-list
+    name: Dependencies
+  - type: test-approach
+    name: Test Approach
+  - type: rollout-notes
+    name: Rollout Notes
+
+knowledgeUpdates:
+  - delivery/implementation-notes.md
+  - delivery/backlog-context.md
+  - delivery/test-strategy.md
+  - history/open-questions.md
+  - history/known-gaps.md
+
+executionRules:
+  - Break work into small, reviewable, deliverable slices.
+  - Include dependencies and testing expectations per slice.
+  - Record planning-level risks and unresolved questions.
+
+nextWorkflows:
+  - implement-solution-change

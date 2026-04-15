@@ -1,0 +1,61 @@
+code: review-implementation
+name: Review Implementation
+phase: review
+
+purpose: >
+  Review the implemented and tested change against the request, design,
+  standards, and current solution truth.
+
+primaryAgent: review-agent
+
+requiredInputs:
+  - name: implementationResultId
+    type: guid
+    required: true
+  - name: testReportId
+    type: guid
+    required: false
+  - name: requestId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+  - architecture/technical-decisions.md
+  - application/api.md
+  - application/ui-ux.md
+  - history/decisions.md
+  - analysis/latest-analysis.md
+  - delivery/test-strategy.md
+
+producedArtifacts:
+  - type: review-report
+    name: Review Report
+  - type: finding-list
+    name: Findings
+  - type: mismatch-list
+    name: Mismatches
+  - type: regression-risk-list
+    name: Regression Risks
+  - type: documentation-update-list
+    name: Documentation Updates Required
+
+knowledgeUpdates:
+  - history/known-gaps.md
+  - history/open-questions.md
+  - history/changelog.md
+
+executionRules:
+  - Evaluate alignment with requirements, design, business rules, and standards.
+  - Distinguish confirmed defects from suspected risks.
+  - Produce a clear go / rework recommendation.
+
+nextWorkflows:
+  - deliver-solution-change
+  - update-solution-history

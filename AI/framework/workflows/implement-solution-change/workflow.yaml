@@ -1,0 +1,56 @@
+code: implement-solution-change
+name: Implement Solution Change
+phase: implementation
+
+purpose: >
+  Apply the planned change to the target repository and produce implementation
+  outputs, changed files, and implementation notes.
+
+primaryAgent: implementation-agent
+
+requiredInputs:
+  - name: requestId
+    type: guid
+    required: true
+  - name: implementationPlanId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+  - architecture/technical-decisions.md
+  - application/api.md
+  - application/ui-ux.md
+  - application/integrations.md
+  - delivery/implementation-notes.md
+  - history/decisions.md
+
+producedArtifacts:
+  - type: implementation-result
+    name: Implementation Result
+  - type: changed-files-summary
+    name: Changed Files Summary
+  - type: implementation-open-question-list
+    name: Implementation Open Questions
+  - type: implementation-log
+    name: Implementation Log
+
+knowledgeUpdates:
+  - delivery/implementation-notes.md
+  - history/open-questions.md
+
+executionRules:
+  - Apply only planned or explicitly approved changes.
+  - Preserve repository integrity and existing coding conventions.
+  - Record unresolved implementation discoveries as open questions.
+  - Do not commit or push repository changes in this workflow.
+
+nextWorkflows:
+  - test-solution-change
+  - review-implementation

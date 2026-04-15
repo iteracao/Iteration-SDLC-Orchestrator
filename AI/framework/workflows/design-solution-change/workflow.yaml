@@ -1,0 +1,61 @@
+code: design-solution-change
+name: Design Solution Change
+phase: design
+
+purpose: >
+  Transform an analyzed request into a proposed technical and functional design
+  aligned with current business rules, architecture, and known decisions.
+
+primaryAgent: solution-architect
+
+requiredInputs:
+  - name: requestId
+    type: guid
+    required: true
+  - name: analysisReportId
+    type: guid
+    required: true
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - context/overview.md
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+  - history/decisions.md
+  - history/open-questions.md
+  - analysis/latest-analysis.md
+  - analysis/impacted-areas.md
+
+producedArtifacts:
+  - type: design-report
+    name: Design Report
+  - type: contract-change-set
+    name: Contract Changes
+  - type: data-impact-summary
+    name: Data Impact Summary
+  - type: ui-impact-summary
+    name: UI Impact Summary
+  - type: integration-impact-summary
+    name: Integration Impact Summary
+  - type: design-open-question-list
+    name: Design Open Questions
+
+knowledgeUpdates:
+  - architecture/technical-decisions.md
+  - application/api.md
+  - application/ui-ux.md
+  - application/integrations.md
+  - history/open-questions.md
+  - history/decisions.md
+
+executionRules:
+  - Respect active decisions unless a new explicit decision supersedes them.
+  - Separate confirmed design from open questions and assumptions.
+  - Update only the relevant design-level knowledge documents.
+
+nextWorkflows:
+  - plan-implementation
