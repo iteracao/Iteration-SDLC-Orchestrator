@@ -86,11 +86,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine();
 
         sb.AppendLine("REQUEST TITLE:");
-        sb.AppendLine(request.BacklogTitle ?? string.Empty);
+        sb.AppendLine(request.RequirementTitle ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("REQUEST DESCRIPTION:");
-        sb.AppendLine(request.BacklogDescription ?? string.Empty);
+        sb.AppendLine(request.RequirementDescription ?? string.Empty);
         sb.AppendLine();
 
         sb.AppendLine("PROFILE SUMMARY:");
@@ -176,7 +176,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         parsed.Status = NormalizeStatus(parsed.Status, parsed.Result?.GeneratedOpenQuestions?.Count ?? 0);
         parsed.Result ??= new ResultPayload();
         parsed.Result.Summary = string.IsNullOrWhiteSpace(parsed.Result.Summary)
-            ? $"Analysis completed for '{request.BacklogTitle}'."
+            ? $"Analysis completed for '{request.RequirementTitle}'."
             : parsed.Result.Summary.Trim();
         parsed.Result.Artifacts = NormalizeArtifacts(parsed.Result.Artifacts, request.ProducedArtifacts);
         parsed.Result.GeneratedRequirements ??= [];

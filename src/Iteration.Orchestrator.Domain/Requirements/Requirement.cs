@@ -75,4 +75,25 @@ public sealed class Requirement
         ConstraintsJson = string.IsNullOrWhiteSpace(constraintsJson) ? "[]" : constraintsJson;
         UpdatedAtUtc = updatedAtUtc;
     }
+
+    public void MarkInAnalysis(Guid workflowRunId, DateTime updatedAtUtc)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "under-analysis";
+        UpdatedAtUtc = updatedAtUtc;
+    }
+
+    public void MarkAnalysisCompleted(Guid workflowRunId, DateTime updatedAtUtc)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "analysis-completed";
+        UpdatedAtUtc = updatedAtUtc;
+    }
+
+    public void MarkAnalysisFailed(Guid workflowRunId, DateTime updatedAtUtc)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "analysis-failed";
+        UpdatedAtUtc = updatedAtUtc;
+    }
 }

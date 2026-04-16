@@ -1,9 +1,9 @@
 using Iteration.Orchestrator.Application.Abstractions;
-using Iteration.Orchestrator.Application.Backlog;
 using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Application.Workflows;
 using Iteration.Orchestrator.Application.Agents;
 using Iteration.Orchestrator.Application.AI;
+using Iteration.Orchestrator.Application.Requirements;
 using Iteration.Orchestrator.AgentHost.Agents;
 using Iteration.Orchestrator.Infrastructure.Artifacts;
 using Iteration.Orchestrator.Infrastructure.Config;
@@ -29,7 +29,7 @@ builder.Services.AddHttpClient<IOllamaService, OllamaService>();
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
-builder.Services.AddScoped<CreateBacklogItemHandler>();
+builder.Services.AddScoped<CreateRequirementHandler>();
 builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 
 builder.Services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());

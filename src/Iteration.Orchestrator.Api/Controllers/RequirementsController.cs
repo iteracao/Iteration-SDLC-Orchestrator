@@ -1,3 +1,5 @@
+using Iteration.Orchestrator.Api.Contracts;
+using Iteration.Orchestrator.Application.Requirements;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +9,26 @@ namespace Iteration.Orchestrator.Api.Controllers;
 [ApiController]
 public sealed class RequirementsController : ControllerBase
 {
+    [HttpPost("api/requirements")]
+    public async Task<IActionResult> Create(
+        [FromBody] CreateRequirementRequest request,
+        [FromServices] CreateRequirementHandler handler,
+        CancellationToken ct)
+    {
+        var id = await handler.HandleAsync(new CreateRequirementCommand(
+            request.Title,
+            request.Description,
+            request.TargetSolutionId,
+            request.Priority,
+            request.RequirementType,
+            request.Source,
+            request.Status,
+            request.AcceptanceCriteria,
+            request.Constraints), ct);
+
+        return Ok(new { id });
+    }
+
     [HttpGet("api/solutions/{solutionId:guid}/requirements")]
     public async Task<IActionResult> ListBySolution(
         Guid solutionId,

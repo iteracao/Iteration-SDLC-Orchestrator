@@ -51,7 +51,7 @@ public sealed class WorkflowRunsController : ControllerBase
         CancellationToken ct)
     {
         var id = await handler.HandleAsync(
-            new StartAnalyzeSolutionRunCommand(request.BacklogItemId, request.RequestedBy), ct);
+            new StartAnalyzeSolutionRunCommand(request.RequirementId, request.RequestedBy), ct);
 
         return Ok(new { id });
     }
@@ -74,6 +74,7 @@ public sealed class WorkflowRunsController : ControllerBase
             .Select(x => new
             {
                 x.Id,
+                RequirementId = x.BacklogItemId,
                 x.BacklogItemId,
                 x.TargetSolutionId,
                 x.WorkflowCode,
