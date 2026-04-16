@@ -2,21 +2,17 @@
 @implements IDisposable
 @inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
 
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudPopoverProvider />
+
 <MudLayout>
     <MudAppBar Elevation="1">
-        <MudText Typo="Typo.h6">Iteration Cockpit</MudText>
-        <MudSpacer />
         <MudChip T="string" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
             @(SelectedSolutionState.Current?.Name ?? "No solution selected")
         </MudChip>
     </MudAppBar>
-    <MudDrawer Open="true" Variant="DrawerVariant.Mini">
-        <MudNavMenu>
-            <MudNavLink Href="/">Home</MudNavLink>
-            <MudNavLink Href="/solutions">Solutions</MudNavLink>
-            <MudNavLink Href="/requirements">Requirements</MudNavLink>
-        </MudNavMenu>
-    </MudDrawer>
     <MudMainContent Class="pa-4">
         @Body
     </MudMainContent>

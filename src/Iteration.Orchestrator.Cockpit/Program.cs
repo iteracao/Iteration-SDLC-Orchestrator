@@ -9,7 +9,7 @@ builder.Services.AddMudServices();
 builder.Services.AddScoped<SelectedSolutionState>();
 builder.Services.AddHttpClient("api", client =>
 {
-    client.BaseAddress = new Uri("http://localhost:5000/");
+    client.BaseAddress = new Uri("http://localhost:54832/");
 });
 
 var app = builder.Build();

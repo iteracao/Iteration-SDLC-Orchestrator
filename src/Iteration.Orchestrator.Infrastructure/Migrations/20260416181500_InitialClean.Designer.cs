@@ -3,16 +3,19 @@ using System;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
+namespace Iteration.Orchestrator.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260416181500_InitialClean")]
+    partial class InitialClean
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.8");
@@ -28,10 +31,20 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Description")
                         .IsRequired()
+                        .HasMaxLength(4000)
                         .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("PlanWorkflowRunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlanningOrder")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Priority")
                         .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("RequirementId")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
@@ -44,11 +57,19 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("WorkflowCode")
                         .IsRequired()
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("PlanWorkflowRunId");
+
+                    b.HasIndex("RequirementId");
 
                     b.HasIndex("TargetSolutionId");
 
@@ -233,6 +254,201 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AnalysisReports");
+                });
+
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.DesignReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArtifactsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DocumentationUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedDecisionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedOpenQuestionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KnowledgeUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawOutputJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RecommendedNextWorkflowCodesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RequirementId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("WorkflowRunId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequirementId");
+
+                    b.HasIndex("WorkflowRunId")
+                        .IsUnique();
+
+                    b.ToTable("DesignReports");
+                });
+
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.ImplementationReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("BacklogItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DocumentationUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilesTouchedJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedDecisionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedOpenQuestionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedRequirementsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImplementedChangesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KnowledgeUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawOutputJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RecommendedNextWorkflowCodesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RequirementId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TestsExecutedJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("WorkflowRunId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BacklogItemId");
+
+                    b.HasIndex("RequirementId");
+
+                    b.HasIndex("WorkflowRunId")
+                        .IsUnique();
+
+                    b.ToTable("ImplementationReports");
+                });
+
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.PlanReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArtifactsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DocumentationUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedBacklogItemsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedDecisionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedOpenQuestionsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KnowledgeUpdatesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawOutputJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RecommendedNextWorkflowCodesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RequirementId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("WorkflowRunId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequirementId");
+
+                    b.HasIndex("WorkflowRunId")
+                        .IsUnique();
+
+                    b.ToTable("PlanReports");
                 });
 
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Requirements.Requirement", b =>
@@ -433,7 +649,7 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("BacklogItemId")
+                    b.Property<Guid?>("BacklogItemId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("CompletedUtc")
@@ -448,6 +664,9 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("RequestedBy")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RequirementId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("StartedUtc")
@@ -465,6 +684,10 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BacklogItemId");
+
+                    b.HasIndex("RequirementId");
+
                     b.HasIndex("TargetSolutionId");
 
                     b.ToTable("WorkflowRuns");
@@ -472,6 +695,16 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Backlog.BacklogItem", b =>
                 {
+                    b.HasOne("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", null)
+                        .WithMany()
+                        .HasForeignKey("PlanWorkflowRunId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
+                        .WithMany()
+                        .HasForeignKey("RequirementId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
@@ -527,6 +760,57 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
                 });
 
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.DesignReport", b =>
+                {
+                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
+                        .WithMany()
+                        .HasForeignKey("RequirementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.ImplementationReport", b =>
+                {
+                    b.HasOne("Iteration.Orchestrator.Domain.Backlog.BacklogItem", null)
+                        .WithMany()
+                        .HasForeignKey("BacklogItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
+                        .WithMany()
+                        .HasForeignKey("RequirementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Iteration.Orchestrator.Domain.Reports.PlanReport", b =>
+                {
+                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
+                        .WithMany()
+                        .HasForeignKey("RequirementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Requirements.Requirement", b =>
                 {
                     b.HasOne("Iteration.Orchestrator.Domain.Backlog.BacklogItem", null)
@@ -562,6 +846,16 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", b =>
                 {
+                    b.HasOne("Iteration.Orchestrator.Domain.Backlog.BacklogItem", null)
+                        .WithMany()
+                        .HasForeignKey("BacklogItemId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
+                        .WithMany()
+                        .HasForeignKey("RequirementId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
