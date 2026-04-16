@@ -42,17 +42,20 @@ public sealed class SetupSolutionHandler
     private readonly IAppDbContext _db;
     private readonly IConfigCatalog _config;
     private readonly ISolutionSetupService _solutionSetupService;
+    private readonly IGitHubRepositoryMetadataService _gitHubRepositoryMetadataService;
     private readonly IArtifactStore _artifacts;
 
     public SetupSolutionHandler(
         IAppDbContext db,
         IConfigCatalog config,
         ISolutionSetupService solutionSetupService,
+        IGitHubRepositoryMetadataService gitHubRepositoryMetadataService,
         IArtifactStore artifacts)
     {
         _db = db;
         _config = config;
         _solutionSetupService = solutionSetupService;
+        _gitHubRepositoryMetadataService = gitHubRepositoryMetadataService;
         _artifacts = artifacts;
     }
 
@@ -67,8 +70,11 @@ public sealed class SetupSolutionHandler
 
         _ = await _config.GetProfileAsync(profileCode, ct);
 
+        var repositoryPath = ValidateRepositoryPath(command.RepositoryPath);
         var mainSolutionFile = ValidateMainSolutionFile(command.MainSolutionFile);
         var targetCode = NormalizeTargetCode(command.TargetCode);
+        var remoteRepositoryUrl = ValidateRemoteRepositoryUrl(command.RemoteRepositoryUrl);
+        var repositoryMetadata = await _gitHubRepositoryMetadataService.GetMetadataAsync(remoteRepositoryUrl, ct);
 
         var solutionRecord = command.SolutionId.HasValue
             ? await _db.Solutions.FirstOrDefaultAsync(x => x.Id == command.SolutionId.Value, ct)
@@ -129,7 +135,7 @@ public sealed class SetupSolutionHandler
             solutionRecord.Id,
             targetStorageCode,
             overlaySolutionName,
-            command.RepositoryPath,
+            repositoryPath,
             mainSolutionFile,
             profileCode,
             overlayTargetCode);
@@ -137,7 +143,7 @@ public sealed class SetupSolutionHandler
         solutionTarget.Update(
             targetStorageCode,
             overlaySolutionName,
-            command.RepositoryPath,
+            repositoryPath,
             mainSolutionFile,
             profileCode,
             overlayTargetCode);
@@ -168,13 +174,15 @@ public sealed class SetupSolutionHandler
                 ProfileCode = profileCode,
                 TargetCode = targetCode,
                 TargetStorageCode = targetStorageCode,
-                RepositoryRoot = command.RepositoryPath,
+                RepositoryRoot = repositoryPath,
                 MainSolutionFile = mainSolutionFile,
                 OverlayTargetId = overlayTarget?.Id,
                 OverlaySolutionName = overlaySolutionName,
                 OverlayTargetCode = overlayTargetCode,
                 OverlaySourceRepositoryRoot = overlayTarget?.RepositoryPath,
-                command.RemoteRepositoryUrl
+                RemoteRepositoryUrl = remoteRepositoryUrl,
+                GitHubRepositoryName = repositoryMetadata.Name,
+                DefaultBranch = repositoryMetadata.DefaultBranch
             }
         });
 
@@ -189,13 +197,13 @@ public sealed class SetupSolutionHandler
                 new SolutionSetupRequest(
                     targetStorageCode,
                     command.Name,
-                    command.RepositoryPath,
+                    repositoryPath,
                     mainSolutionFile,
                     profileCode,
                     overlaySolutionName,
                     overlayTargetCode,
                     overlayTarget?.RepositoryPath,
-                    command.RemoteRepositoryUrl),
+                    remoteRepositoryUrl),
                 ct);
 
             var outputPayload = JsonSerializer.Serialize(new
@@ -250,6 +258,43 @@ public sealed class SetupSolutionHandler
             await _db.SaveChangesAsync(ct);
             throw;
         }
+    }
+
+
+    private static string ValidateRepositoryPath(string value)
+    {
+        var candidate = value.Trim();
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            throw new InvalidOperationException("Repository folder is required.");
+        }
+
+        if (!Directory.Exists(candidate))
+        {
+            throw new InvalidOperationException("Repository folder was not found on the machine running the solution.");
+        }
+
+        try
+        {
+            _ = Directory.GetFiles(candidate);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Repository folder is not accessible: {ex.Message}");
+        }
+
+        return candidate;
+    }
+
+    private static string ValidateRemoteRepositoryUrl(string? value)
+    {
+        var candidate = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            throw new InvalidOperationException("GitHub repository URL is required.");
+        }
+
+        return candidate;
     }
 
     private static string ValidateMainSolutionFile(string value)

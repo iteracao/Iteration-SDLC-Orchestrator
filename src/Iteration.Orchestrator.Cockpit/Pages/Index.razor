@@ -261,7 +261,7 @@
                         </MudSelect>
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Remote Repository URL" @bind-Value="_solutionRequest.RemoteRepositoryUrl" />
+                        <MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="_solutionRequest.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." />
                     </MudItem>
                 </MudGrid>
             </MudForm>
@@ -805,7 +805,10 @@
                 RequestedBy = "rui"
             });
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            }
 
             var createdSolutionName = _solutionRequest.Name;
             _createSolutionMessageSeverity = Severity.Success;
@@ -835,6 +838,24 @@
         {
             _savingSolution = false;
         }
+    }
+
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+            if (!string.IsNullOrWhiteSpace(error?.Message))
+            {
+                return error.Message;
+            }
+        }
+        catch
+        {
+        }
+
+        return $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
     }
 
     private async Task StartAnalyzeAsync(Guid requirementId)
@@ -1035,6 +1056,11 @@
         public SolutionSummary Solution { get; } = solution;
         public SolutionTargetSummary Target { get; } = target;
         public string Label => $"{Solution.Name} / {Target.DisplayName}";
+    }
+
+    private sealed class ApiErrorResponse
+    {
+        public string Message { get; set; } = string.Empty;
     }
 
     private sealed class SolutionDocumentSummary

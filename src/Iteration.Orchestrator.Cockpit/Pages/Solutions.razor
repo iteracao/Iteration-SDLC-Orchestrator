@@ -37,7 +37,7 @@
                         <MudSelectItem T="Guid?" Value="@option.Target.Id">@option.Label</MudSelectItem>
                     }
                 </MudSelect>
-                <MudTextField T="string" Label="Remote repository URL" @bind-Value="_request.RemoteRepositoryUrl" />
+                <MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="_request.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." />
 
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" Disabled="_saving" OnClick="CreateSolutionAsync">
                     Create / setup solution
@@ -274,7 +274,11 @@
                 RequestedBy = "rui"
             });
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            }
+
             _setupResult = await response.Content.ReadFromJsonAsync<SetupSolutionResponse>();
 
             _messageSeverity = Severity.Success;
@@ -441,6 +445,24 @@
         _editModel.MainSolutionFile = _selectedTarget.MainSolutionFile;
     }
 
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+            if (!string.IsNullOrWhiteSpace(error?.Message))
+            {
+                return error.Message;
+            }
+        }
+        catch
+        {
+        }
+
+        return $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
+    }
+
     private static string OverlayDisplay(SolutionTargetSummary target)
         => string.IsNullOrWhiteSpace(target.OverlaySolutionName)
             ? "(none)"
@@ -475,6 +497,11 @@
         public SolutionSummary Solution { get; } = solution;
         public SolutionTargetSummary Target { get; } = target;
         public string Label => $"{Solution.Name} / {Target.DisplayName}";
+    }
+
+    private sealed class ApiErrorResponse
+    {
+        public string Message { get; set; } = string.Empty;
     }
 
     private sealed class SetupSolutionResponse

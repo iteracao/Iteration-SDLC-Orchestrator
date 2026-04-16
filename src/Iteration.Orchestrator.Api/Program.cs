@@ -27,6 +27,7 @@ builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama"));
 
 builder.Services.AddHttpClient<IOllamaService, OllamaService>();
+builder.Services.AddHttpClient<IGitHubRepositoryMetadataService, GitHubRepositoryMetadataService>();
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
