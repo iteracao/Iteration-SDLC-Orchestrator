@@ -12,8 +12,13 @@ public sealed class Solution
 
     public Solution(string name, string description, string profileCode)
     {
+        Update(name, description);
+        ProfileCode = profileCode.Trim();
+    }
+
+    public void Update(string name, string description)
+    {
         Name = name.Trim();
         Description = description.Trim();
-        ProfileCode = profileCode.Trim();
     }
 }

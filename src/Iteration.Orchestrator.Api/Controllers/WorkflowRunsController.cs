@@ -21,13 +21,13 @@ public sealed class WorkflowRunsController : ControllerBase
         var result = await handler.HandleAsync(
             new SetupSolutionCommand(
                 request.SolutionId,
-                request.Code,
                 request.Name,
                 request.Description,
                 request.RepositoryPath,
                 request.MainSolutionFile,
                 request.ProfileCode,
-                request.SolutionOverlayCode,
+                request.TargetCode,
+                request.OverlayTargetId,
                 request.RemoteRepositoryUrl,
                 request.RequestedBy),
             ct);
@@ -37,11 +37,18 @@ public sealed class WorkflowRunsController : ControllerBase
             id = result.WorkflowRunId,
             result.SolutionId,
             result.KnowledgeRoot,
+            result.TargetStorageCode,
+            result.TargetCode,
+            result.ProfileCode,
+            result.OverlaySolutionName,
+            result.OverlayTargetCode,
             result.RepositoryCreated,
             result.GitInitialized,
             result.RemoteConfigured,
+            result.SolutionFileCreated,
             result.CreatedDocuments,
-            result.ExistingDocuments
+            result.ExistingDocuments,
+            result.CopiedEntries
         });
     }
 

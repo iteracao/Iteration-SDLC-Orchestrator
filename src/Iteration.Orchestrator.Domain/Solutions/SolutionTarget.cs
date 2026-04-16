@@ -25,6 +25,17 @@ public sealed class SolutionTarget
         string solutionOverlayCode)
     {
         SolutionId = solutionId;
+        Update(code, name, repositoryPath, mainSolutionFile, profileCode, solutionOverlayCode);
+    }
+
+    public void Update(
+        string code,
+        string name,
+        string repositoryPath,
+        string mainSolutionFile,
+        string profileCode,
+        string solutionOverlayCode)
+    {
         Code = code.Trim();
         Name = name.Trim();
         RepositoryPath = repositoryPath.Trim();

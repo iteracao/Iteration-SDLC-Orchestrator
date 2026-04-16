@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
@@ -8,13 +9,13 @@ namespace Iteration.Orchestrator.Application.Solutions;
 
 public sealed record SetupSolutionCommand(
     Guid? SolutionId,
-    string Code,
     string Name,
     string Description,
     string RepositoryPath,
     string MainSolutionFile,
     string ProfileCode,
-    string SolutionOverlayCode,
+    string TargetCode,
+    Guid? OverlayTargetId,
     string? RemoteRepositoryUrl,
     string RequestedBy);
 
@@ -22,14 +23,22 @@ public sealed record SetupSolutionExecutionResult(
     Guid WorkflowRunId,
     Guid SolutionId,
     string KnowledgeRoot,
-    IReadOnlyList<string> CreatedDocuments,
-    IReadOnlyList<string> ExistingDocuments,
+    string TargetStorageCode,
+    string TargetCode,
+    string ProfileCode,
+    string OverlaySolutionName,
+    string OverlayTargetCode,
     bool RepositoryCreated,
     bool GitInitialized,
-    bool RemoteConfigured);
+    bool RemoteConfigured,
+    bool SolutionFileCreated,
+    IReadOnlyList<string> CreatedDocuments,
+    IReadOnlyList<string> ExistingDocuments,
+    IReadOnlyList<string> CopiedEntries);
 
 public sealed class SetupSolutionHandler
 {
+    private static readonly Regex MainSolutionFileRegex = new(@"^[A-Za-z0-9.]+\.sln$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly IAppDbContext _db;
     private readonly IConfigCatalog _config;
     private readonly ISolutionSetupService _solutionSetupService;
@@ -51,11 +60,15 @@ public sealed class SetupSolutionHandler
     {
         var workflow = await _config.GetWorkflowAsync("setup-solution", ct);
         var agent = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
-        _ = await _config.GetProfileAsync(command.ProfileCode, ct);
-        var solutionCode = BuildSolutionCode(command.Code, command.Name);
 
-        var existingByCode = await _db.SolutionTargets
-            .FirstOrDefaultAsync(x => x.Code == solutionCode, ct);
+        var profileCode = string.IsNullOrWhiteSpace(command.ProfileCode)
+            ? "dotnet-web-enterprise"
+            : command.ProfileCode.Trim();
+
+        _ = await _config.GetProfileAsync(profileCode, ct);
+
+        var mainSolutionFile = ValidateMainSolutionFile(command.MainSolutionFile);
+        var targetCode = NormalizeTargetCode(command.TargetCode);
 
         var solutionRecord = command.SolutionId.HasValue
             ? await _db.Solutions.FirstOrDefaultAsync(x => x.Id == command.SolutionId.Value, ct)
@@ -66,40 +79,75 @@ public sealed class SetupSolutionHandler
             throw new InvalidOperationException("Solution not found.");
         }
 
-        if (existingByCode is not null &&
-            (!command.SolutionId.HasValue || existingByCode.SolutionId != command.SolutionId.Value))
-        {
-            throw new InvalidOperationException($"Solution code '{solutionCode}' is already in use.");
-        }
-
         if (solutionRecord is null)
         {
-            solutionRecord = new Solution(
-                command.Name,
-                command.Description,
-                command.ProfileCode);
-
+            solutionRecord = new Solution(command.Name, command.Description, profileCode);
             _db.Solutions.Add(solutionRecord);
             await _db.SaveChangesAsync(ct);
         }
+        else
+        {
+            solutionRecord.Update(command.Name, command.Description);
+        }
+
+        var targetStorageCode = BuildTargetStorageCode(command.Name, mainSolutionFile, targetCode);
+
+        var existingByCode = await _db.SolutionTargets
+            .FirstOrDefaultAsync(x => x.Code == targetStorageCode, ct);
+
+        if (existingByCode is not null && existingByCode.SolutionId != solutionRecord.Id)
+        {
+            throw new InvalidOperationException($"Target code '{targetCode}' is already in use for another solution workspace.");
+        }
+
+        var overlayTarget = command.OverlayTargetId.HasValue
+            ? await _db.SolutionTargets
+                .Join(
+                    _db.Solutions,
+                    target => target.SolutionId,
+                    solution => solution.Id,
+                    (target, solution) => new OverlayTargetLookup(
+                        target.Id,
+                        target.Code,
+                        target.RepositoryPath,
+                        solution.Name))
+                .FirstOrDefaultAsync(x => x.Id == command.OverlayTargetId.Value, ct)
+            : null;
+
+        if (command.OverlayTargetId.HasValue && overlayTarget is null)
+        {
+            throw new InvalidOperationException("Overlay source target not found.");
+        }
+
+        var overlaySolutionName = overlayTarget?.SolutionName ?? string.Empty;
+        var overlayTargetCode = overlayTarget is null ? string.Empty : ExtractDisplayTargetCode(overlayTarget.StorageCode);
 
         var existing = await _db.SolutionTargets
             .FirstOrDefaultAsync(x => x.SolutionId == solutionRecord.Id, ct);
 
-        var solution = existing ?? new SolutionTarget(
+        var solutionTarget = existing ?? new SolutionTarget(
             solutionRecord.Id,
-            solutionCode,
-            command.Name,
+            targetStorageCode,
+            overlaySolutionName,
             command.RepositoryPath,
-            command.MainSolutionFile,
-            command.ProfileCode,
-            command.SolutionOverlayCode);
+            mainSolutionFile,
+            profileCode,
+            overlayTargetCode);
+
+        solutionTarget.Update(
+            targetStorageCode,
+            overlaySolutionName,
+            command.RepositoryPath,
+            mainSolutionFile,
+            profileCode,
+            overlayTargetCode);
 
         if (existing is null)
         {
-            _db.SolutionTargets.Add(solution);
-            await _db.SaveChangesAsync(ct);
+            _db.SolutionTargets.Add(solutionTarget);
         }
+
+        await _db.SaveChangesAsync(ct);
 
         var run = new WorkflowRun(null, null, solutionRecord.Id, workflow.Code, command.RequestedBy);
         run.Start("solution-setup");
@@ -114,13 +162,18 @@ public sealed class SetupSolutionHandler
             requestedBy = command.RequestedBy,
             solution = new
             {
-                Code = solutionCode,
+                solutionRecord.Id,
                 command.Name,
                 command.Description,
+                ProfileCode = profileCode,
+                TargetCode = targetCode,
+                TargetStorageCode = targetStorageCode,
                 RepositoryRoot = command.RepositoryPath,
-                command.MainSolutionFile,
-                command.ProfileCode,
-                command.SolutionOverlayCode,
+                MainSolutionFile = mainSolutionFile,
+                OverlayTargetId = overlayTarget?.Id,
+                OverlaySolutionName = overlaySolutionName,
+                OverlayTargetCode = overlayTargetCode,
+                OverlaySourceRepositoryRoot = overlayTarget?.RepositoryPath,
                 command.RemoteRepositoryUrl
             }
         });
@@ -134,12 +187,14 @@ public sealed class SetupSolutionHandler
         {
             var setupResult = await _solutionSetupService.SetupAsync(
                 new SolutionSetupRequest(
-                    solutionCode,
+                    targetStorageCode,
                     command.Name,
                     command.RepositoryPath,
-                    command.MainSolutionFile,
-                    command.ProfileCode,
-                    command.SolutionOverlayCode,
+                    mainSolutionFile,
+                    profileCode,
+                    overlaySolutionName,
+                    overlayTargetCode,
+                    overlayTarget?.RepositoryPath,
                     command.RemoteRepositoryUrl),
                 ct);
 
@@ -149,10 +204,17 @@ public sealed class SetupSolutionHandler
                 workflowName = workflow.Name,
                 agent = agent.Code,
                 solutionId = solutionRecord.Id,
+                targetStorageCode,
+                targetCode,
+                profileCode,
+                overlaySolutionName,
+                overlayTargetCode,
                 setupResult.KnowledgeRoot,
                 setupResult.RepositoryCreated,
                 setupResult.GitInitialized,
                 setupResult.RemoteConfigured,
+                setupResult.SolutionFileCreated,
+                setupResult.CopiedEntries,
                 setupResult.CreatedDocuments,
                 setupResult.ExistingDocuments
             });
@@ -168,11 +230,18 @@ public sealed class SetupSolutionHandler
                 run.Id,
                 solutionRecord.Id,
                 setupResult.KnowledgeRoot,
-                setupResult.CreatedDocuments,
-                setupResult.ExistingDocuments,
+                targetStorageCode,
+                targetCode,
+                profileCode,
+                overlaySolutionName,
+                overlayTargetCode,
                 setupResult.RepositoryCreated,
                 setupResult.GitInitialized,
-                setupResult.RemoteConfigured);
+                setupResult.RemoteConfigured,
+                setupResult.SolutionFileCreated,
+                setupResult.CreatedDocuments,
+                setupResult.ExistingDocuments,
+                setupResult.CopiedEntries);
         }
         catch (Exception ex)
         {
@@ -183,9 +252,27 @@ public sealed class SetupSolutionHandler
         }
     }
 
-    private static string BuildSolutionCode(string code, string name)
+    private static string ValidateMainSolutionFile(string value)
     {
-        var source = string.IsNullOrWhiteSpace(code) ? name : code;
+        var candidate = value.Trim();
+        if (!MainSolutionFileRegex.IsMatch(candidate))
+        {
+            throw new InvalidOperationException("Main solution file must use only A-Z, a-z, 0-9 and '.' and end with .sln.");
+        }
+
+        return candidate;
+    }
+
+    private static string NormalizeTargetCode(string value)
+    {
+        var candidate = string.IsNullOrWhiteSpace(value) ? "dev" : value.Trim().ToLowerInvariant();
+        return candidate;
+    }
+
+    private static string BuildTargetStorageCode(string solutionName, string mainSolutionFile, string targetCode)
+    {
+        var technicalName = Path.GetFileNameWithoutExtension(mainSolutionFile);
+        var source = string.IsNullOrWhiteSpace(technicalName) ? solutionName : technicalName;
         var chars = source
             .Trim()
             .ToLowerInvariant()
@@ -198,6 +285,20 @@ public sealed class SetupSolutionHandler
             normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
         }
 
-        return normalized.Trim('-');
+        normalized = normalized.Trim('-');
+        return $"{normalized}/{targetCode}";
     }
+
+    private static string ExtractDisplayTargetCode(string storageCode)
+    {
+        if (string.IsNullOrWhiteSpace(storageCode))
+        {
+            return string.Empty;
+        }
+
+        var slashIndex = storageCode.LastIndexOf('/');
+        return slashIndex >= 0 ? storageCode[(slashIndex + 1)..] : storageCode;
+    }
+
+    private sealed record OverlayTargetLookup(Guid Id, string StorageCode, string RepositoryPath, string SolutionName);
 }

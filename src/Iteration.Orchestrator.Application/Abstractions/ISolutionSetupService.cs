@@ -6,7 +6,9 @@ public sealed record SolutionSetupRequest(
     string RepositoryRoot,
     string MainSolutionFile,
     string ProfileCode,
-    string SolutionOverlayCode,
+    string OverlaySolutionName,
+    string OverlayTargetCode,
+    string? OverlaySourceRepositoryRoot,
     string? RemoteRepositoryUrl);
 
 public sealed record SolutionSetupResult(
@@ -14,8 +16,10 @@ public sealed record SolutionSetupResult(
     bool RepositoryCreated,
     bool GitInitialized,
     bool RemoteConfigured,
+    bool SolutionFileCreated,
     IReadOnlyList<string> CreatedDocuments,
-    IReadOnlyList<string> ExistingDocuments);
+    IReadOnlyList<string> ExistingDocuments,
+    IReadOnlyList<string> CopiedEntries);
 
 public interface ISolutionSetupService
 {

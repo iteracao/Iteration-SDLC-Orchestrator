@@ -27,10 +27,13 @@ public sealed class FileSystemSolutionSetupService : ISolutionSetupService
             repositoryCreated = true;
         }
 
+        var copiedEntries = await CopyOverlaySourceAsync(request, ct);
+
         var gitInitialized = EnsureGitRepository(request.RepositoryRoot);
         var remoteConfigured = ConfigureRemoteOrigin(request.RepositoryRoot, request.RemoteRepositoryUrl);
+        var solutionFileCreated = await EnsureMainSolutionFileAsync(request, ct);
 
-        var knowledgeRoot = Path.Combine(request.RepositoryRoot, "AI", "solutions", request.SolutionCode);
+        var knowledgeRoot = Path.Combine(request.RepositoryRoot, "AI", "solutions", request.SolutionCode.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(knowledgeRoot);
 
         var createdDocuments = new List<string>();
@@ -60,8 +63,118 @@ public sealed class FileSystemSolutionSetupService : ISolutionSetupService
             repositoryCreated,
             gitInitialized,
             remoteConfigured,
+            solutionFileCreated,
             createdDocuments,
-            existingDocuments);
+            existingDocuments,
+            copiedEntries);
+    }
+
+    private static async Task<IReadOnlyList<string>> CopyOverlaySourceAsync(SolutionSetupRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.OverlaySourceRepositoryRoot))
+        {
+            return [];
+        }
+
+        var sourceRoot = request.OverlaySourceRepositoryRoot.Trim();
+        if (!Directory.Exists(sourceRoot))
+        {
+            throw new InvalidOperationException($"Overlay source repository '{sourceRoot}' was not found.");
+        }
+
+        if (string.Equals(Path.GetFullPath(sourceRoot), Path.GetFullPath(request.RepositoryRoot), StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var copiedEntries = new List<string>();
+        await CopyDirectoryAsync(sourceRoot, request.RepositoryRoot, sourceRoot, copiedEntries, ct);
+        return copiedEntries;
+    }
+
+    private static async Task CopyDirectoryAsync(
+        string sourceDirectory,
+        string destinationRoot,
+        string sourceRoot,
+        List<string> copiedEntries,
+        CancellationToken ct)
+    {
+        foreach (var directory in Directory.GetDirectories(sourceDirectory))
+        {
+            ct.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(directory);
+            if (ShouldSkipDirectory(name))
+            {
+                continue;
+            }
+
+            var relativePath = Path.GetRelativePath(sourceRoot, directory);
+            var destinationDirectory = Path.Combine(destinationRoot, relativePath);
+            Directory.CreateDirectory(destinationDirectory);
+            await CopyDirectoryAsync(directory, destinationRoot, sourceRoot, copiedEntries, ct);
+        }
+
+        foreach (var file in Directory.GetFiles(sourceDirectory))
+        {
+            ct.ThrowIfCancellationRequested();
+            var fileName = Path.GetFileName(file);
+            if (ShouldSkipFile(fileName))
+            {
+                continue;
+            }
+
+            var relativePath = Path.GetRelativePath(sourceRoot, file);
+            var destinationFile = Path.Combine(destinationRoot, relativePath);
+            var destinationDirectory = Path.GetDirectoryName(destinationFile);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            if (File.Exists(destinationFile))
+            {
+                continue;
+            }
+
+            await using var sourceStream = File.OpenRead(file);
+            await using var destinationStream = File.Create(destinationFile);
+            await sourceStream.CopyToAsync(destinationStream, ct);
+            copiedEntries.Add(relativePath.Replace('\\', '/'));
+        }
+    }
+
+    private static bool ShouldSkipDirectory(string name)
+        => string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, ".vs", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, "bin", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, "obj", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ShouldSkipFile(string name)
+        => string.Equals(name, "Thumbs.db", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, ".DS_Store", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<bool> EnsureMainSolutionFileAsync(SolutionSetupRequest request, CancellationToken ct)
+    {
+        var fullPath = Path.Combine(request.RepositoryRoot, request.MainSolutionFile);
+        if (File.Exists(fullPath))
+        {
+            return false;
+        }
+
+        var technicalName = Path.GetFileNameWithoutExtension(request.MainSolutionFile);
+        var content = $"""
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+# Generated by Iteration SDLC Orchestrator
+# Profile: {request.ProfileCode}
+# Solution: {request.SolutionName}
+# TechnicalName: {technicalName}
+""";
+
+        await File.WriteAllTextAsync(fullPath, content, ct);
+        return true;
     }
 
     private static bool EnsureGitRepository(string repositoryRoot)

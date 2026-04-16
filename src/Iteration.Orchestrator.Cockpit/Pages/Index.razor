@@ -179,7 +179,7 @@
                            FullWidth="true">
                     @foreach (var solution in _solutions)
                     {
-                        <MudSelectItem T="Guid?" Value="@solution.SolutionId">@solution.Name (@solution.Code)</MudSelectItem>
+                        <MudSelectItem T="Guid?" Value="@solution.SolutionId">@solution.Name</MudSelectItem>
                     }
                 </MudSelect>
             </div>
@@ -234,25 +234,31 @@
             <MudForm @ref="_createSolutionForm">
                 <MudGrid>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Code" @bind-Value="_solutionRequest.Code" Required="true" RequiredError="Code is required." />
+                        <MudTextField T="string" Label="Solution name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." />
+                        <MudTextField T="string" Label="Profile" Value="@_solutionRequest.ProfileCode" ReadOnly="true" Disabled="true" />
                     </MudItem>
                     <MudItem xs="12">
                         <MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" />
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Repository Path" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." />
+                        <MudTextField T="string" Label="Repository folder" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Main Solution File" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                        <MudTextField T="string" Label="Main solution file" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudTextField T="string" Label="Profile Code" @bind-Value="_solutionRequest.ProfileCode" Required="true" RequiredError="Profile code is required." />
+                        <MudTextField T="string" Label="Target" Value="@_solutionRequest.TargetCode" ReadOnly="true" Disabled="true" />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudTextField T="string" Label="Overlay Code" @bind-Value="_solutionRequest.SolutionOverlayCode" Required="true" RequiredError="Solution overlay code is required." />
+                        <MudSelect T="Guid?" Label="Overlay source" Value="_solutionRequest.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Clearable="true">
+                            <MudSelectItem T="Guid?" Value="@((Guid?)null)">(none)</MudSelectItem>
+                            @foreach (var overlayOption in OverlayOptions)
+                            {
+                                <MudSelectItem T="Guid?" Value="@overlayOption.Target.Id">@overlayOption.Label</MudSelectItem>
+                            }
+                        </MudSelect>
                     </MudItem>
                     <MudItem xs="12">
                         <MudTextField T="string" Label="Remote Repository URL" @bind-Value="_solutionRequest.RemoteRepositoryUrl" />
@@ -469,6 +475,9 @@
         new(LaneKeys.Documentation, "Documentation")
     ];
 
+    private const string DefaultProfileCode = "dotnet-web-enterprise";
+    private const string DefaultTargetCode = "dev";
+
     private readonly List<SolutionSummary> _solutions = [];
     private readonly List<RequirementRow> _requirements = [];
     private readonly List<BacklogRow> _backlog = [];
@@ -491,8 +500,14 @@
     private SolutionDocumentContent? _activeDocument;
     private readonly SetupSolutionModel _solutionRequest = new();
 
+    private IEnumerable<OverlayOption> OverlayOptions
+        => _solutions.SelectMany(solution => solution.Targets.Select(target => new OverlayOption(solution, target)))
+            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
+
     protected override async Task OnInitializedAsync()
     {
+        _solutionRequest.ProfileCode = DefaultProfileCode;
+        _solutionRequest.TargetCode = DefaultTargetCode;
         SelectedSolutionState.Changed += HandleSolutionChanged;
         await LoadSolutionsAsync();
         await EnsureSelectedSolutionAsync();
@@ -528,7 +543,7 @@
         if (first is not null)
         {
             _selectedSolutionId = first.SolutionId;
-            SelectedSolutionState.SetCurrent(first);
+            SelectedSolutionState.SetCurrent(first, first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id);
             await LoadDocumentsAsync();
         }
     }
@@ -537,7 +552,7 @@
     {
         _selectedSolutionId = solutionId;
         var selected = _solutions.FirstOrDefault(x => x.SolutionId == solutionId);
-        SelectedSolutionState.SetCurrent(selected);
+        SelectedSolutionState.SetCurrent(selected, selected?.Targets.Count == 1 ? selected.Targets[0].Id : selected?.Targets.FirstOrDefault()?.Id);
         await LoadDocumentsAsync();
         await LoadCockpitAsync();
     }
@@ -779,32 +794,32 @@
             var response = await client.PostAsJsonAsync("api/workflow-runs/setup-solution", new
             {
                 _solutionRequest.SolutionId,
-                _solutionRequest.Code,
                 _solutionRequest.Name,
                 _solutionRequest.Description,
                 _solutionRequest.RepositoryPath,
                 _solutionRequest.MainSolutionFile,
                 _solutionRequest.ProfileCode,
-                _solutionRequest.SolutionOverlayCode,
+                _solutionRequest.TargetCode,
+                _solutionRequest.OverlayTargetId,
                 _solutionRequest.RemoteRepositoryUrl,
                 RequestedBy = "rui"
             });
 
             response.EnsureSuccessStatusCode();
 
-            var createdSolutionCode = _solutionRequest.Code;
+            var createdSolutionName = _solutionRequest.Name;
             _createSolutionMessageSeverity = Severity.Success;
             _createSolutionMessage = "Solution setup workflow completed.";
             ResetSolutionForm();
             await LoadSolutionsAsync();
 
-            var newSelection = _solutions.FirstOrDefault(x => string.Equals(x.Code, createdSolutionCode, StringComparison.OrdinalIgnoreCase))
+            var newSelection = _solutions.FirstOrDefault(x => string.Equals(x.Name, createdSolutionName, StringComparison.OrdinalIgnoreCase))
                 ?? _solutions.OrderByDescending(x => x.CreatedUtc).FirstOrDefault();
 
             if (newSelection is not null)
             {
                 _selectedSolutionId = newSelection.SolutionId;
-                SelectedSolutionState.SetCurrent(newSelection);
+                SelectedSolutionState.SetCurrent(newSelection, newSelection.Targets.Count == 1 ? newSelection.Targets[0].Id : newSelection.Targets.FirstOrDefault()?.Id);
             }
 
             _createSolutionPanelOpen = false;
@@ -951,16 +966,22 @@
         return "#94a3b8";
     }
 
+    private Task OnOverlayTargetChangedAsync(Guid? targetId)
+    {
+        _solutionRequest.OverlayTargetId = targetId;
+        return Task.CompletedTask;
+    }
+
     private void ResetSolutionForm()
     {
         _solutionRequest.SolutionId = null;
-        _solutionRequest.Code = string.Empty;
         _solutionRequest.Name = string.Empty;
         _solutionRequest.Description = string.Empty;
         _solutionRequest.RepositoryPath = string.Empty;
         _solutionRequest.MainSolutionFile = string.Empty;
-        _solutionRequest.ProfileCode = string.Empty;
-        _solutionRequest.SolutionOverlayCode = string.Empty;
+        _solutionRequest.ProfileCode = DefaultProfileCode;
+        _solutionRequest.TargetCode = DefaultTargetCode;
+        _solutionRequest.OverlayTargetId = null;
         _solutionRequest.RemoteRepositoryUrl = string.Empty;
     }
 
@@ -999,14 +1020,21 @@
     private sealed class SetupSolutionModel
     {
         public Guid? SolutionId { get; set; }
-        public string Code { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public string RepositoryPath { get; set; } = string.Empty;
         public string MainSolutionFile { get; set; } = string.Empty;
-        public string ProfileCode { get; set; } = string.Empty;
-        public string SolutionOverlayCode { get; set; } = string.Empty;
+        public string ProfileCode { get; set; } = DefaultProfileCode;
+        public string TargetCode { get; set; } = DefaultTargetCode;
+        public Guid? OverlayTargetId { get; set; }
         public string? RemoteRepositoryUrl { get; set; }
+    }
+
+    private sealed class OverlayOption(SolutionSummary solution, SolutionTargetSummary target)
+    {
+        public SolutionSummary Solution { get; } = solution;
+        public SolutionTargetSummary Target { get; } = target;
+        public string Label => $"{Solution.Name} / {Target.DisplayName}";
     }
 
     private sealed class SolutionDocumentSummary

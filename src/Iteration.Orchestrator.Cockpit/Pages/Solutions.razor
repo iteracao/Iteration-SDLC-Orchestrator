@@ -8,13 +8,13 @@
 
 <MudText Typo="Typo.h4">Solutions</MudText>
 <MudText Typo="Typo.body1" Class="mt-2 mb-4">
-    Register or select a solution workspace for the SDLC orchestrator.
+    Register a solution, choose an overlay source target when needed, review the setup log, and manage the selected solution data.
 </MudText>
 
 <MudGrid>
     <MudItem xs="12" md="5">
         <MudPaper Class="pa-4">
-            <MudText Typo="Typo.h6" Class="mb-3">Setup solution</MudText>
+            <MudText Typo="Typo.h6" Class="mb-3">Create / setup solution</MudText>
 
             @if (!string.IsNullOrWhiteSpace(_message))
             {
@@ -24,26 +24,56 @@
             }
 
             <MudForm @ref="_form">
-                <MudTextField T="string" Label="Code" @bind-Value="_request.Code" Required="true" RequiredError="Code is required." />
-                <MudTextField T="string" Label="Name" @bind-Value="_request.Name" Required="true" RequiredError="Name is required." />
+                <MudTextField T="string" Label="Solution name" @bind-Value="_request.Name" Required="true" RequiredError="Solution name is required." />
                 <MudTextField T="string" Label="Description" @bind-Value="_request.Description" Lines="3" />
-                <MudTextField T="string" Label="Repository Path" @bind-Value="_request.RepositoryPath" Required="true" RequiredError="Repository path is required." />
-                <MudTextField T="string" Label="Main Solution File" @bind-Value="_request.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
-                <MudTextField T="string" Label="Profile Code" @bind-Value="_request.ProfileCode" Required="true" RequiredError="Profile code is required." />
-                <MudTextField T="string" Label="Solution Overlay Code" @bind-Value="_request.SolutionOverlayCode" Required="true" RequiredError="Solution overlay code is required." />
-                <MudTextField T="string" Label="Remote Repository URL" @bind-Value="_request.RemoteRepositoryUrl" />
+                <MudTextField T="string" Label="Repository folder" @bind-Value="_request.RepositoryPath" Required="true" RequiredError="Repository folder is required." />
+                <MudTextField T="string" Label="Main solution file" HelperText="Only A-Z, a-z, 0-9 and '.' are allowed. Must end with .sln." @bind-Value="_request.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                <MudTextField T="string" Label="Profile" Value="@_request.ProfileCode" ReadOnly="true" Disabled="true" />
+                <MudTextField T="string" Label="Target" Value="@_request.TargetCode" ReadOnly="true" Disabled="true" />
+                <MudSelect T="Guid?" Label="Overlay source" Value="_request.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Clearable="true">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">(none)</MudSelectItem>
+                    @foreach (var option in OverlayOptions)
+                    {
+                        <MudSelectItem T="Guid?" Value="@option.Target.Id">@option.Label</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTextField T="string" Label="Remote repository URL" @bind-Value="_request.RemoteRepositoryUrl" />
 
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" Disabled="_saving" OnClick="CreateSolutionAsync">
-                    Create / Setup solution
+                    Create / setup solution
                 </MudButton>
             </MudForm>
+
+            @if (_setupResult is not null)
+            {
+                <MudDivider Class="my-4" />
+                <MudText Typo="Typo.subtitle1" Class="mb-2">Latest setup log</MudText>
+                <MudText Typo="Typo.body2">Workflow run: @_setupResult.Id</MudText>
+                <MudText Typo="Typo.body2">Target: @_setupResult.TargetCode</MudText>
+                <MudText Typo="Typo.body2">Knowledge root: @_setupResult.KnowledgeRoot</MudText>
+                <MudText Typo="Typo.body2">Repository created: @BoolLabel(_setupResult.RepositoryCreated)</MudText>
+                <MudText Typo="Typo.body2">Git initialized: @BoolLabel(_setupResult.GitInitialized)</MudText>
+                <MudText Typo="Typo.body2">Remote configured: @BoolLabel(_setupResult.RemoteConfigured)</MudText>
+                <MudText Typo="Typo.body2">Solution file created: @BoolLabel(_setupResult.SolutionFileCreated)</MudText>
+
+                @if (_setupResult.CopiedEntries.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">Copied from overlay</MudText>
+                    <MudList Dense="true">
+                        @foreach (var entry in _setupResult.CopiedEntries.Take(10))
+                        {
+                            <MudListItem>@entry</MudListItem>
+                        }
+                    </MudList>
+                }
+            }
         </MudPaper>
     </MudItem>
 
     <MudItem xs="12" md="7">
         <MudPaper Class="pa-4">
             <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
-                <MudText Typo="Typo.h6">Available solutions</MudText>
+                <MudText Typo="Typo.h6">Registered solutions</MudText>
                 <MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Refresh</MudButton>
             </MudStack>
 
@@ -63,16 +93,16 @@
             {
                 <MudTable Items="_solutions" Dense="true" Hover="true">
                     <HeaderContent>
-                        <MudTh>Code</MudTh>
                         <MudTh>Name</MudTh>
                         <MudTh>Profile</MudTh>
+                        <MudTh>Targets</MudTh>
                         <MudTh>Created</MudTh>
                         <MudTh>Action</MudTh>
                     </HeaderContent>
                     <RowTemplate>
-                        <MudTd DataLabel="Code">@context.Code</MudTd>
                         <MudTd DataLabel="Name">@context.Name</MudTd>
                         <MudTd DataLabel="Profile">@context.ProfileCode</MudTd>
+                        <MudTd DataLabel="Targets">@string.Join(", ", context.Targets.Select(x => x.DisplayName))</MudTd>
                         <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
                         <MudTd DataLabel="Action">
                             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="() => SelectSolution(context)">
@@ -83,23 +113,99 @@
                 </MudTable>
             }
         </MudPaper>
+
+        @if (_selectedSolution is not null)
+        {
+            <MudPaper Class="pa-4 mt-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                    <MudText Typo="Typo.h6">Selected solution</MudText>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="DeleteSelectedSolutionAsync">Delete solution</MudButton>
+                </MudStack>
+
+                <MudForm @ref="_editForm">
+                    <MudGrid>
+                        <MudItem xs="12" md="6">
+                            <MudTextField T="string" Label="Solution name" @bind-Value="_editModel.Name" Required="true" RequiredError="Solution name is required." />
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudTextField T="string" Label="Profile" Value="@_editModel.ProfileCode" ReadOnly="true" Disabled="true" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField T="string" Label="Description" @bind-Value="_editModel.Description" Lines="3" />
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudDivider Class="my-4" />
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Targets</MudText>
+
+                    <MudSelect T="Guid?" Label="Target" Value="_selectedTargetId" ValueChanged="OnSelectedTargetChangedAsync" Disabled="_selectedSolution.Targets.Count <= 1">
+                        @foreach (var target in _selectedSolution.Targets)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)target.Id)">@target.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (_selectedTarget is not null)
+                    {
+                        <MudGrid Class="mt-2">
+                            <MudItem xs="12" md="4">
+                                <MudTextField T="string" Label="Target code" Value="@_selectedTarget.DisplayName" ReadOnly="true" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="8">
+                                <MudTextField T="string" Label="Storage code" Value="@_selectedTarget.StorageCode" ReadOnly="true" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField T="string" Label="Repository folder" @bind-Value="_editModel.RepositoryPath" Required="true" RequiredError="Repository folder is required." />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Main solution file" @bind-Value="_editModel.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Overlay source" Value="@OverlayDisplay(_selectedTarget)" ReadOnly="true" Disabled="true" />
+                            </MudItem>
+                        </MudGrid>
+                    }
+                </MudForm>
+
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="mt-4">
+                    <MudButton Variant="Variant.Outlined" OnClick="ResetEditModel">Reset</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_savingEdit" OnClick="SaveSelectedSolutionAsync">Save changes</MudButton>
+                </MudStack>
+            </MudPaper>
+        }
     </MudItem>
 </MudGrid>
 
 @code {
+    private const string DefaultProfileCode = "dotnet-web-enterprise";
+    private const string DefaultTargetCode = "dev";
+
     private MudForm? _form;
+    private MudForm? _editForm;
     private readonly List<SolutionSummary> _solutions = [];
     private readonly SetupSolutionModel _request = new();
+    private readonly EditSolutionModel _editModel = new();
     private bool _loading;
     private bool _saving;
+    private bool _savingEdit;
     private string? _loadError;
     private string? _message;
     private Severity _messageSeverity = Severity.Info;
+    private SolutionSummary? _selectedSolution;
+    private SolutionTargetSummary? _selectedTarget;
+    private Guid? _selectedTargetId;
+    private SetupSolutionResponse? _setupResult;
 
     protected override async Task OnInitializedAsync()
     {
+        _request.ProfileCode = DefaultProfileCode;
+        _request.TargetCode = DefaultTargetCode;
         await LoadAsync();
     }
+
+    private IEnumerable<OverlayOption> OverlayOptions
+        => _solutions.SelectMany(solution => solution.Targets.Select(target => new OverlayOption(solution, target)))
+            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
 
     private async Task LoadAsync()
     {
@@ -111,6 +217,15 @@
         {
             var client = HttpClientFactory.CreateClient("api");
             _solutions.AddRange(await client.GetFromJsonAsync<List<SolutionSummary>>("api/solutions") ?? []);
+
+            if (_selectedSolution is not null)
+            {
+                _selectedSolution = _solutions.FirstOrDefault(x => x.SolutionId == _selectedSolution.SolutionId);
+                _selectedTarget = _selectedSolution?.Targets.FirstOrDefault(x => x.Id == _selectedTargetId)
+                    ?? _selectedSolution?.Targets.FirstOrDefault();
+                _selectedTargetId = _selectedTarget?.Id;
+                ResetEditModel();
+            }
         }
         catch (Exception ex)
         {
@@ -120,6 +235,12 @@
         {
             _loading = false;
         }
+    }
+
+    private Task OnOverlayTargetChangedAsync(Guid? targetId)
+    {
+        _request.OverlayTargetId = targetId;
+        return Task.CompletedTask;
     }
 
     private async Task CreateSolutionAsync()
@@ -142,23 +263,33 @@
             var response = await client.PostAsJsonAsync("api/workflow-runs/setup-solution", new
             {
                 _request.SolutionId,
-                _request.Code,
                 _request.Name,
                 _request.Description,
                 _request.RepositoryPath,
                 _request.MainSolutionFile,
                 _request.ProfileCode,
-                _request.SolutionOverlayCode,
+                _request.TargetCode,
+                _request.OverlayTargetId,
                 _request.RemoteRepositoryUrl,
                 RequestedBy = "rui"
             });
 
             response.EnsureSuccessStatusCode();
+            _setupResult = await response.Content.ReadFromJsonAsync<SetupSolutionResponse>();
 
             _messageSeverity = Severity.Success;
             _message = "Solution setup workflow completed.";
             ResetForm();
             await LoadAsync();
+
+            if (_setupResult is not null)
+            {
+                var selection = _solutions.FirstOrDefault(x => x.SolutionId == _setupResult.SolutionId);
+                if (selection is not null)
+                {
+                    SelectSolution(selection);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -173,35 +304,191 @@
 
     private void SelectSolution(SolutionSummary solution)
     {
-        SelectedSolutionState.SetCurrent(solution);
-
+        _selectedSolution = solution;
+        _selectedTarget = solution.Targets.Count == 1 ? solution.Targets[0] : solution.Targets.FirstOrDefault();
+        _selectedTargetId = _selectedTarget?.Id;
+        ResetEditModel();
+        SelectedSolutionState.SetCurrent(solution, _selectedTargetId);
         _messageSeverity = Severity.Success;
         _message = $"Selected solution '{solution.Name}'.";
+    }
+
+    private Task OnSelectedTargetChangedAsync(Guid? targetId)
+    {
+        if (_selectedSolution is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _selectedTarget = _selectedSolution.Targets.FirstOrDefault(x => x.Id == targetId) ?? _selectedSolution.Targets.FirstOrDefault();
+        _selectedTargetId = _selectedTarget?.Id;
+        ResetEditModel();
+        SelectedSolutionState.SetCurrent(_selectedSolution, _selectedTargetId);
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveSelectedSolutionAsync()
+    {
+        if (_selectedSolution is null || _selectedTarget is null)
+        {
+            return;
+        }
+
+        if (_editForm is not null)
+        {
+            await _editForm.Validate();
+            if (!_editForm.IsValid)
+            {
+                return;
+            }
+        }
+
+        _savingEdit = true;
+        _message = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PutAsJsonAsync($"api/solutions/{_selectedSolution.SolutionId}", new
+            {
+                _editModel.Name,
+                _editModel.Description,
+                _editModel.RepositoryPath,
+                _editModel.MainSolutionFile,
+                OverlaySolutionName = _selectedTarget.OverlaySolutionName,
+                OverlayTargetCode = _selectedTarget.OverlayTargetCode
+            });
+
+            response.EnsureSuccessStatusCode();
+            _messageSeverity = Severity.Success;
+            _message = "Solution data updated.";
+            await LoadAsync();
+
+            var refreshed = _solutions.FirstOrDefault(x => x.SolutionId == _selectedSolution.SolutionId);
+            if (refreshed is not null)
+            {
+                SelectSolution(refreshed);
+            }
+        }
+        catch (Exception ex)
+        {
+            _messageSeverity = Severity.Error;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _savingEdit = false;
+        }
+    }
+
+    private async Task DeleteSelectedSolutionAsync()
+    {
+        if (_selectedSolution is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.DeleteAsync($"api/solutions/{_selectedSolution.SolutionId}");
+            response.EnsureSuccessStatusCode();
+
+            _messageSeverity = Severity.Success;
+            _message = "Solution and related historical data were removed from the database.";
+            _selectedSolution = null;
+            _selectedTarget = null;
+            _selectedTargetId = null;
+            SelectedSolutionState.SetCurrent(null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _messageSeverity = Severity.Error;
+            _message = ex.Message;
+        }
     }
 
     private void ResetForm()
     {
         _request.SolutionId = null;
-        _request.Code = string.Empty;
         _request.Name = string.Empty;
         _request.Description = string.Empty;
         _request.RepositoryPath = string.Empty;
         _request.MainSolutionFile = string.Empty;
-        _request.ProfileCode = string.Empty;
-        _request.SolutionOverlayCode = string.Empty;
+        _request.ProfileCode = DefaultProfileCode;
+        _request.TargetCode = DefaultTargetCode;
+        _request.OverlayTargetId = null;
         _request.RemoteRepositoryUrl = string.Empty;
     }
+
+    private void ResetEditModel()
+    {
+        if (_selectedSolution is null || _selectedTarget is null)
+        {
+            _editModel.Name = string.Empty;
+            _editModel.Description = string.Empty;
+            _editModel.ProfileCode = DefaultProfileCode;
+            _editModel.RepositoryPath = string.Empty;
+            _editModel.MainSolutionFile = string.Empty;
+            return;
+        }
+
+        _editModel.Name = _selectedSolution.Name;
+        _editModel.Description = _selectedSolution.Description;
+        _editModel.ProfileCode = _selectedSolution.ProfileCode;
+        _editModel.RepositoryPath = _selectedTarget.RepositoryPath;
+        _editModel.MainSolutionFile = _selectedTarget.MainSolutionFile;
+    }
+
+    private static string OverlayDisplay(SolutionTargetSummary target)
+        => string.IsNullOrWhiteSpace(target.OverlaySolutionName)
+            ? "(none)"
+            : $"{target.OverlaySolutionName} / {target.OverlayTargetCode}";
+
+    private static string BoolLabel(bool value) => value ? "Yes" : "No";
 
     private sealed class SetupSolutionModel
     {
         public Guid? SolutionId { get; set; }
-        public string Code { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public string RepositoryPath { get; set; } = string.Empty;
         public string MainSolutionFile { get; set; } = string.Empty;
-        public string ProfileCode { get; set; } = string.Empty;
-        public string SolutionOverlayCode { get; set; } = string.Empty;
+        public string ProfileCode { get; set; } = DefaultProfileCode;
+        public string TargetCode { get; set; } = DefaultTargetCode;
+        public Guid? OverlayTargetId { get; set; }
         public string? RemoteRepositoryUrl { get; set; }
+    }
+
+    private sealed class EditSolutionModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string ProfileCode { get; set; } = string.Empty;
+        public string RepositoryPath { get; set; } = string.Empty;
+        public string MainSolutionFile { get; set; } = string.Empty;
+    }
+
+    private sealed class OverlayOption(SolutionSummary solution, SolutionTargetSummary target)
+    {
+        public SolutionSummary Solution { get; } = solution;
+        public SolutionTargetSummary Target { get; } = target;
+        public string Label => $"{Solution.Name} / {Target.DisplayName}";
+    }
+
+    private sealed class SetupSolutionResponse
+    {
+        public Guid Id { get; set; }
+        public Guid SolutionId { get; set; }
+        public string KnowledgeRoot { get; set; } = string.Empty;
+        public string TargetCode { get; set; } = string.Empty;
+        public bool RepositoryCreated { get; set; }
+        public bool GitInitialized { get; set; }
+        public bool RemoteConfigured { get; set; }
+        public bool SolutionFileCreated { get; set; }
+        public List<string> CreatedDocuments { get; set; } = [];
+        public List<string> ExistingDocuments { get; set; } = [];
+        public List<string> CopiedEntries { get; set; } = [];
     }
 }
