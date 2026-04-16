@@ -13,9 +13,9 @@ public sealed class WorkflowRunsController : ControllerBase
 {
     [HttpPost("setup-solution")]
     public async Task<IActionResult> SetupSolution(
-     [FromBody] SetupSolutionRequest request,
-     [FromServices] SetupSolutionHandler handler,
-     CancellationToken ct)
+        [FromBody] SetupSolutionRequest request,
+        [FromServices] SetupSolutionHandler handler,
+        CancellationToken ct)
     {
         var result = await handler.HandleAsync(
             new SetupSolutionCommand(

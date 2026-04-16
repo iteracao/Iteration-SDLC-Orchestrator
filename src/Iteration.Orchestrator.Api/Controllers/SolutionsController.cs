@@ -1,5 +1,3 @@
-using Iteration.Orchestrator.Api.Contracts;
-using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,41 +8,29 @@ namespace Iteration.Orchestrator.Api.Controllers;
 [Route("api/solutions")]
 public sealed class SolutionsController : ControllerBase
 {
-    [HttpPost]
-    public async Task<IActionResult> Create(
-        [FromBody] RegisterSolutionRequest request,
-        [FromServices] RegisterSolutionTargetHandler handler,
-        CancellationToken ct)
-    {
-        var id = await handler.HandleAsync(new RegisterSolutionTargetCommand(
-            request.Code,
-            request.Name,
-            request.Description,
-            request.RepositoryPath,
-            request.MainSolutionFile,
-            request.ProfileCode,
-            request.SolutionOverlayCode), ct);
-
-        return Ok(new { id });
-    }
-
     [HttpGet]
     public async Task<IActionResult> List([FromServices] AppDbContext db, CancellationToken ct)
     {
         var data = await db.SolutionTargets
+            .Join(
+                db.Solutions,
+                target => target.SolutionId,
+                solution => solution.Id,
+                (target, solution) => new
+                {
+                    Id = target.Id,
+                    target.SolutionId,
+                    target.Code,
+                    target.Name,
+                    solution.Description,
+                    target.RepositoryPath,
+                    target.MainSolutionFile,
+                    target.ProfileCode,
+                    target.SolutionOverlayCode,
+                    target.IsActive,
+                    target.CreatedUtc
+                })
             .OrderBy(x => x.Name)
-            .Select(x => new
-            {
-                x.Id,
-                x.Code,
-                x.Name,
-                x.RepositoryPath,
-                x.MainSolutionFile,
-                x.ProfileCode,
-                x.SolutionOverlayCode,
-                x.IsActive,
-                x.CreatedUtc
-            })
             .ToListAsync(ct);
 
         return Ok(data);
@@ -55,18 +41,24 @@ public sealed class SolutionsController : ControllerBase
     {
         var solution = await db.SolutionTargets
             .Where(x => x.Id == id)
-            .Select(x => new
-            {
-                x.Id,
-                x.Code,
-                x.Name,
-                x.RepositoryPath,
-                x.MainSolutionFile,
-                x.ProfileCode,
-                x.SolutionOverlayCode,
-                x.IsActive,
-                x.CreatedUtc
-            })
+            .Join(
+                db.Solutions,
+                target => target.SolutionId,
+                solutionRecord => solutionRecord.Id,
+                (target, solutionRecord) => new
+                {
+                    Id = target.Id,
+                    target.SolutionId,
+                    target.Code,
+                    target.Name,
+                    solutionRecord.Description,
+                    target.RepositoryPath,
+                    target.MainSolutionFile,
+                    target.ProfileCode,
+                    target.SolutionOverlayCode,
+                    target.IsActive,
+                    target.CreatedUtc
+                })
             .FirstOrDefaultAsync(ct);
 
         return solution is null ? NotFound() : Ok(solution);

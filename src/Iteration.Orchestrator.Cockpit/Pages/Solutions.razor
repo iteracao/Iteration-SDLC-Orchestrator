@@ -15,6 +15,7 @@
             <MudForm @ref="_form">
                 <MudTextField @bind-Value="_request.Code" Label="Code" Required="true" />
                 <MudTextField @bind-Value="_request.Name" Label="Name" Required="true" />
+                <MudTextField @bind-Value="_request.Description" Label="Description" Lines="3" Required="true" />
                 <MudTextField @bind-Value="_request.RepositoryPath" Label="Repository path" Required="true" />
                 <MudTextField @bind-Value="_request.MainSolutionFile" Label="Main solution file" Required="true" />
                 <MudTextField @bind-Value="_request.ProfileCode" Label="Profile code" Required="true" />
@@ -182,6 +183,7 @@
     {
         _request.Code = string.Empty;
         _request.Name = string.Empty;
+        _request.Description = string.Empty;
         _request.RepositoryPath = string.Empty;
         _request.MainSolutionFile = string.Empty;
         _request.ProfileCode = "dotnet-web-enterprise";
@@ -195,6 +197,7 @@
     {
         public string Code { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
         public string RepositoryPath { get; set; } = string.Empty;
         public string MainSolutionFile { get; set; } = string.Empty;
         public string ProfileCode { get; set; } = string.Empty;
