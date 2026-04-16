@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai/framework/contracts/workflow-input-envelope.schema.json",
+  "title": "WorkflowInputEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflowCode",
+    "targetSolutionId",
+    "triggeredBy",
+    "triggeredAtUtc",
+    "context"
+  ],
+  "properties": {
+    "workflowCode": {
+      "type": "string"
+    },
+    "targetSolutionId": {
+      "type": "string"
+    },
+    "triggeredBy": {
+      "type": "string"
+    },
+    "triggeredAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "$ref": "requirement.schema.json"
+        },
+        "relatedRequirements": {
+          "type": "array",
+          "items": {
+            "$ref": "requirement.schema.json"
+          }
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "$ref": "open-question.schema.json"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "decision.schema.json"
+          }
+        },
+        "documentationReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "knowledgeReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repositoryEvidenceReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

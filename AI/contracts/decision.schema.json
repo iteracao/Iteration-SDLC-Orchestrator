@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai/framework/contracts/decision.schema.json",
+  "title": "Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decisionId",
+    "title",
+    "decisionType",
+    "status",
+    "summary",
+    "decidedAtUtc"
+  ],
+  "properties": {
+    "decisionId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3
+    },
+    "decisionType": {
+      "type": "string",
+      "enum": [
+        "business",
+        "functional",
+        "technical",
+        "architecture",
+        "workflow",
+        "process",
+        "security",
+        "data",
+        "testing",
+        "delivery"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "accepted",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10
+    },
+    "rationale": {
+      "type": ["string", "null"]
+    },
+    "consequences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "alternativesConsidered": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "targetSolutionId": {
+      "type": ["string", "null"]
+    },
+    "requirementIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "openQuestionIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workflowRunId": {
+      "type": ["string", "null"]
+    },
+    "decidedBy": {
+      "type": ["string", "null"]
+    },
+    "decidedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "supersededByDecisionId": {
+      "type": ["string", "null"]
+    }
+  }
+}

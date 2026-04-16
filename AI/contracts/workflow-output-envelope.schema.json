@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai/framework/contracts/workflow-output-envelope.schema.json",
+  "title": "WorkflowOutputEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflowCode",
+    "targetSolutionId",
+    "completedAtUtc",
+    "status",
+    "result"
+  ],
+  "properties": {
+    "workflowCode": {
+      "type": "string"
+    },
+    "targetSolutionId": {
+      "type": "string"
+    },
+    "workflowRunId": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "completed-with-open-questions",
+        "blocked",
+        "failed"
+      ]
+    },
+    "completedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "recommendedNextWorkflowCodes"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "artifactType",
+              "name"
+            ],
+            "properties": {
+              "artifactType": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "generatedRequirements": {
+          "type": "array",
+          "items": {
+            "$ref": "requirement.schema.json"
+          }
+        },
+        "generatedOpenQuestions": {
+          "type": "array",
+          "items": {
+            "$ref": "open-question.schema.json"
+          }
+        },
+        "generatedDecisions": {
+          "type": "array",
+          "items": {
+            "$ref": "decision.schema.json"
+          }
+        },
+        "documentationUpdates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "knowledgeUpdates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommendedNextWorkflowCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

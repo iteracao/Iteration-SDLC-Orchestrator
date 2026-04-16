@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai/framework/contracts/open-question.schema.json",
+  "title": "OpenQuestion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "openQuestionId",
+    "title",
+    "description",
+    "status",
+    "raisedBy",
+    "raisedAtUtc"
+  ],
+  "properties": {
+    "openQuestionId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3
+    },
+    "description": {
+      "type": "string",
+      "minLength": 5
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "waiting-for-input",
+        "resolved",
+        "cancelled"
+      ]
+    },
+    "raisedBy": {
+      "type": "string",
+      "enum": [
+        "user",
+        "workflow",
+        "agent",
+        "analysis",
+        "design",
+        "implementation",
+        "testing",
+        "delivery"
+      ]
+    },
+    "targetSolutionId": {
+      "type": ["string", "null"]
+    },
+    "requirementId": {
+      "type": ["string", "null"]
+    },
+    "workflowRunId": {
+      "type": ["string", "null"]
+    },
+    "category": {
+      "type": ["string", "null"],
+      "enum": [
+        "business",
+        "functional",
+        "technical",
+        "non-functional",
+        "integration",
+        "security",
+        "data",
+        "ux",
+        "testing",
+        "deployment",
+        null
+      ]
+    },
+    "resolutionNotes": {
+      "type": ["string", "null"]
+    },
+    "resolvedByDecisionId": {
+      "type": ["string", "null"]
+    },
+    "raisedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resolvedAtUtc": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

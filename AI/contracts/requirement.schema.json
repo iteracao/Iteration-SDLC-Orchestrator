@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai/framework/contracts/requirement.schema.json",
+  "title": "Requirement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requirementId",
+    "title",
+    "description",
+    "requirementType",
+    "source",
+    "status",
+    "priority",
+    "submittedAtUtc"
+  ],
+  "properties": {
+    "requirementId": {
+      "type": "string",
+      "description": "Stable unique identifier for the requirement."
+    },
+    "parentRequirementId": {
+      "type": ["string", "null"],
+      "description": "Optional parent requirement when this requirement is derived from another one."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10
+    },
+    "requirementType": {
+      "type": "string",
+      "enum": [
+        "business",
+        "functional",
+        "technical",
+        "non-functional"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "user",
+        "workflow",
+        "analysis",
+        "design",
+        "implementation",
+        "testing",
+        "delivery",
+        "documentation",
+        "knowledge-discovery"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "submitted",
+        "under-analysis",
+        "analyzed",
+        "planned",
+        "in-execution",
+        "in-testing",
+        "ready-for-delivery",
+        "delivered",
+        "blocked",
+        "rejected",
+        "cancelled"
+      ]
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "requestedBy": {
+      "type": ["string", "null"]
+    },
+    "targetSolutionId": {
+      "type": ["string", "null"]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "solutionArea": {
+          "type": ["string", "null"]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "externalDependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "relatedRequirementIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "relatedDecisionIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "relatedOpenQuestionIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "submittedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastUpdatedAtUtc": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}
