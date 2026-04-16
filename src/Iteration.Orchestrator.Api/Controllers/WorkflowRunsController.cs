@@ -19,8 +19,10 @@ public sealed class WorkflowRunsController : ControllerBase
     {
         var result = await handler.HandleAsync(
             new SetupSolutionCommand(
+                request.SolutionId,
                 request.Code,
                 request.Name,
+                request.Description,
                 request.RepositoryPath,
                 request.MainSolutionFile,
                 request.ProfileCode,

@@ -4,6 +4,7 @@ public sealed class Decision
 {
     public Guid Id { get; private set; } = Guid.NewGuid();
     public Guid TargetSolutionId { get; private set; }
+    public Guid? RequirementId { get; private set; }
     public Guid? WorkflowRunId { get; private set; }
     public Guid? BacklogItemId { get; private set; }
     public string Title { get; private set; } = string.Empty;
@@ -19,6 +20,7 @@ public sealed class Decision
 
     public Decision(
         Guid targetSolutionId,
+        Guid? requirementId,
         Guid? workflowRunId,
         Guid? backlogItemId,
         string title,
@@ -31,6 +33,7 @@ public sealed class Decision
         DateTime createdAtUtc)
     {
         TargetSolutionId = targetSolutionId;
+        RequirementId = requirementId;
         WorkflowRunId = workflowRunId;
         BacklogItemId = backlogItemId;
         Title = title.Trim();
@@ -41,5 +44,10 @@ public sealed class Decision
         ConsequencesJson = string.IsNullOrWhiteSpace(consequencesJson) ? "[]" : consequencesJson;
         AlternativesConsideredJson = string.IsNullOrWhiteSpace(alternativesConsideredJson) ? "[]" : alternativesConsideredJson;
         CreatedAtUtc = createdAtUtc;
+    }
+
+    public void LinkRequirement(Guid? requirementId)
+    {
+        RequirementId = requirementId;
     }
 }

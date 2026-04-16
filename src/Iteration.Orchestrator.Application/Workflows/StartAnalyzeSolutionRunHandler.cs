@@ -3,8 +3,10 @@ using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Decisions;
 using Iteration.Orchestrator.Domain.Questions;
+using Iteration.Orchestrator.Domain.Requirements;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
+using Microsoft.EntityFrameworkCore;
 
 namespace Iteration.Orchestrator.Application.Workflows;
 
@@ -35,8 +37,14 @@ public sealed class StartAnalyzeSolutionRunHandler
         var backlog = await _db.BacklogItems.FindAsync([command.BacklogItemId], ct)
             ?? throw new InvalidOperationException("Backlog item not found.");
 
-        var solution = await _db.SolutionTargets.FindAsync([backlog.TargetSolutionId], ct)
-            ?? throw new InvalidOperationException("Target solution not found.");
+        var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == backlog.TargetSolutionId, ct);
+        if (!solutionExists)
+        {
+            throw new InvalidOperationException("Target solution not found.");
+        }
+
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.SolutionId == backlog.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution setup not found.");
 
         var workflow = await _config.GetWorkflowAsync(backlog.WorkflowCode, ct);
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
@@ -105,8 +113,9 @@ public sealed class StartAnalyzeSolutionRunHandler
                 result.RawJson);
 
             _db.AnalysisReports.Add(report);
-            PersistGeneratedOpenQuestions(result, solution.Id, run.Id, backlog.Id);
-            PersistGeneratedDecisions(result, solution.Id, run.Id, backlog.Id);
+            var requirementMap = PersistRequirements(result, solution.Id, run.Id, backlog);
+            PersistGeneratedOpenQuestions(result, solution.Id, run.Id, backlog.Id, requirementMap);
+            PersistGeneratedDecisions(result, solution.Id, run.Id, backlog.Id, requirementMap);
 
             run.Succeed("analysis-completed");
             backlog.MarkAnalysisCompleted();
@@ -190,11 +199,104 @@ public sealed class StartAnalyzeSolutionRunHandler
         return sb.ToString().Trim();
     }
 
+    private Dictionary<string, Guid> PersistRequirements(
+        SolutionAnalysisResult result,
+        Guid targetSolutionId,
+        Guid workflowRunId,
+        Domain.Backlog.BacklogItem backlog)
+    {
+        var requirementMap = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        var primaryRequirement = GetOrCreatePrimaryRequirement(targetSolutionId, workflowRunId, backlog);
+        requirementMap[$"backlog:{backlog.Id}"] = primaryRequirement.Id;
+
+        var generatedRequirements = DeserializeList<GeneratedRequirementDto>(result.GeneratedRequirementsJson);
+        foreach (var item in generatedRequirements)
+        {
+            var parentRequirementId = ResolveRequirementReference(item.ParentRequirementId, requirementMap, primaryRequirement.Id);
+            var requirement = new Requirement(
+                targetSolutionId,
+                backlog.Id,
+                workflowRunId,
+                parentRequirementId,
+                FirstNonEmpty(item.Title, "Derived requirement from analysis"),
+                FirstNonEmpty(item.Description, backlog.Description),
+                item.RequirementType ?? "functional",
+                item.Source ?? "analysis",
+                item.Status ?? "submitted",
+                item.Priority ?? MapPriority(backlog.Priority),
+                SerializeStringList(item.AcceptanceCriteria),
+                SerializeStringList(item.Constraints),
+                ParseDateOrDefault(item.SubmittedAtUtc, DateTime.UtcNow),
+                ParseNullableDate(item.LastUpdatedAtUtc));
+
+            _db.Requirements.Add(requirement);
+
+            if (!string.IsNullOrWhiteSpace(item.RequirementId))
+            {
+                requirementMap[item.RequirementId.Trim()] = requirement.Id;
+            }
+        }
+
+        return requirementMap;
+    }
+
+    private Requirement GetOrCreatePrimaryRequirement(
+        Guid targetSolutionId,
+        Guid workflowRunId,
+        Domain.Backlog.BacklogItem backlog)
+    {
+        var existing = _db.Requirements
+            .FirstOrDefault(x => x.OriginatingBacklogItemId == backlog.Id && x.ParentRequirementId == null);
+
+        var acceptanceCriteriaJson = "[]";
+        var constraintsJson = "[]";
+        var source = "user";
+        var status = "under-analysis";
+        var priority = MapPriority(backlog.Priority);
+
+        if (existing is not null)
+        {
+            existing.UpdateFromAnalysis(
+                workflowRunId,
+                backlog.Title,
+                backlog.Description,
+                "functional",
+                source,
+                status,
+                priority,
+                acceptanceCriteriaJson,
+                constraintsJson,
+                DateTime.UtcNow);
+
+            return existing;
+        }
+
+        var requirement = new Requirement(
+            targetSolutionId,
+            backlog.Id,
+            workflowRunId,
+            null,
+            backlog.Title,
+            backlog.Description,
+            "functional",
+            source,
+            status,
+            priority,
+            acceptanceCriteriaJson,
+            constraintsJson,
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+
+        _db.Requirements.Add(requirement);
+        return requirement;
+    }
+
     private void PersistGeneratedOpenQuestions(
         SolutionAnalysisResult result,
         Guid targetSolutionId,
         Guid workflowRunId,
-        Guid backlogItemId)
+        Guid backlogItemId,
+        IReadOnlyDictionary<string, Guid> requirementMap)
     {
         var items = DeserializeList<GeneratedOpenQuestionDto>(result.GeneratedOpenQuestionsJson);
         foreach (var item in items)
@@ -203,9 +305,11 @@ public sealed class StartAnalyzeSolutionRunHandler
             var description = FirstNonEmpty(item.Description, title);
             var createdAtUtc = ParseDateOrDefault(item.RaisedAtUtc, DateTime.UtcNow);
             var resolvedAtUtc = ParseNullableDate(item.ResolvedAtUtc);
+            var requirementId = ResolveRequirementReference(item.RequirementId, requirementMap, null);
 
             _db.OpenQuestions.Add(new OpenQuestion(
                 targetSolutionId,
+                requirementId,
                 workflowRunId,
                 backlogItemId,
                 title,
@@ -222,7 +326,8 @@ public sealed class StartAnalyzeSolutionRunHandler
         SolutionAnalysisResult result,
         Guid targetSolutionId,
         Guid workflowRunId,
-        Guid backlogItemId)
+        Guid backlogItemId,
+        IReadOnlyDictionary<string, Guid> requirementMap)
     {
         var items = DeserializeList<GeneratedDecisionDto>(result.GeneratedDecisionsJson);
         foreach (var item in items)
@@ -230,9 +335,14 @@ public sealed class StartAnalyzeSolutionRunHandler
             var title = FirstNonEmpty(item.Title, "Analysis decision");
             var summary = FirstNonEmpty(item.Summary, title);
             var createdAtUtc = ParseDateOrDefault(item.DecidedAtUtc, DateTime.UtcNow);
+            var requirementId = ResolveRequirementReference(
+                item.RequirementIds?.FirstOrDefault(),
+                requirementMap,
+                requirementMap.TryGetValue($"backlog:{backlogItemId}", out var primaryRequirementId) ? primaryRequirementId : null);
 
             _db.Decisions.Add(new Decision(
                 targetSolutionId,
+                requirementId,
                 workflowRunId,
                 backlogItemId,
                 title,
@@ -267,6 +377,20 @@ public sealed class StartAnalyzeSolutionRunHandler
         return JsonSerializer.Serialize(normalized);
     }
 
+    private static Guid? ResolveRequirementReference(
+        string? requirementReference,
+        IReadOnlyDictionary<string, Guid> requirementMap,
+        Guid? fallbackRequirementId)
+    {
+        if (!string.IsNullOrWhiteSpace(requirementReference) &&
+            requirementMap.TryGetValue(requirementReference.Trim(), out var mappedRequirementId))
+        {
+            return mappedRequirementId;
+        }
+
+        return fallbackRequirementId;
+    }
+
     private static string FirstNonEmpty(string? value, string fallback)
         => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
@@ -276,6 +400,17 @@ public sealed class StartAnalyzeSolutionRunHandler
     private static DateTime? ParseNullableDate(string? value)
         => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : null;
 
+    private static string MapPriority(Domain.Common.PriorityLevel priority)
+    {
+        return priority switch
+        {
+            Domain.Common.PriorityLevel.Low => "low",
+            Domain.Common.PriorityLevel.High => "high",
+            Domain.Common.PriorityLevel.Critical => "critical",
+            _ => "medium"
+        };
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -283,6 +418,7 @@ public sealed class StartAnalyzeSolutionRunHandler
 
     private sealed class GeneratedOpenQuestionDto
     {
+        public string? RequirementId { get; set; }
         public string? Title { get; set; }
         public string? Description { get; set; }
         public string? Category { get; set; }
@@ -299,8 +435,25 @@ public sealed class StartAnalyzeSolutionRunHandler
         public string? DecisionType { get; set; }
         public string? Status { get; set; }
         public string? Rationale { get; set; }
+        public List<string>? RequirementIds { get; set; }
         public List<string>? Consequences { get; set; }
         public List<string>? AlternativesConsidered { get; set; }
         public string? DecidedAtUtc { get; set; }
+    }
+
+    private sealed class GeneratedRequirementDto
+    {
+        public string? RequirementId { get; set; }
+        public string? ParentRequirementId { get; set; }
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? RequirementType { get; set; }
+        public string? Source { get; set; }
+        public string? Status { get; set; }
+        public string? Priority { get; set; }
+        public List<string>? AcceptanceCriteria { get; set; }
+        public List<string>? Constraints { get; set; }
+        public string? SubmittedAtUtc { get; set; }
+        public string? LastUpdatedAtUtc { get; set; }
     }
 }

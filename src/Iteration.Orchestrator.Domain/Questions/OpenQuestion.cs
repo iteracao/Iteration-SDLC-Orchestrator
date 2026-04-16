@@ -4,6 +4,7 @@ public sealed class OpenQuestion
 {
     public Guid Id { get; private set; } = Guid.NewGuid();
     public Guid TargetSolutionId { get; private set; }
+    public Guid? RequirementId { get; private set; }
     public Guid? WorkflowRunId { get; private set; }
     public Guid? BacklogItemId { get; private set; }
     public string Title { get; private set; } = string.Empty;
@@ -18,6 +19,7 @@ public sealed class OpenQuestion
 
     public OpenQuestion(
         Guid targetSolutionId,
+        Guid? requirementId,
         Guid? workflowRunId,
         Guid? backlogItemId,
         string title,
@@ -29,6 +31,7 @@ public sealed class OpenQuestion
         DateTime? resolvedAtUtc)
     {
         TargetSolutionId = targetSolutionId;
+        RequirementId = requirementId;
         WorkflowRunId = workflowRunId;
         BacklogItemId = backlogItemId;
         Title = title.Trim();
@@ -38,5 +41,10 @@ public sealed class OpenQuestion
         ResolutionNotes = string.IsNullOrWhiteSpace(resolutionNotes) ? null : resolutionNotes.Trim();
         CreatedAtUtc = createdAtUtc;
         ResolvedAtUtc = resolvedAtUtc;
+    }
+
+    public void LinkRequirement(Guid? requirementId)
+    {
+        RequirementId = requirementId;
     }
 }

@@ -1,6 +1,7 @@
 using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Domain.Decisions;
 using Iteration.Orchestrator.Domain.Questions;
+using Iteration.Orchestrator.Domain.Requirements;
 using Iteration.Orchestrator.Domain.Reports;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
@@ -10,6 +11,7 @@ namespace Iteration.Orchestrator.Application.Abstractions;
 
 public interface IAppDbContext
 {
+    DbSet<Solution> Solutions { get; }
     DbSet<SolutionTarget> SolutionTargets { get; }
     DbSet<BacklogItem> BacklogItems { get; }
     DbSet<WorkflowRun> WorkflowRuns { get; }
@@ -17,6 +19,7 @@ public interface IAppDbContext
     DbSet<AnalysisReport> AnalysisReports { get; }
     DbSet<OpenQuestion> OpenQuestions { get; }
     DbSet<Decision> Decisions { get; }
+    DbSet<Requirement> Requirements { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

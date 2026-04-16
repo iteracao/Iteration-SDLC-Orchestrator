@@ -3,6 +3,7 @@ using System;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260416101656_AddOpenQuestionsAndDecisions")]
+    partial class AddOpenQuestionsAndDecisions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.8");
@@ -50,8 +53,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TargetSolutionId");
-
                     b.ToTable("BacklogItems");
                 });
 
@@ -84,9 +85,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("RequirementId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -111,8 +109,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BacklogItemId");
-
-                    b.HasIndex("RequirementId");
 
                     b.HasIndex("TargetSolutionId");
 
@@ -142,9 +138,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("RequirementId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("ResolutionNotes")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
@@ -171,8 +164,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BacklogItemId");
-
-                    b.HasIndex("RequirementId");
 
                     b.HasIndex("TargetSolutionId");
 
@@ -235,110 +226,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                     b.ToTable("AnalysisReports");
                 });
 
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Requirements.Requirement", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AcceptanceCriteriaJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ConstraintsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("OriginatingBacklogItemId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ParentRequirementId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Priority")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RequirementType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TargetSolutionId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("WorkflowRunId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OriginatingBacklogItemId");
-
-                    b.HasIndex("ParentRequirementId");
-
-                    b.HasIndex("TargetSolutionId");
-
-                    b.HasIndex("WorkflowRunId");
-
-                    b.ToTable("Requirements");
-                });
-
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Solutions.Solution", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProfileCode")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Solutions");
-                });
-
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", b =>
                 {
                     b.Property<Guid>("Id")
@@ -372,9 +259,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("SolutionId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("SolutionOverlayCode")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -382,9 +266,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Code")
-                        .IsUnique();
-
-                    b.HasIndex("SolutionId")
                         .IsUnique();
 
                     b.ToTable("SolutionTargets");
@@ -465,18 +346,7 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TargetSolutionId");
-
                     b.ToTable("WorkflowRuns");
-                });
-
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Backlog.BacklogItem", b =>
-                {
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
-                        .WithMany()
-                        .HasForeignKey("TargetSolutionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Iteration.Orchestrator.Domain.Decisions.Decision", b =>
@@ -486,12 +356,7 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .HasForeignKey("BacklogItemId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
-                        .WithMany()
-                        .HasForeignKey("RequirementId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -510,12 +375,7 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .HasForeignKey("BacklogItemId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
-                        .WithMany()
-                        .HasForeignKey("RequirementId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -525,48 +385,6 @@ namespace Iteration.Orchestrator.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WorkflowRunId")
                         .OnDelete(DeleteBehavior.SetNull);
-                });
-
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Requirements.Requirement", b =>
-                {
-                    b.HasOne("Iteration.Orchestrator.Domain.Backlog.BacklogItem", null)
-                        .WithMany()
-                        .HasForeignKey("OriginatingBacklogItemId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Iteration.Orchestrator.Domain.Requirements.Requirement", null)
-                        .WithMany()
-                        .HasForeignKey("ParentRequirementId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
-                        .WithMany()
-                        .HasForeignKey("TargetSolutionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", null)
-                        .WithMany()
-                        .HasForeignKey("WorkflowRunId")
-                        .OnDelete(DeleteBehavior.SetNull);
-                });
-
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", b =>
-                {
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
-                        .WithMany()
-                        .HasForeignKey("SolutionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Iteration.Orchestrator.Domain.Workflows.WorkflowRun", b =>
-                {
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
-                        .WithMany()
-                        .HasForeignKey("TargetSolutionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -30,7 +30,7 @@ public sealed class FileSystemSolutionSetupService : ISolutionSetupService
         var gitInitialized = EnsureGitRepository(request.RepositoryRoot);
         var remoteConfigured = ConfigureRemoteOrigin(request.RepositoryRoot, request.RemoteRepositoryUrl);
 
-        var knowledgeRoot = Path.Combine(request.RepositoryRoot, "ai", "solutions", request.SolutionCode);
+        var knowledgeRoot = Path.Combine(request.RepositoryRoot, "AI", "solutions", request.SolutionCode);
         Directory.CreateDirectory(knowledgeRoot);
 
         var createdDocuments = new List<string>();

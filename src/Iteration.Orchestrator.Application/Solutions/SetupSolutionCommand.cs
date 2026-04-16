@@ -7,8 +7,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Iteration.Orchestrator.Application.Solutions;
 
 public sealed record SetupSolutionCommand(
+    Guid? SolutionId,
     string Code,
     string Name,
+    string Description,
     string RepositoryPath,
     string MainSolutionFile,
     string ProfileCode,
@@ -50,12 +52,43 @@ public sealed class SetupSolutionHandler
         var workflow = await _config.GetWorkflowAsync("setup-solution", ct);
         var agent = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
         _ = await _config.GetProfileAsync(command.ProfileCode, ct);
+        var solutionCode = BuildSolutionCode(command.Code, command.Name);
+
+        var existingByCode = await _db.SolutionTargets
+            .FirstOrDefaultAsync(x => x.Code == solutionCode, ct);
+
+        var solutionRecord = command.SolutionId.HasValue
+            ? await _db.Solutions.FirstOrDefaultAsync(x => x.Id == command.SolutionId.Value, ct)
+            : null;
+
+        if (command.SolutionId.HasValue && solutionRecord is null)
+        {
+            throw new InvalidOperationException("Solution not found.");
+        }
+
+        if (existingByCode is not null &&
+            (!command.SolutionId.HasValue || existingByCode.SolutionId != command.SolutionId.Value))
+        {
+            throw new InvalidOperationException($"Solution code '{solutionCode}' is already in use.");
+        }
+
+        if (solutionRecord is null)
+        {
+            solutionRecord = new Solution(
+                command.Name,
+                command.Description,
+                command.ProfileCode);
+
+            _db.Solutions.Add(solutionRecord);
+            await _db.SaveChangesAsync(ct);
+        }
 
         var existing = await _db.SolutionTargets
-            .FirstOrDefaultAsync(x => x.Code == command.Code, ct);
+            .FirstOrDefaultAsync(x => x.SolutionId == solutionRecord.Id, ct);
 
         var solution = existing ?? new SolutionTarget(
-            command.Code,
+            solutionRecord.Id,
+            solutionCode,
             command.Name,
             command.RepositoryPath,
             command.MainSolutionFile,
@@ -68,7 +101,7 @@ public sealed class SetupSolutionHandler
             await _db.SaveChangesAsync(ct);
         }
 
-        var run = new WorkflowRun(Guid.Empty, solution.Id, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(Guid.Empty, solutionRecord.Id, workflow.Code, command.RequestedBy);
         run.Start("solution-setup");
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -81,8 +114,9 @@ public sealed class SetupSolutionHandler
             requestedBy = command.RequestedBy,
             solution = new
             {
-                command.Code,
+                Code = solutionCode,
                 command.Name,
+                command.Description,
                 RepositoryRoot = command.RepositoryPath,
                 command.MainSolutionFile,
                 command.ProfileCode,
@@ -100,7 +134,7 @@ public sealed class SetupSolutionHandler
         {
             var setupResult = await _solutionSetupService.SetupAsync(
                 new SolutionSetupRequest(
-                    command.Code,
+                    solutionCode,
                     command.Name,
                     command.RepositoryPath,
                     command.MainSolutionFile,
@@ -114,7 +148,7 @@ public sealed class SetupSolutionHandler
                 workflow = workflow.Code,
                 workflowName = workflow.Name,
                 agent = agent.Code,
-                solutionId = solution.Id,
+                solutionId = solutionRecord.Id,
                 setupResult.KnowledgeRoot,
                 setupResult.RepositoryCreated,
                 setupResult.GitInitialized,
@@ -132,7 +166,7 @@ public sealed class SetupSolutionHandler
 
             return new SetupSolutionExecutionResult(
                 run.Id,
-                solution.Id,
+                solutionRecord.Id,
                 setupResult.KnowledgeRoot,
                 setupResult.CreatedDocuments,
                 setupResult.ExistingDocuments,
@@ -147,5 +181,23 @@ public sealed class SetupSolutionHandler
             await _db.SaveChangesAsync(ct);
             throw;
         }
+    }
+
+    private static string BuildSolutionCode(string code, string name)
+    {
+        var source = string.IsNullOrWhiteSpace(code) ? name : code;
+        var chars = source
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+
+        var normalized = new string(chars);
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim('-');
     }
 }

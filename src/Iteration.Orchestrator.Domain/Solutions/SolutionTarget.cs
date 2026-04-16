@@ -3,6 +3,7 @@ namespace Iteration.Orchestrator.Domain.Solutions;
 public sealed class SolutionTarget
 {
     public Guid Id { get; private set; } = Guid.NewGuid();
+    public Guid SolutionId { get; private set; }
     public string Code { get; private set; } = string.Empty;
     public string Name { get; private set; } = string.Empty;
     public string RepositoryPath { get; private set; } = string.Empty;
@@ -15,6 +16,7 @@ public sealed class SolutionTarget
     private SolutionTarget() { }
 
     public SolutionTarget(
+        Guid solutionId,
         string code,
         string name,
         string repositoryPath,
@@ -22,6 +24,7 @@ public sealed class SolutionTarget
         string profileCode,
         string solutionOverlayCode)
     {
+        SolutionId = solutionId;
         Code = code.Trim();
         Name = name.Trim();
         RepositoryPath = repositoryPath.Trim();

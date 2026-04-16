@@ -1,6 +1,7 @@
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Domain.Common;
+using Microsoft.EntityFrameworkCore;
 
 namespace Iteration.Orchestrator.Application.Backlog;
 
@@ -22,6 +23,12 @@ public sealed class CreateBacklogItemHandler
 
     public async Task<Guid> HandleAsync(CreateBacklogItemCommand command, CancellationToken ct)
     {
+        var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == command.TargetSolutionId, ct);
+        if (!solutionExists)
+        {
+            throw new InvalidOperationException("Target solution not found.");
+        }
+
         var entity = new BacklogItem(
             command.Title,
             command.Description,
