@@ -1,5 +1,205 @@
 @page "/solutions"
 @inject IHttpClientFactory HttpClientFactory
+@inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
+
+<PageTitle>Solutions</PageTitle>
 
 <MudText Typo="Typo.h5">Solutions</MudText>
-<MudText Typo="Typo.body2" Class="mb-4">API-backed page placeholder for V1.</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">Create a new target solution through setup-solution or select the current solution context for the cockpit.</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="5">
+        <MudPaper Class="pa-4">
+            <MudText Typo="Typo.h6" Class="mb-3">Create new solution</MudText>
+
+            <MudForm @ref="_form">
+                <MudTextField @bind-Value="_request.Code" Label="Code" Required="true" />
+                <MudTextField @bind-Value="_request.Name" Label="Name" Required="true" />
+                <MudTextField @bind-Value="_request.RepositoryPath" Label="Repository path" Required="true" />
+                <MudTextField @bind-Value="_request.MainSolutionFile" Label="Main solution file" Required="true" />
+                <MudTextField @bind-Value="_request.ProfileCode" Label="Profile code" Required="true" />
+                <MudTextField @bind-Value="_request.SolutionOverlayCode" Label="Solution overlay code" />
+                <MudTextField @bind-Value="_request.RemoteRepositoryUrl" Label="Remote repository URL" />
+                <MudTextField @bind-Value="_request.RequestedBy" Label="Requested by" Required="true" />
+            </MudForm>
+
+            <MudStack Row="true" Spacing="2" Class="mt-3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateSolutionAsync" Disabled="_saving">Run setup</MudButton>
+                <MudButton Variant="Variant.Text" OnClick="ResetForm" Disabled="_saving">Reset</MudButton>
+            </MudStack>
+
+            @if (!string.IsNullOrWhiteSpace(_formMessage))
+            {
+                <MudAlert Severity="@_formSeverity" Class="mt-3">@_formMessage</MudAlert>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="7">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                <MudText Typo="Typo.h6">Registered solutions</MudText>
+                <MudButton Variant="Variant.Outlined" OnClick="LoadSolutionsAsync">Refresh</MudButton>
+            </MudStack>
+
+            @if (_loading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (!string.IsNullOrWhiteSpace(_loadError))
+            {
+                <MudAlert Severity="Severity.Error">@_loadError</MudAlert>
+            }
+            else if (_solutions.Count == 0)
+            {
+                <MudText Typo="Typo.body2">No solutions registered yet.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_solutions" Dense="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Code</MudTh>
+                        <MudTh>Profile</MudTh>
+                        <MudTh>Repository</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Code">@context.Code</MudTd>
+                        <MudTd DataLabel="Profile">@context.ProfileCode</MudTd>
+                        <MudTd DataLabel="Repository">@context.RepositoryPath</MudTd>
+                        <MudTd DataLabel="Action">
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="@(SelectedSolutionState.Current?.Id == context.Id ? Color.Success : Color.Primary)" OnClick="() => SelectSolution(context)">
+                                @(SelectedSolutionState.Current?.Id == context.Id ? "Current" : "Select")
+                            </MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private MudForm? _form;
+    private readonly List<Iteration.Orchestrator.Cockpit.Models.SolutionSummary> _solutions = [];
+    private readonly SetupSolutionModel _request = new();
+    private bool _loading;
+    private bool _saving;
+    private string? _loadError;
+    private string? _formMessage;
+    private Severity _formSeverity = Severity.Info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ResetForm();
+        await LoadSolutionsAsync();
+    }
+
+    private async Task LoadSolutionsAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        _solutions.Clear();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            _solutions.AddRange(await client.GetFromJsonAsync<List<Iteration.Orchestrator.Cockpit.Models.SolutionSummary>>("api/solutions") ?? []);
+
+            if (SelectedSolutionState.Current is null && _solutions.Count > 0)
+            {
+                SelectedSolutionState.SetCurrent(_solutions[0]);
+            }
+            else if (SelectedSolutionState.Current is not null)
+            {
+                var refreshed = _solutions.FirstOrDefault(x => x.Id == SelectedSolutionState.Current.Id);
+                if (refreshed is not null)
+                {
+                    SelectedSolutionState.SetCurrent(refreshed);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SelectSolution(Iteration.Orchestrator.Cockpit.Models.SolutionSummary solution)
+    {
+        SelectedSolutionState.SetCurrent(solution);
+    }
+
+    private async Task CreateSolutionAsync()
+    {
+        if (_form is not null)
+        {
+            await _form.Validate();
+            if (!_form.IsValid)
+            {
+                return;
+            }
+        }
+
+        _saving = true;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/setup-solution", _request);
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Solution setup started and completed successfully.";
+
+            await LoadSolutionsAsync();
+
+            var created = _solutions.FirstOrDefault(x => string.Equals(x.Code, _request.Code, StringComparison.OrdinalIgnoreCase));
+            if (created is not null)
+            {
+                SelectedSolutionState.SetCurrent(created);
+            }
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _request.Code = string.Empty;
+        _request.Name = string.Empty;
+        _request.RepositoryPath = string.Empty;
+        _request.MainSolutionFile = string.Empty;
+        _request.ProfileCode = "dotnet-web-enterprise";
+        _request.SolutionOverlayCode = string.Empty;
+        _request.RemoteRepositoryUrl = string.Empty;
+        _request.RequestedBy = "rui";
+        _formMessage = null;
+    }
+
+    private sealed class SetupSolutionModel
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string RepositoryPath { get; set; } = string.Empty;
+        public string MainSolutionFile { get; set; } = string.Empty;
+        public string ProfileCode { get; set; } = string.Empty;
+        public string SolutionOverlayCode { get; set; } = string.Empty;
+        public string? RemoteRepositoryUrl { get; set; }
+        public string RequestedBy { get; set; } = "rui";
+    }
+}

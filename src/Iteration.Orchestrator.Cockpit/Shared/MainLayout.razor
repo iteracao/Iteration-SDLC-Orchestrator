@@ -1,16 +1,37 @@
 @inherits LayoutComponentBase
+@implements IDisposable
+@inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
+
 <MudLayout>
     <MudAppBar Elevation="1">
         <MudText Typo="Typo.h6">Iteration Cockpit</MudText>
+        <MudSpacer />
+        <MudChip T="string" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+            @(SelectedSolutionState.Current?.Name ?? "No solution selected")
+        </MudChip>
     </MudAppBar>
     <MudDrawer Open="true" Variant="DrawerVariant.Mini">
         <MudNavMenu>
             <MudNavLink Href="/">Home</MudNavLink>
             <MudNavLink Href="/solutions">Solutions</MudNavLink>
-            <MudNavLink Href="/backlog">Backlog</MudNavLink>
+            <MudNavLink Href="/requirements">Requirements</MudNavLink>
         </MudNavMenu>
     </MudDrawer>
     <MudMainContent Class="pa-4">
         @Body
     </MudMainContent>
 </MudLayout>
+
+@code {
+    protected override void OnInitialized()
+    {
+        SelectedSolutionState.Changed += HandleChanged;
+    }
+
+    private void HandleChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        SelectedSolutionState.Changed -= HandleChanged;
+    }
+}

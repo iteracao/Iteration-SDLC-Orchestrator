@@ -30,9 +30,19 @@ public sealed class BacklogController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromServices] AppDbContext db, CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromServices] AppDbContext db,
+        [FromQuery] Guid? solutionId,
+        CancellationToken ct)
     {
-        var data = await db.BacklogItems
+        var query = db.BacklogItems.AsQueryable();
+
+        if (solutionId.HasValue)
+        {
+            query = query.Where(x => x.TargetSolutionId == solutionId.Value);
+        }
+
+        var data = await query
             .OrderByDescending(x => x.CreatedUtc)
             .ToListAsync(ct);
 

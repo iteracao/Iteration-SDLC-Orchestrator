@@ -29,6 +29,7 @@ builder.Services.AddHttpClient<IOllamaService, OllamaService>();
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
+builder.Services.AddScoped<RegisterSolutionTargetHandler>();
 builder.Services.AddScoped<CreateBacklogItemHandler>();
 builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 

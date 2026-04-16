@@ -1,6 +1,130 @@
 @page "/"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+@inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
+
+<PageTitle>Home</PageTitle>
 
 <MudText Typo="Typo.h4">Iteration SDLC Orchestrator</MudText>
-<MudText Typo="Typo.body1" Class="mt-2">
-    V1 cockpit starter.
+<MudText Typo="Typo.body1" Class="mt-2 mb-4">
+    Cockpit starter focused on solution selection, transitional requirements, and workflow history.
 </MudText>
+
+@if (SelectedSolutionState.Current is null)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Select or create a solution on the Solutions page to begin testing the SDLC workflow pipeline.
+    </MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6">Current target solution</MudText>
+        <MudText Typo="Typo.body2">@SelectedSolutionState.Current.Name (@SelectedSolutionState.Current.Code)</MudText>
+        <MudText Typo="Typo.body2">Profile: @SelectedSolutionState.Current.ProfileCode</MudText>
+        <MudText Typo="Typo.body2">Repository: @SelectedSolutionState.Current.RepositoryPath</MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-4">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+            <MudText Typo="Typo.h6">Recent workflow runs</MudText>
+            <MudButton Href="/requirements" Variant="Variant.Filled" Color="Color.Primary">Open requirements</MudButton>
+        </MudStack>
+
+        @if (_loading)
+        {
+            <MudProgressCircular Indeterminate="true" />
+        }
+        else if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <MudAlert Severity="Severity.Error">@_error</MudAlert>
+        }
+        else if (_runs.Count == 0)
+        {
+            <MudText Typo="Typo.body2">No workflow runs found for the selected solution yet.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_runs" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Workflow</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Stage</MudTh>
+                    <MudTh>Started</MudTh>
+                    <MudTh>Completed</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Workflow">@context.WorkflowCode</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                    <MudTd DataLabel="Stage">@context.CurrentStage</MudTd>
+                    <MudTd DataLabel="Started">@context.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                    <MudTd DataLabel="Completed">@(context.CompletedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+}
+
+@code {
+    private readonly List<WorkflowRunRow> _runs = [];
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        SelectedSolutionState.Changed += HandleSolutionChanged;
+        await LoadRunsAsync();
+    }
+
+    private async void HandleSolutionChanged()
+    {
+        await InvokeAsync(LoadRunsAsync);
+    }
+
+    private async Task LoadRunsAsync()
+    {
+        _runs.Clear();
+        _error = null;
+
+        if (SelectedSolutionState.Current is null)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={SelectedSolutionState.Current.Id}") ?? []);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        SelectedSolutionState.Changed -= HandleSolutionChanged;
+    }
+
+    private sealed class WorkflowRunRow
+    {
+        public Guid Id { get; set; }
+        public Guid BacklogItemId { get; set; }
+        public Guid TargetSolutionId { get; set; }
+        public string WorkflowCode { get; set; } = string.Empty;
+        public int Status { get; set; }
+        public string CurrentStage { get; set; } = string.Empty;
+        public DateTime StartedUtc { get; set; }
+        public DateTime? CompletedUtc { get; set; }
+    }
+}

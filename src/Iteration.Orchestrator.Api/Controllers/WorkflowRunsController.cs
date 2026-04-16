@@ -13,9 +13,9 @@ public sealed class WorkflowRunsController : ControllerBase
 {
     [HttpPost("setup-solution")]
     public async Task<IActionResult> SetupSolution(
-        [FromBody] SetupSolutionRequest request,
-        [FromServices] SetupSolutionHandler handler,
-        CancellationToken ct)
+     [FromBody] SetupSolutionRequest request,
+     [FromServices] SetupSolutionHandler handler,
+     CancellationToken ct)
     {
         var result = await handler.HandleAsync(
             new SetupSolutionCommand(
@@ -54,6 +54,39 @@ public sealed class WorkflowRunsController : ControllerBase
             new StartAnalyzeSolutionRunCommand(request.BacklogItemId, request.RequestedBy), ct);
 
         return Ok(new { id });
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> List(
+        [FromServices] AppDbContext db,
+        [FromQuery] Guid? solutionId,
+        CancellationToken ct)
+    {
+        var query = db.WorkflowRuns.AsQueryable();
+
+        if (solutionId.HasValue)
+        {
+            query = query.Where(x => x.TargetSolutionId == solutionId.Value);
+        }
+
+        var runs = await query
+            .OrderByDescending(x => x.StartedUtc)
+            .Select(x => new
+            {
+                x.Id,
+                x.BacklogItemId,
+                x.TargetSolutionId,
+                x.WorkflowCode,
+                x.Status,
+                x.CurrentStage,
+                x.StartedUtc,
+                x.CompletedUtc,
+                x.RequestedBy,
+                x.FailureReason
+            })
+            .ToListAsync(ct);
+
+        return Ok(runs);
     }
 
     [HttpGet("{id:guid}")]

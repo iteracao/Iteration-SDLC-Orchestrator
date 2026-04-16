@@ -1,5 +1,300 @@
-@page "/backlog"
+@page "/requirements"
 @inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+@inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
 
-<MudText Typo="Typo.h5">Backlog</MudText>
-<MudText Typo="Typo.body2" Class="mb-4">API-backed page placeholder for V1.</MudText>
+<PageTitle>Requirements</PageTitle>
+
+<MudText Typo="Typo.h5">Requirements</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">Transitional cockpit view backed by current backlog items for the selected solution.</MudText>
+
+@if (SelectedSolutionState.Current is null)
+{
+    <MudAlert Severity="Severity.Info">Select a solution first on the Solutions page.</MudAlert>
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">New requirement</MudText>
+                <MudForm @ref="_form">
+                    <MudTextField @bind-Value="_request.Title" Label="Title" Required="true" />
+                    <MudTextField @bind-Value="_request.Description" Label="Description" Required="true" Lines="4" />
+                    <MudSelect T="string" Label="Priority" @bind-Value="_request.Priority">
+                        <MudSelectItem Value="@("Low")">Low</MudSelectItem>
+                        <MudSelectItem Value="@("Medium")">Medium</MudSelectItem>
+                        <MudSelectItem Value="@("High")">High</MudSelectItem>
+                        <MudSelectItem Value="@("Critical")">Critical</MudSelectItem>
+                    </MudSelect>
+                </MudForm>
+
+                <MudStack Row="true" Spacing="2" Class="mt-3">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateRequirementAsync" Disabled="_saving">Create</MudButton>
+                    <MudButton Variant="Variant.Text" OnClick="ResetForm" Disabled="_saving">Reset</MudButton>
+                </MudStack>
+
+                @if (!string.IsNullOrWhiteSpace(_formMessage))
+                {
+                    <MudAlert Severity="@_formSeverity" Class="mt-3">@_formMessage</MudAlert>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-4 mb-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                    <MudText Typo="Typo.h6">Current target solution</MudText>
+                    <MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Refresh</MudButton>
+                </MudStack>
+                <MudText Typo="Typo.body2">@SelectedSolutionState.Current.Name (@SelectedSolutionState.Current.Code)</MudText>
+                <MudText Typo="Typo.body2">Profile: @SelectedSolutionState.Current.ProfileCode</MudText>
+            </MudPaper>
+
+            <MudPaper Class="pa-4 mb-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Requirement list</MudText>
+                @if (!string.IsNullOrWhiteSpace(_loadError))
+                {
+                    <MudAlert Severity="Severity.Error">@_loadError</MudAlert>
+                }
+                else if (_loading)
+                {
+                    <MudProgressCircular Indeterminate="true" />
+                }
+                else if (_backlogItems.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No requirements created yet for this solution.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_backlogItems" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Priority</MudTh>
+                            <MudTh>Created</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Title">
+                                <MudText Typo="Typo.body2">@context.Title</MudText>
+                                <MudText Typo="Typo.caption">@context.Description</MudText>
+                            </MudTd>
+                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Priority">@context.Priority</MudTd>
+                            <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                            <MudTd DataLabel="Action">
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="_runningBacklogId == context.Id" OnClick="() => StartAnalyzeAsync(context.Id)">
+                                    Analyze
+                                </MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+
+            <MudPaper Class="pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Workflow history</MudText>
+                @if (_runs.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No workflow runs recorded yet.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_runs" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Workflow</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Stage</MudTh>
+                            <MudTh>Started</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Workflow">@context.WorkflowCode</MudTd>
+                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Stage">@context.CurrentStage</MudTd>
+                            <MudTd DataLabel="Started">@context.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private MudForm? _form;
+    private readonly CreateBacklogModel _request = new();
+    private readonly List<BacklogRow> _backlogItems = [];
+    private readonly List<WorkflowRunRow> _runs = [];
+    private bool _loading;
+    private bool _saving;
+    private Guid? _runningBacklogId;
+    private string? _loadError;
+    private string? _formMessage;
+    private Severity _formSeverity = Severity.Info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ResetForm();
+        SelectedSolutionState.Changed += HandleSolutionChanged;
+        await LoadAsync();
+    }
+
+    private async void HandleSolutionChanged()
+    {
+        await InvokeAsync(LoadAsync);
+    }
+
+    private async Task LoadAsync()
+    {
+        _backlogItems.Clear();
+        _runs.Clear();
+        _loadError = null;
+
+        if (SelectedSolutionState.Current is null)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var solutionId = SelectedSolutionState.Current.Id;
+            _backlogItems.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
+            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreateRequirementAsync()
+    {
+        if (SelectedSolutionState.Current is null)
+        {
+            return;
+        }
+
+        if (_form is not null)
+        {
+            await _form.Validate();
+            if (!_form.IsValid)
+            {
+                return;
+            }
+        }
+
+        _saving = true;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/backlog-items", new
+            {
+                _request.Title,
+                _request.Description,
+                TargetSolutionId = SelectedSolutionState.Current.Id,
+                WorkflowCode = "analyze-request",
+                _request.Priority
+            });
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Requirement created in the current transitional backlog model.";
+            ResetForm();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task StartAnalyzeAsync(Guid backlogItemId)
+    {
+        _runningBacklogId = backlogItemId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/analyze-request", new
+            {
+                BacklogItemId = backlogItemId,
+                RequestedBy = "rui"
+            });
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Analyze workflow started.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _runningBacklogId = null;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _request.Title = string.Empty;
+        _request.Description = string.Empty;
+        _request.Priority = "Medium";
+    }
+
+    public void Dispose()
+    {
+        SelectedSolutionState.Changed -= HandleSolutionChanged;
+    }
+
+    private sealed class CreateBacklogModel
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Priority { get; set; } = "Medium";
+    }
+
+    private sealed class BacklogRow
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public Guid TargetSolutionId { get; set; }
+        public string WorkflowCode { get; set; } = string.Empty;
+        public int Priority { get; set; }
+        public int Status { get; set; }
+        public DateTime CreatedUtc { get; set; }
+    }
+
+    private sealed class WorkflowRunRow
+    {
+        public Guid Id { get; set; }
+        public Guid BacklogItemId { get; set; }
+        public Guid TargetSolutionId { get; set; }
+        public string WorkflowCode { get; set; } = string.Empty;
+        public int Status { get; set; }
+        public string CurrentStage { get; set; } = string.Empty;
+        public DateTime StartedUtc { get; set; }
+    }
+}
