@@ -20,10 +20,11 @@ Agents must read and use these files before performing any work.
 
 ## Architecture Principles
 
-- Requirement-driven system (NOT backlog-driven)
+- Requirement-driven intake
 - Workflow-driven orchestration
 - Agent-constrained execution
 - Cockpit is the system of truth
+- Backlog is implementation planning/execution, not requirement intake
 
 ## Workflow Enforcement
 
@@ -45,7 +46,7 @@ When executing a workflow:
 
 ## Analyze-Request Specific Rules
 
-- MUST analyze requirement (not instructions)
+- MUST analyze a requirement, not an implementation backlog item
 - MUST NOT return empty sections
 - MUST generate:
   - impacted areas
@@ -55,6 +56,11 @@ When executing a workflow:
 - SHOULD generate:
   - decisions (if clear)
   - derived requirements (if needed)
+
+## Planning Specific Rules
+
+- Planning workflows may generate backlog items from requirements
+- Backlog items represent implementation work, not the original solution need
 
 ## Forbidden
 

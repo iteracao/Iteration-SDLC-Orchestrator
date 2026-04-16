@@ -101,7 +101,7 @@ public sealed class SetupSolutionHandler
             await _db.SaveChangesAsync(ct);
         }
 
-        var run = new WorkflowRun(Guid.Empty, solutionRecord.Id, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(null, null, solutionRecord.Id, workflow.Code, command.RequestedBy);
         run.Start("solution-setup");
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);

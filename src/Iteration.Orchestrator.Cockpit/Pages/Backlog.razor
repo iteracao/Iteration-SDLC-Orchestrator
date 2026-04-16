@@ -1,69 +1,71 @@
 @page "/requirements"
+@using System.Net.Http.Json
 @inject IHttpClientFactory HttpClientFactory
 @implements IDisposable
 @inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
 
 <PageTitle>Requirements</PageTitle>
 
-<MudText Typo="Typo.h5">Requirements</MudText>
-<MudText Typo="Typo.body2" Class="mb-4">Canonical solution requirement intake and analysis for the selected solution.</MudText>
+<MudText Typo="Typo.h4">Requirements</MudText>
+<MudText Typo="Typo.body1" Class="mt-2 mb-4">
+    Requirements are the canonical intake object. Backlog remains downstream implementation work linked to requirements.
+</MudText>
 
 @if (SelectedSolutionState.Current is null)
 {
-    <MudAlert Severity="Severity.Info">Select a solution first on the Solutions page.</MudAlert>
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Select a solution first on the Solutions page.
+    </MudAlert>
 }
 else
 {
     <MudGrid>
         <MudItem xs="12" md="5">
             <MudPaper Class="pa-4">
-                <MudText Typo="Typo.h6" Class="mb-3">New requirement</MudText>
+                <MudText Typo="Typo.h6" Class="mb-3">Create requirement</MudText>
+
+                @if (!string.IsNullOrWhiteSpace(_formMessage))
+                {
+                    <MudAlert Severity="@_formSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                        @_formMessage
+                    </MudAlert>
+                }
+
                 <MudForm @ref="_form">
-                    <MudTextField @bind-Value="_request.Title" Label="Title" Required="true" />
-                    <MudTextField @bind-Value="_request.Description" Label="Description" Required="true" Lines="4" />
+                    <MudTextField T="string" Label="Title" @bind-Value="_request.Title" Required="true" RequiredError="Title is required." />
+                    <MudTextField T="string" Label="Description" Lines="5" @bind-Value="_request.Description" Required="true" RequiredError="Description is required." />
                     <MudSelect T="string" Label="Priority" @bind-Value="_request.Priority">
                         <MudSelectItem Value="@("low")">Low</MudSelectItem>
                         <MudSelectItem Value="@("medium")">Medium</MudSelectItem>
                         <MudSelectItem Value="@("high")">High</MudSelectItem>
                         <MudSelectItem Value="@("critical")">Critical</MudSelectItem>
                     </MudSelect>
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" Disabled="_saving" OnClick="CreateRequirementAsync">
+                        Save requirement
+                    </MudButton>
                 </MudForm>
-
-                <MudStack Row="true" Spacing="2" Class="mt-3">
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateRequirementAsync" Disabled="_saving">Create</MudButton>
-                    <MudButton Variant="Variant.Text" OnClick="ResetForm" Disabled="_saving">Reset</MudButton>
-                </MudStack>
-
-                @if (!string.IsNullOrWhiteSpace(_formMessage))
-                {
-                    <MudAlert Severity="@_formSeverity" Class="mt-3">@_formMessage</MudAlert>
-                }
             </MudPaper>
         </MudItem>
 
         <MudItem xs="12" md="7">
             <MudPaper Class="pa-4 mb-4">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
-                    <MudText Typo="Typo.h6">Current target solution</MudText>
+                    <MudText Typo="Typo.h6">Requirements</MudText>
                     <MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Refresh</MudButton>
                 </MudStack>
-                <MudText Typo="Typo.body2">@SelectedSolutionState.Current.Name (@SelectedSolutionState.Current.Code)</MudText>
-                <MudText Typo="Typo.body2">Profile: @SelectedSolutionState.Current.ProfileCode</MudText>
-            </MudPaper>
 
-            <MudPaper Class="pa-4 mb-4">
-                <MudText Typo="Typo.h6" Class="mb-3">Requirement list</MudText>
-                @if (!string.IsNullOrWhiteSpace(_loadError))
-                {
-                    <MudAlert Severity="Severity.Error">@_loadError</MudAlert>
-                }
-                else if (_loading)
+                @if (_loading)
                 {
                     <MudProgressCircular Indeterminate="true" />
                 }
+                else if (!string.IsNullOrWhiteSpace(_loadError))
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_loadError</MudAlert>
+                }
                 else if (_requirements.Count == 0)
                 {
-                    <MudText Typo="Typo.body2">No requirements created yet for this solution.</MudText>
+                    <MudText Typo="Typo.body2">No requirements created yet.</MudText>
                 }
                 else
                 {
@@ -73,13 +75,10 @@ else
                             <MudTh>Status</MudTh>
                             <MudTh>Priority</MudTh>
                             <MudTh>Created</MudTh>
-                            <MudTh></MudTh>
+                            <MudTh>Action</MudTh>
                         </HeaderContent>
                         <RowTemplate>
-                            <MudTd DataLabel="Title">
-                                <MudText Typo="Typo.body2">@context.Title</MudText>
-                                <MudText Typo="Typo.caption">@context.Description</MudText>
-                            </MudTd>
+                            <MudTd DataLabel="Title">@context.Title</MudTd>
                             <MudTd DataLabel="Status">@context.Status</MudTd>
                             <MudTd DataLabel="Priority">@context.Priority</MudTd>
                             <MudTd DataLabel="Created">@context.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
@@ -163,7 +162,7 @@ else
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            var solutionId = SelectedSolutionState.Current.Id;
+            var solutionId = SelectedSolutionState.Current.SolutionId;
             _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solutions/{solutionId}/requirements") ?? []);
             _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
         }
@@ -202,15 +201,12 @@ else
             var client = HttpClientFactory.CreateClient("api");
             var response = await client.PostAsJsonAsync("api/requirements", new
             {
+                TargetSolutionId = SelectedSolutionState.Current.SolutionId,
                 _request.Title,
                 _request.Description,
-                TargetSolutionId = SelectedSolutionState.Current.Id,
-                _request.Priority,
                 RequirementType = "functional",
                 Source = "user",
-                Status = "submitted",
-                AcceptanceCriteria = Array.Empty<string>(),
-                Constraints = Array.Empty<string>()
+                _request.Priority
             });
             response.EnsureSuccessStatusCode();
 
@@ -284,8 +280,6 @@ else
         public Guid Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
-        public string RequirementType { get; set; } = string.Empty;
-        public string Source { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public string Priority { get; set; } = string.Empty;
         public DateTime CreatedAtUtc { get; set; }
@@ -294,7 +288,8 @@ else
     private sealed class WorkflowRunRow
     {
         public Guid Id { get; set; }
-        public Guid RequirementId { get; set; }
+        public Guid? RequirementId { get; set; }
+        public Guid? BacklogItemId { get; set; }
         public Guid TargetSolutionId { get; set; }
         public string WorkflowCode { get; set; } = string.Empty;
         public int Status { get; set; }

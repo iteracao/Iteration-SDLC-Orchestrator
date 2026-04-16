@@ -21,4 +21,15 @@ Each workflow file defines:
 - knowledge documents updated
 - next workflows
 
+## Workflow root model
+
+The intended ownership model is:
+
+- `setup-solution` acts on the solution
+- `analyze-request` acts on a requirement
+- design and planning workflows act on a requirement
+- implementation, test, review, and delivery workflows act on backlog items produced by planning
+
+This means backlog is downstream from requirement analysis and planning, not the original intake model.
+
 These files are intended as a clear, fixed, first-pass framework definition that you can evolve inside the SDLC orchestrator.

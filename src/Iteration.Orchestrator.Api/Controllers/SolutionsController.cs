@@ -18,10 +18,10 @@ public sealed class SolutionsController : ControllerBase
                 solution => solution.Id,
                 (target, solution) => new
                 {
-                    Id = target.Id,
-                    target.SolutionId,
+                    target.Id,
+                    SolutionId = solution.Id,
                     target.Code,
-                    target.Name,
+                    solution.Name,
                     solution.Description,
                     target.RepositoryPath,
                     target.MainSolutionFile,
@@ -44,14 +44,14 @@ public sealed class SolutionsController : ControllerBase
             .Join(
                 db.Solutions,
                 target => target.SolutionId,
-                solutionRecord => solutionRecord.Id,
-                (target, solutionRecord) => new
+                solution => solution.Id,
+                (target, solution) => new
                 {
-                    Id = target.Id,
-                    target.SolutionId,
+                    target.Id,
+                    SolutionId = solution.Id,
                     target.Code,
-                    target.Name,
-                    solutionRecord.Description,
+                    solution.Name,
+                    solution.Description,
                     target.RepositoryPath,
                     target.MainSolutionFile,
                     target.ProfileCode,

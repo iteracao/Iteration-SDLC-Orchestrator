@@ -20,6 +20,7 @@ Before any analysis, you MUST read:
 - Analyze requirements ONLY (not SDLC instructions)
 - Follow analyze-request workflow rules
 - Produce structured output aligned with contracts
+- Treat backlog as downstream implementation planning, not requirement intake
 
 ## Output Rules
 

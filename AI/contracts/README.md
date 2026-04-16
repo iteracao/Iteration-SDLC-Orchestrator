@@ -15,7 +15,7 @@ The contracts layer ensures that:
 - users submit solution-related requirements only
 - agents operate inside fixed workflow boundaries
 - workflow inputs and outputs are strongly structured
-- cockpit can manage requirements, questions, decisions, and workflow history consistently
+- cockpit can manage requirements, questions, decisions, backlog work, and workflow history consistently
 - documentation and knowledge updates can be attached to each workflow run in a standard way
 
 ## Core contracts
@@ -27,28 +27,34 @@ A requirement may be business, functional, technical, or non-functional.
 Defined in:
 - `requirement.schema.json`
 
-### 2. Open Question
+### 2. Backlog Item
+Represents an implementation work item derived from one or more requirements during planning.
+A backlog item is not the canonical intake object.
+
+Defined later as planning/execution contracts mature.
+
+### 3. Open Question
 Represents an unresolved issue, ambiguity, dependency, or missing clarification discovered during a workflow.
 
 Defined in:
 - `open-question.schema.json`
 
-### 3. Decision
+### 4. Decision
 Represents an architectural, business, technical, or process decision made during the requirement lifecycle.
 
 Defined in:
 - `decision.schema.json`
 
-### 4. Workflow Input Envelope
+### 5. Workflow Input Envelope
 Represents the governed input passed to a workflow execution.
 It wraps the workflow metadata plus the entities the workflow is allowed to operate on.
 
 Defined in:
 - `workflow-input-envelope.schema.json`
 
-### 5. Workflow Output Envelope
+### 6. Workflow Output Envelope
 Represents the governed result produced by a workflow execution.
-It contains the primary result plus any generated requirements, questions, decisions, and documentation updates.
+It contains the primary result plus any generated requirements, backlog work, questions, decisions, and documentation updates.
 
 Defined in:
 - `workflow-output-envelope.schema.json`
@@ -56,20 +62,23 @@ Defined in:
 ## Design rules
 
 1. Users provide solution requirements, not agent instructions.
-2. Agents may only perform work allowed by:
+2. Requirements are the canonical intake object for solution needs.
+3. Backlog items are implementation work items produced by planning and used by execution workflows.
+4. Agents may only perform work allowed by:
    - workflow type
    - agent domain
    - agent skills
    - input/output contract
-3. Every workflow must consume a standard input envelope.
-4. Every workflow must produce a standard output envelope.
-5. Workflows may generate:
+5. Every workflow must consume a standard input envelope.
+6. Every workflow must produce a standard output envelope.
+7. Workflows may generate:
    - new requirements
+   - backlog items
    - open questions
    - decisions
    - documentation updates
    - knowledge updates
-6. Cockpit must be able to persist and display all contract instances and their relationships.
+8. Cockpit must be able to persist and display all contract instances and their relationships.
 
 ## Lifecycle intent
 
@@ -84,6 +93,15 @@ A requirement can move through stages such as:
 - delivered
 - rejected
 - blocked
+
+A backlog item can move through stages such as:
+- draft
+- planned
+- ready
+- in-progress
+- blocked
+- done
+- cancelled
 
 The exact lifecycle and transition rules should be enforced by workflow orchestration rules, not by freeform agent behavior.
 

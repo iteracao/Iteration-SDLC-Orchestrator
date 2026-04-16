@@ -5,9 +5,10 @@ namespace Iteration.Orchestrator.Domain.Backlog;
 public sealed class BacklogItem
 {
     public Guid Id { get; private set; } = Guid.NewGuid();
+    public Guid TargetSolutionId { get; private set; }
+    public Guid? RequirementId { get; private set; }
     public string Title { get; private set; } = string.Empty;
     public string Description { get; private set; } = string.Empty;
-    public Guid TargetSolutionId { get; private set; }
     public string WorkflowCode { get; private set; } = string.Empty;
     public PriorityLevel Priority { get; private set; }
     public BacklogItemStatus Status { get; private set; } = BacklogItemStatus.Draft;
@@ -16,21 +17,19 @@ public sealed class BacklogItem
     private BacklogItem() { }
 
     public BacklogItem(
+        Guid targetSolutionId,
+        Guid? requirementId,
         string title,
         string description,
-        Guid targetSolutionId,
         string workflowCode,
         PriorityLevel priority)
     {
+        TargetSolutionId = targetSolutionId;
+        RequirementId = requirementId;
         Title = title.Trim();
         Description = description.Trim();
-        TargetSolutionId = targetSolutionId;
         WorkflowCode = workflowCode.Trim();
         Priority = priority;
         Status = BacklogItemStatus.Ready;
     }
-
-    public void MarkInAnalysis() => Status = BacklogItemStatus.InAnalysis;
-    public void MarkAnalysisCompleted() => Status = BacklogItemStatus.AnalysisCompleted;
-    public void MarkFailed() => Status = BacklogItemStatus.Failed;
 }

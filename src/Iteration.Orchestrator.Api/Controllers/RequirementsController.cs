@@ -15,16 +15,15 @@ public sealed class RequirementsController : ControllerBase
         [FromServices] CreateRequirementHandler handler,
         CancellationToken ct)
     {
-        var id = await handler.HandleAsync(new CreateRequirementCommand(
-            request.Title,
-            request.Description,
-            request.TargetSolutionId,
-            request.Priority,
-            request.RequirementType,
-            request.Source,
-            request.Status,
-            request.AcceptanceCriteria,
-            request.Constraints), ct);
+        var id = await handler.HandleAsync(
+            new CreateRequirementCommand(
+                request.TargetSolutionId,
+                request.Title,
+                request.Description,
+                request.RequirementType,
+                request.Source,
+                request.Priority),
+            ct);
 
         return Ok(new { id });
     }

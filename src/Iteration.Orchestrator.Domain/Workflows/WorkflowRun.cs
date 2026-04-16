@@ -3,7 +3,8 @@ namespace Iteration.Orchestrator.Domain.Workflows;
 public sealed class WorkflowRun
 {
     public Guid Id { get; private set; } = Guid.NewGuid();
-    public Guid BacklogItemId { get; private set; }
+    public Guid? RequirementId { get; private set; }
+    public Guid? BacklogItemId { get; private set; }
     public Guid TargetSolutionId { get; private set; }
     public string WorkflowCode { get; private set; } = string.Empty;
     public WorkflowRunStatus Status { get; private set; } = WorkflowRunStatus.Pending;
@@ -15,8 +16,9 @@ public sealed class WorkflowRun
 
     private WorkflowRun() { }
 
-    public WorkflowRun(Guid backlogItemId, Guid targetSolutionId, string workflowCode, string requestedBy)
+    public WorkflowRun(Guid? requirementId, Guid? backlogItemId, Guid targetSolutionId, string workflowCode, string requestedBy)
     {
+        RequirementId = requirementId;
         BacklogItemId = backlogItemId;
         TargetSolutionId = targetSolutionId;
         WorkflowCode = workflowCode.Trim();

@@ -1,46 +1,50 @@
 @page "/solutions"
+@using System.Net.Http.Json
+@using Iteration.Orchestrator.Cockpit.Models
 @inject IHttpClientFactory HttpClientFactory
 @inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
 
 <PageTitle>Solutions</PageTitle>
 
-<MudText Typo="Typo.h5">Solutions</MudText>
-<MudText Typo="Typo.body2" Class="mb-4">Create a new target solution through setup-solution or select the current solution context for the cockpit.</MudText>
+<MudText Typo="Typo.h4">Solutions</MudText>
+<MudText Typo="Typo.body1" Class="mt-2 mb-4">
+    Register or select a solution workspace for the SDLC orchestrator.
+</MudText>
 
 <MudGrid>
     <MudItem xs="12" md="5">
         <MudPaper Class="pa-4">
-            <MudText Typo="Typo.h6" Class="mb-3">Create new solution</MudText>
+            <MudText Typo="Typo.h6" Class="mb-3">Setup solution</MudText>
+
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <MudAlert Severity="@_messageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                    @_message
+                </MudAlert>
+            }
 
             <MudForm @ref="_form">
-                <MudTextField @bind-Value="_request.Code" Label="Code" Required="true" />
-                <MudTextField @bind-Value="_request.Name" Label="Name" Required="true" />
-                <MudTextField @bind-Value="_request.Description" Label="Description" Lines="3" Required="true" />
-                <MudTextField @bind-Value="_request.RepositoryPath" Label="Repository path" Required="true" />
-                <MudTextField @bind-Value="_request.MainSolutionFile" Label="Main solution file" Required="true" />
-                <MudTextField @bind-Value="_request.ProfileCode" Label="Profile code" Required="true" />
-                <MudTextField @bind-Value="_request.SolutionOverlayCode" Label="Solution overlay code" />
-                <MudTextField @bind-Value="_request.RemoteRepositoryUrl" Label="Remote repository URL" />
-                <MudTextField @bind-Value="_request.RequestedBy" Label="Requested by" Required="true" />
+                <MudTextField T="string" Label="Code" @bind-Value="_request.Code" Required="true" RequiredError="Code is required." />
+                <MudTextField T="string" Label="Name" @bind-Value="_request.Name" Required="true" RequiredError="Name is required." />
+                <MudTextField T="string" Label="Description" @bind-Value="_request.Description" Lines="3" />
+                <MudTextField T="string" Label="Repository Path" @bind-Value="_request.RepositoryPath" Required="true" RequiredError="Repository path is required." />
+                <MudTextField T="string" Label="Main Solution File" @bind-Value="_request.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                <MudTextField T="string" Label="Profile Code" @bind-Value="_request.ProfileCode" Required="true" RequiredError="Profile code is required." />
+                <MudTextField T="string" Label="Solution Overlay Code" @bind-Value="_request.SolutionOverlayCode" Required="true" RequiredError="Solution overlay code is required." />
+                <MudTextField T="string" Label="Remote Repository URL" @bind-Value="_request.RemoteRepositoryUrl" />
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" Disabled="_saving" OnClick="CreateSolutionAsync">
+                    Create / Setup solution
+                </MudButton>
             </MudForm>
-
-            <MudStack Row="true" Spacing="2" Class="mt-3">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateSolutionAsync" Disabled="_saving">Run setup</MudButton>
-                <MudButton Variant="Variant.Text" OnClick="ResetForm" Disabled="_saving">Reset</MudButton>
-            </MudStack>
-
-            @if (!string.IsNullOrWhiteSpace(_formMessage))
-            {
-                <MudAlert Severity="@_formSeverity" Class="mt-3">@_formMessage</MudAlert>
-            }
         </MudPaper>
     </MudItem>
 
     <MudItem xs="12" md="7">
         <MudPaper Class="pa-4">
             <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
-                <MudText Typo="Typo.h6">Registered solutions</MudText>
-                <MudButton Variant="Variant.Outlined" OnClick="LoadSolutionsAsync">Refresh</MudButton>
+                <MudText Typo="Typo.h6">Available solutions</MudText>
+                <MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Refresh</MudButton>
             </MudStack>
 
             @if (_loading)
@@ -49,7 +53,7 @@
             }
             else if (!string.IsNullOrWhiteSpace(_loadError))
             {
-                <MudAlert Severity="Severity.Error">@_loadError</MudAlert>
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_loadError</MudAlert>
             }
             else if (_solutions.Count == 0)
             {
@@ -59,20 +63,20 @@
             {
                 <MudTable Items="_solutions" Dense="true" Hover="true">
                     <HeaderContent>
-                        <MudTh>Name</MudTh>
                         <MudTh>Code</MudTh>
+                        <MudTh>Name</MudTh>
                         <MudTh>Profile</MudTh>
-                        <MudTh>Repository</MudTh>
-                        <MudTh></MudTh>
+                        <MudTh>Created</MudTh>
+                        <MudTh>Action</MudTh>
                     </HeaderContent>
                     <RowTemplate>
-                        <MudTd DataLabel="Name">@context.Name</MudTd>
                         <MudTd DataLabel="Code">@context.Code</MudTd>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
                         <MudTd DataLabel="Profile">@context.ProfileCode</MudTd>
-                        <MudTd DataLabel="Repository">@context.RepositoryPath</MudTd>
+                        <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
                         <MudTd DataLabel="Action">
-                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="@(SelectedSolutionState.Current?.Id == context.Id ? Color.Success : Color.Primary)" OnClick="() => SelectSolution(context)">
-                                @(SelectedSolutionState.Current?.Id == context.Id ? "Current" : "Select")
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="() => SelectSolution(context)">
+                                Select
                             </MudButton>
                         </MudTd>
                     </RowTemplate>
@@ -84,21 +88,20 @@
 
 @code {
     private MudForm? _form;
-    private readonly List<Iteration.Orchestrator.Cockpit.Models.SolutionSummary> _solutions = [];
+    private readonly List<SolutionSummary> _solutions = [];
     private readonly SetupSolutionModel _request = new();
     private bool _loading;
     private bool _saving;
     private string? _loadError;
-    private string? _formMessage;
-    private Severity _formSeverity = Severity.Info;
+    private string? _message;
+    private Severity _messageSeverity = Severity.Info;
 
     protected override async Task OnInitializedAsync()
     {
-        ResetForm();
-        await LoadSolutionsAsync();
+        await LoadAsync();
     }
 
-    private async Task LoadSolutionsAsync()
+    private async Task LoadAsync()
     {
         _loading = true;
         _loadError = null;
@@ -107,20 +110,7 @@
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            _solutions.AddRange(await client.GetFromJsonAsync<List<Iteration.Orchestrator.Cockpit.Models.SolutionSummary>>("api/solutions") ?? []);
-
-            if (SelectedSolutionState.Current is null && _solutions.Count > 0)
-            {
-                SelectedSolutionState.SetCurrent(_solutions[0]);
-            }
-            else if (SelectedSolutionState.Current is not null)
-            {
-                var refreshed = _solutions.FirstOrDefault(x => x.Id == SelectedSolutionState.Current.Id);
-                if (refreshed is not null)
-                {
-                    SelectedSolutionState.SetCurrent(refreshed);
-                }
-            }
+            _solutions.AddRange(await client.GetFromJsonAsync<List<SolutionSummary>>("api/solutions") ?? []);
         }
         catch (Exception ex)
         {
@@ -130,11 +120,6 @@
         {
             _loading = false;
         }
-    }
-
-    private void SelectSolution(Iteration.Orchestrator.Cockpit.Models.SolutionSummary solution)
-    {
-        SelectedSolutionState.SetCurrent(solution);
     }
 
     private async Task CreateSolutionAsync()
@@ -149,29 +134,36 @@
         }
 
         _saving = true;
-        _formMessage = null;
+        _message = null;
 
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            var response = await client.PostAsJsonAsync("api/workflow-runs/setup-solution", _request);
+            var response = await client.PostAsJsonAsync("api/workflow-runs/setup-solution", new
+            {
+                _request.SolutionId,
+                _request.Code,
+                _request.Name,
+                _request.Description,
+                _request.RepositoryPath,
+                _request.MainSolutionFile,
+                _request.ProfileCode,
+                _request.SolutionOverlayCode,
+                _request.RemoteRepositoryUrl,
+                RequestedBy = "rui"
+            });
+
             response.EnsureSuccessStatusCode();
 
-            _formSeverity = Severity.Success;
-            _formMessage = "Solution setup started and completed successfully.";
-
-            await LoadSolutionsAsync();
-
-            var created = _solutions.FirstOrDefault(x => string.Equals(x.Code, _request.Code, StringComparison.OrdinalIgnoreCase));
-            if (created is not null)
-            {
-                SelectedSolutionState.SetCurrent(created);
-            }
+            _messageSeverity = Severity.Success;
+            _message = "Solution setup workflow completed.";
+            ResetForm();
+            await LoadAsync();
         }
         catch (Exception ex)
         {
-            _formSeverity = Severity.Error;
-            _formMessage = ex.Message;
+            _messageSeverity = Severity.Error;
+            _message = ex.Message;
         }
         finally
         {
@@ -179,22 +171,30 @@
         }
     }
 
+    private void SelectSolution(SolutionSummary solution)
+    {
+        SelectedSolutionState.SetCurrent(solution);
+
+        _messageSeverity = Severity.Success;
+        _message = $"Selected solution '{solution.Name}'.";
+    }
+
     private void ResetForm()
     {
+        _request.SolutionId = null;
         _request.Code = string.Empty;
         _request.Name = string.Empty;
         _request.Description = string.Empty;
         _request.RepositoryPath = string.Empty;
         _request.MainSolutionFile = string.Empty;
-        _request.ProfileCode = "dotnet-web-enterprise";
+        _request.ProfileCode = string.Empty;
         _request.SolutionOverlayCode = string.Empty;
         _request.RemoteRepositoryUrl = string.Empty;
-        _request.RequestedBy = "rui";
-        _formMessage = null;
     }
 
     private sealed class SetupSolutionModel
     {
+        public Guid? SolutionId { get; set; }
         public string Code { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
@@ -203,6 +203,5 @@
         public string ProfileCode { get; set; } = string.Empty;
         public string SolutionOverlayCode { get; set; } = string.Empty;
         public string? RemoteRepositoryUrl { get; set; }
-        public string RequestedBy { get; set; } = "rui";
     }
 }

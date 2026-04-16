@@ -47,28 +47,6 @@ public sealed class AppDbContext : DbContext, IAppDbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<BacklogItem>(e =>
-        {
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
-            e.HasIndex(x => x.TargetSolutionId);
-            e.HasOne<Solution>()
-                .WithMany()
-                .HasForeignKey(x => x.TargetSolutionId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<WorkflowRun>(e =>
-        {
-            e.HasKey(x => x.Id);
-            e.HasIndex(x => x.TargetSolutionId);
-            e.HasOne<Solution>()
-                .WithMany()
-                .HasForeignKey(x => x.TargetSolutionId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-        modelBuilder.Entity<AgentTaskRun>(e => e.HasKey(x => x.Id));
-        modelBuilder.Entity<AnalysisReport>(e => e.HasKey(x => x.Id));
         modelBuilder.Entity<Requirement>(e =>
         {
             e.HasKey(x => x.Id);
@@ -101,6 +79,48 @@ public sealed class AppDbContext : DbContext, IAppDbContext
                 .HasForeignKey(x => x.ParentRequirementId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
+
+        modelBuilder.Entity<BacklogItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.WorkflowCode).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => x.TargetSolutionId);
+            e.HasIndex(x => x.RequirementId);
+            e.HasOne<Solution>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetSolutionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Requirement>()
+                .WithMany()
+                .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<WorkflowRun>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.TargetSolutionId);
+            e.HasIndex(x => x.RequirementId);
+            e.HasIndex(x => x.BacklogItemId);
+            e.HasOne<Solution>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetSolutionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Requirement>()
+                .WithMany()
+                .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<BacklogItem>()
+                .WithMany()
+                .HasForeignKey(x => x.BacklogItemId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentTaskRun>(e => e.HasKey(x => x.Id));
+        modelBuilder.Entity<AnalysisReport>(e => e.HasKey(x => x.Id));
+
         modelBuilder.Entity<OpenQuestion>(e =>
         {
             e.HasKey(x => x.Id);
@@ -112,6 +132,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.TargetSolutionId);
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.WorkflowRunId);
+            e.HasIndex(x => x.BacklogItemId);
             e.HasOne<Solution>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
@@ -129,6 +150,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
                 .HasForeignKey(x => x.BacklogItemId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
+
         modelBuilder.Entity<Decision>(e =>
         {
             e.HasKey(x => x.Id);
@@ -142,6 +164,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.TargetSolutionId);
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.WorkflowRunId);
+            e.HasIndex(x => x.BacklogItemId);
             e.HasOne<Solution>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)

@@ -6,9 +6,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Iteration.Orchestrator.Application.Backlog;
 
 public sealed record CreateBacklogItemCommand(
+    Guid TargetSolutionId,
+    Guid? RequirementId,
     string Title,
     string Description,
-    Guid TargetSolutionId,
     string WorkflowCode,
     PriorityLevel Priority);
 
@@ -29,10 +30,22 @@ public sealed class CreateBacklogItemHandler
             throw new InvalidOperationException("Target solution not found.");
         }
 
+        if (command.RequirementId.HasValue)
+        {
+            var requirementExists = await _db.Requirements.AnyAsync(
+                x => x.Id == command.RequirementId.Value && x.TargetSolutionId == command.TargetSolutionId, ct);
+
+            if (!requirementExists)
+            {
+                throw new InvalidOperationException("Requirement not found for the target solution.");
+            }
+        }
+
         var entity = new BacklogItem(
+            command.TargetSolutionId,
+            command.RequirementId,
             command.Title,
             command.Description,
-            command.TargetSolutionId,
             command.WorkflowCode,
             command.Priority);
 

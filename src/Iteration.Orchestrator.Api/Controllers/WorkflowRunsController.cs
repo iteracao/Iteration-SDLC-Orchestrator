@@ -74,7 +74,7 @@ public sealed class WorkflowRunsController : ControllerBase
             .Select(x => new
             {
                 x.Id,
-                RequirementId = x.BacklogItemId,
+                x.RequirementId,
                 x.BacklogItemId,
                 x.TargetSolutionId,
                 x.WorkflowCode,

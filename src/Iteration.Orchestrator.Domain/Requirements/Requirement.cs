@@ -45,7 +45,7 @@ public sealed class Requirement
         RequirementType = string.IsNullOrWhiteSpace(requirementType) ? "functional" : requirementType.Trim();
         Source = string.IsNullOrWhiteSpace(source) ? "user" : source.Trim();
         Status = string.IsNullOrWhiteSpace(status) ? "submitted" : status.Trim();
-        Priority = string.IsNullOrWhiteSpace(priority) ? "medium" : priority.Trim();
+        Priority = string.IsNullOrWhiteSpace(priority) ? "medium" : priority.Trim().ToLowerInvariant();
         AcceptanceCriteriaJson = string.IsNullOrWhiteSpace(acceptanceCriteriaJson) ? "[]" : acceptanceCriteriaJson;
         ConstraintsJson = string.IsNullOrWhiteSpace(constraintsJson) ? "[]" : constraintsJson;
         CreatedAtUtc = createdAtUtc;
@@ -70,30 +70,30 @@ public sealed class Requirement
         RequirementType = string.IsNullOrWhiteSpace(requirementType) ? RequirementType : requirementType.Trim();
         Source = string.IsNullOrWhiteSpace(source) ? Source : source.Trim();
         Status = string.IsNullOrWhiteSpace(status) ? Status : status.Trim();
-        Priority = string.IsNullOrWhiteSpace(priority) ? Priority : priority.Trim();
+        Priority = string.IsNullOrWhiteSpace(priority) ? Priority : priority.Trim().ToLowerInvariant();
         AcceptanceCriteriaJson = string.IsNullOrWhiteSpace(acceptanceCriteriaJson) ? "[]" : acceptanceCriteriaJson;
         ConstraintsJson = string.IsNullOrWhiteSpace(constraintsJson) ? "[]" : constraintsJson;
         UpdatedAtUtc = updatedAtUtc;
     }
 
-    public void MarkInAnalysis(Guid workflowRunId, DateTime updatedAtUtc)
+    public void MarkUnderAnalysis(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
         Status = "under-analysis";
-        UpdatedAtUtc = updatedAtUtc;
+        UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkAnalysisCompleted(Guid workflowRunId, DateTime updatedAtUtc)
+    public void MarkAnalyzed(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
-        Status = "analysis-completed";
-        UpdatedAtUtc = updatedAtUtc;
+        Status = "analyzed";
+        UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkAnalysisFailed(Guid workflowRunId, DateTime updatedAtUtc)
+    public void MarkAnalysisFailed(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
         Status = "analysis-failed";
-        UpdatedAtUtc = updatedAtUtc;
+        UpdatedAtUtc = DateTime.UtcNow;
     }
 }

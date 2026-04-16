@@ -85,11 +85,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine(request.WorkflowPurpose ?? string.Empty);
         sb.AppendLine();
 
-        sb.AppendLine("REQUEST TITLE:");
+        sb.AppendLine("REQUIREMENT TITLE:");
         sb.AppendLine(request.RequirementTitle ?? string.Empty);
         sb.AppendLine();
 
-        sb.AppendLine("REQUEST DESCRIPTION:");
+        sb.AppendLine("REQUIREMENT DESCRIPTION:");
         sb.AppendLine(request.RequirementDescription ?? string.Empty);
         sb.AppendLine();
 

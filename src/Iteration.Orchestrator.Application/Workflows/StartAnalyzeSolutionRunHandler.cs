@@ -34,7 +34,7 @@ public sealed class StartAnalyzeSolutionRunHandler
 
     public async Task<Guid> HandleAsync(StartAnalyzeSolutionRunCommand command, CancellationToken ct)
     {
-        var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == command.RequirementId, ct)
+        var requirement = await _db.Requirements.FindAsync([command.RequirementId], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
         var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == requirement.TargetSolutionId, ct);
@@ -50,9 +50,9 @@ public sealed class StartAnalyzeSolutionRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, solution.Id, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(requirement.Id, null, solution.SolutionId, workflow.Code, command.RequestedBy);
         run.Start("request-analysis");
-        requirement.MarkInAnalysis(run.Id, DateTime.UtcNow);
+        requirement.MarkUnderAnalysis(run.Id);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -70,7 +70,7 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var request = new SolutionAnalysisRequest(
             run.Id,
-            solution.Id,
+            solution.SolutionId,
             workflow.Code,
             workflow.Name,
             workflow.Purpose,
@@ -113,12 +113,12 @@ public sealed class StartAnalyzeSolutionRunHandler
                 result.RawJson);
 
             _db.AnalysisReports.Add(report);
-            var requirementMap = PersistRequirements(result, solution.Id, run.Id, requirement);
-            PersistGeneratedOpenQuestions(result, solution.Id, run.Id, requirement.Id, requirementMap);
-            PersistGeneratedDecisions(result, solution.Id, run.Id, requirement.Id, requirementMap);
+            var requirementMap = PersistRequirements(result, requirement, run.Id);
+            PersistGeneratedOpenQuestions(result, requirement.TargetSolutionId, run.Id, requirementMap);
+            PersistGeneratedDecisions(result, requirement.TargetSolutionId, run.Id, requirementMap);
 
             run.Succeed("analysis-completed");
-            requirement.MarkAnalysisCompleted(run.Id, DateTime.UtcNow);
+            requirement.MarkAnalyzed(run.Id);
 
             await _db.SaveChangesAsync(ct);
 
@@ -130,7 +130,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         {
             taskRun.Fail(ex.Message);
             run.Fail("request-analysis", ex.Message);
-            requirement.MarkAnalysisFailed(run.Id, DateTime.UtcNow);
+            requirement.MarkAnalysisFailed(run.Id);
             await _db.SaveChangesAsync(ct);
             throw;
         }
@@ -200,9 +200,8 @@ public sealed class StartAnalyzeSolutionRunHandler
 
     private Dictionary<string, Guid> PersistRequirements(
         SolutionAnalysisResult result,
-        Guid targetSolutionId,
-        Guid workflowRunId,
-        Requirement primaryRequirement)
+        Requirement primaryRequirement,
+        Guid workflowRunId)
     {
         var requirementMap = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
         {
@@ -216,7 +215,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             primaryRequirement.Description,
             primaryRequirement.RequirementType,
             primaryRequirement.Source,
-            "analysis-completed",
+            "analyzed",
             primaryRequirement.Priority,
             primaryRequirement.AcceptanceCriteriaJson,
             primaryRequirement.ConstraintsJson,
@@ -227,7 +226,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         {
             var parentRequirementId = ResolveRequirementReference(item.ParentRequirementId, requirementMap, primaryRequirement.Id);
             var requirement = new Requirement(
-                targetSolutionId,
+                primaryRequirement.TargetSolutionId,
                 null,
                 workflowRunId,
                 parentRequirementId,
@@ -257,7 +256,6 @@ public sealed class StartAnalyzeSolutionRunHandler
         SolutionAnalysisResult result,
         Guid targetSolutionId,
         Guid workflowRunId,
-        Guid primaryRequirementId,
         IReadOnlyDictionary<string, Guid> requirementMap)
     {
         var items = DeserializeList<GeneratedOpenQuestionDto>(result.GeneratedOpenQuestionsJson);
@@ -267,7 +265,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             var description = FirstNonEmpty(item.Description, title);
             var createdAtUtc = ParseDateOrDefault(item.RaisedAtUtc, DateTime.UtcNow);
             var resolvedAtUtc = ParseNullableDate(item.ResolvedAtUtc);
-            var requirementId = ResolveRequirementReference(item.RequirementId, requirementMap, primaryRequirementId);
+            var requirementId = ResolveRequirementReference(item.RequirementId, requirementMap, null);
 
             _db.OpenQuestions.Add(new OpenQuestion(
                 targetSolutionId,
@@ -288,34 +286,57 @@ public sealed class StartAnalyzeSolutionRunHandler
         SolutionAnalysisResult result,
         Guid targetSolutionId,
         Guid workflowRunId,
-        Guid primaryRequirementId,
         IReadOnlyDictionary<string, Guid> requirementMap)
     {
         var items = DeserializeList<GeneratedDecisionDto>(result.GeneratedDecisionsJson);
         foreach (var item in items)
         {
-            var title = FirstNonEmpty(item.Title, "Analysis decision");
-            var summary = FirstNonEmpty(item.Summary, title);
-            var createdAtUtc = ParseDateOrDefault(item.DecidedAtUtc, DateTime.UtcNow);
-            var requirementId = ResolveRequirementReference(
-                item.RequirementIds?.FirstOrDefault(),
-                requirementMap,
-                primaryRequirementId);
+            var requirementId = ResolveRequirementReference(item.RequirementId, requirementMap, null);
 
             _db.Decisions.Add(new Decision(
                 targetSolutionId,
                 requirementId,
                 workflowRunId,
                 null,
-                title,
-                summary,
+                FirstNonEmpty(item.Title, "Decision from analysis"),
+                FirstNonEmpty(item.Summary, item.Title ?? "Decision from analysis"),
                 item.DecisionType ?? "technical",
                 item.Status ?? "proposed",
                 item.Rationale,
                 SerializeStringList(item.Consequences),
                 SerializeStringList(item.AlternativesConsidered),
-                createdAtUtc));
+                ParseDateOrDefault(item.DecidedAtUtc, DateTime.UtcNow)));
         }
+    }
+
+    private static string FirstNonEmpty(string? value, string fallback)
+        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static DateTime ParseDateOrDefault(string? value, DateTime fallback)
+        => DateTime.TryParse(value, out var parsed) ? parsed : fallback;
+
+    private static DateTime? ParseNullableDate(string? value)
+        => DateTime.TryParse(value, out var parsed) ? parsed : null;
+
+    private static string SerializeStringList(IEnumerable<string>? values)
+        => JsonSerializer.Serialize((values ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray());
+
+    private static Guid? ResolveRequirementReference(
+        string? reference,
+        IReadOnlyDictionary<string, Guid> requirementMap,
+        Guid? fallback)
+    {
+        if (string.IsNullOrWhiteSpace(reference))
+        {
+            return fallback;
+        }
+
+        if (Guid.TryParse(reference, out var directId))
+        {
+            return directId;
+        }
+
+        return requirementMap.TryGetValue(reference.Trim(), out var mapped) ? mapped : fallback;
     }
 
     private static List<T> DeserializeList<T>(string json)
@@ -325,71 +346,14 @@ public sealed class StartAnalyzeSolutionRunHandler
             return [];
         }
 
-        return JsonSerializer.Deserialize<List<T>>(json, JsonOptions) ?? [];
-    }
-
-    private static string SerializeStringList(List<string>? values)
-    {
-        var normalized = values?
-            .Select(x => x?.Trim())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Cast<string>()
-            .ToList() ?? [];
-
-        return JsonSerializer.Serialize(normalized);
-    }
-
-    private static Guid? ResolveRequirementReference(
-        string? requirementReference,
-        IReadOnlyDictionary<string, Guid> requirementMap,
-        Guid? fallbackRequirementId)
-    {
-        if (!string.IsNullOrWhiteSpace(requirementReference) &&
-            requirementMap.TryGetValue(requirementReference.Trim(), out var mappedRequirementId))
+        try
         {
-            return mappedRequirementId;
+            return JsonSerializer.Deserialize<List<T>>(json) ?? [];
         }
-
-        return fallbackRequirementId;
-    }
-
-    private static string FirstNonEmpty(string? value, string fallback)
-        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-
-    private static DateTime ParseDateOrDefault(string? value, DateTime fallback)
-        => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : fallback;
-
-    private static DateTime? ParseNullableDate(string? value)
-        => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : null;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    private sealed class GeneratedOpenQuestionDto
-    {
-        public string? RequirementId { get; set; }
-        public string? Title { get; set; }
-        public string? Description { get; set; }
-        public string? Category { get; set; }
-        public string? Status { get; set; }
-        public string? ResolutionNotes { get; set; }
-        public string? RaisedAtUtc { get; set; }
-        public string? ResolvedAtUtc { get; set; }
-    }
-
-    private sealed class GeneratedDecisionDto
-    {
-        public string? Title { get; set; }
-        public string? Summary { get; set; }
-        public string? DecisionType { get; set; }
-        public string? Status { get; set; }
-        public string? Rationale { get; set; }
-        public List<string>? RequirementIds { get; set; }
-        public List<string>? Consequences { get; set; }
-        public List<string>? AlternativesConsidered { get; set; }
-        public string? DecidedAtUtc { get; set; }
+        catch
+        {
+            return [];
+        }
     }
 
     private sealed class GeneratedRequirementDto
@@ -406,5 +370,30 @@ public sealed class StartAnalyzeSolutionRunHandler
         public List<string>? Constraints { get; set; }
         public string? SubmittedAtUtc { get; set; }
         public string? LastUpdatedAtUtc { get; set; }
+    }
+
+    private sealed class GeneratedOpenQuestionDto
+    {
+        public string? RequirementId { get; set; }
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? Category { get; set; }
+        public string? Status { get; set; }
+        public string? ResolutionNotes { get; set; }
+        public string? RaisedAtUtc { get; set; }
+        public string? ResolvedAtUtc { get; set; }
+    }
+
+    private sealed class GeneratedDecisionDto
+    {
+        public string? RequirementId { get; set; }
+        public string? Title { get; set; }
+        public string? Summary { get; set; }
+        public string? DecisionType { get; set; }
+        public string? Status { get; set; }
+        public string? Rationale { get; set; }
+        public List<string>? Consequences { get; set; }
+        public List<string>? AlternativesConsidered { get; set; }
+        public string? DecidedAtUtc { get; set; }
     }
 }

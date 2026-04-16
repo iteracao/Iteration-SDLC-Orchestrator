@@ -7,7 +7,7 @@
 
 <MudText Typo="Typo.h4">Iteration SDLC Orchestrator</MudText>
 <MudText Typo="Typo.body1" Class="mt-2 mb-4">
-    Cockpit focused on solution selection, requirement-driven intake, and workflow history.
+    Cockpit focused on solution selection, requirement-driven analysis, and workflow history.
 </MudText>
 
 @if (SelectedSolutionState.Current is null)
@@ -98,7 +98,7 @@ else
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={SelectedSolutionState.Current.Id}") ?? []);
+            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={SelectedSolutionState.Current.SolutionId}") ?? []);
         }
         catch (Exception ex)
         {
@@ -119,7 +119,8 @@ else
     private sealed class WorkflowRunRow
     {
         public Guid Id { get; set; }
-        public Guid RequirementId { get; set; }
+        public Guid? RequirementId { get; set; }
+        public Guid? BacklogItemId { get; set; }
         public Guid TargetSolutionId { get; set; }
         public string WorkflowCode { get; set; } = string.Empty;
         public int Status { get; set; }
