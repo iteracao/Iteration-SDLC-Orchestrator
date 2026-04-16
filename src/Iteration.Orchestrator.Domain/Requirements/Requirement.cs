@@ -138,4 +138,32 @@ public sealed class Requirement
         Status = "planning-failed";
         UpdatedAtUtc = DateTime.UtcNow;
     }
+
+    public void MarkImplementing(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "under-implementation";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkAwaitingImplementationValidation(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "awaiting-implementation-validation";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkImplementationFailed(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "implementation-failed";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkCanceled(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "canceled";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
 }

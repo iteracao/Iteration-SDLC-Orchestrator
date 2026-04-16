@@ -13,8 +13,9 @@ public sealed class BacklogItem
     public string Description { get; private set; } = string.Empty;
     public string WorkflowCode { get; private set; } = string.Empty;
     public PriorityLevel Priority { get; private set; }
-    public BacklogItemStatus Status { get; private set; } = BacklogItemStatus.Draft;
+    public BacklogItemStatus Status { get; private set; } = BacklogItemStatus.NotImplemented;
     public DateTime CreatedUtc { get; private set; } = DateTime.UtcNow;
+    public DateTime? UpdatedUtc { get; private set; }
 
     private BacklogItem() { }
 
@@ -47,6 +48,33 @@ public sealed class BacklogItem
         Description = description.Trim();
         WorkflowCode = workflowCode.Trim();
         Priority = priority;
-        Status = BacklogItemStatus.Ready;
+        Status = BacklogItemStatus.NotImplemented;
     }
+
+    public void MarkAwaitingValidation()
+    {
+        Status = BacklogItemStatus.AwaitingValidation;
+        UpdatedUtc = DateTime.UtcNow;
+    }
+
+    public void MarkImplementationError()
+    {
+        Status = BacklogItemStatus.ImplementationError;
+        UpdatedUtc = DateTime.UtcNow;
+    }
+
+    public void MarkValidated()
+    {
+        Status = BacklogItemStatus.Validated;
+        UpdatedUtc = DateTime.UtcNow;
+    }
+
+    public void MarkCanceled()
+    {
+        Status = BacklogItemStatus.Canceled;
+        UpdatedUtc = DateTime.UtcNow;
+    }
+
+    public bool CanStartImplementationAttempt()
+        => Status == BacklogItemStatus.NotImplemented || Status == BacklogItemStatus.ImplementationError;
 }

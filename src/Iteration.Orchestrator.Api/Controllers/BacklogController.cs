@@ -54,7 +54,24 @@ public sealed class BacklogController : ControllerBase
         }
 
         var items = await query
-            .OrderByDescending(x => x.CreatedUtc)
+            .OrderBy(x => x.RequirementId)
+            .ThenBy(x => x.PlanningOrder)
+            .ThenBy(x => x.CreatedUtc)
+            .Select(x => new
+            {
+                x.Id,
+                x.TargetSolutionId,
+                x.RequirementId,
+                x.PlanWorkflowRunId,
+                x.PlanningOrder,
+                x.Title,
+                x.Description,
+                x.WorkflowCode,
+                Priority = x.Priority.ToString(),
+                Status = x.Status.ToString(),
+                x.CreatedUtc,
+                x.UpdatedUtc
+            })
             .ToListAsync(ct);
 
         return Ok(items);

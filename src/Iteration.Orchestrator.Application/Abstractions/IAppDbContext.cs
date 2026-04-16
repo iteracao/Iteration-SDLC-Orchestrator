@@ -19,6 +19,7 @@ public interface IAppDbContext
     DbSet<AnalysisReport> AnalysisReports { get; }
     DbSet<DesignReport> DesignReports { get; }
     DbSet<PlanReport> PlanReports { get; }
+    DbSet<ImplementationReport> ImplementationReports { get; }
     DbSet<OpenQuestion> OpenQuestions { get; }
     DbSet<Decision> Decisions { get; }
     DbSet<Requirement> Requirements { get; }

@@ -1,6 +1,7 @@
 using Iteration.Orchestrator.Api.Contracts;
 using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Application.Workflows;
+using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -80,6 +81,18 @@ public sealed class WorkflowRunsController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpPost("implement-solution-change")]
+    public async Task<IActionResult> StartImplementation(
+        [FromBody] StartImplementationRunRequest request,
+        [FromServices] StartImplementSolutionChangeRunHandler handler,
+        CancellationToken ct)
+    {
+        var id = await handler.HandleAsync(
+            new StartImplementSolutionChangeRunCommand(request.BacklogItemId, request.RequestedBy), ct);
+
+        return Ok(new { id });
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromServices] AppDbContext db,
@@ -126,6 +139,7 @@ public sealed class WorkflowRunsController : ControllerBase
         var analysisReport = await db.AnalysisReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
         var designReport = await db.DesignReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
         var planReport = await db.PlanReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
+        var implementationReport = await db.ImplementationReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
 
         return Ok(new
         {
@@ -133,11 +147,11 @@ public sealed class WorkflowRunsController : ControllerBase
             analysisReport,
             designReport,
             planReport,
-            report = planReport is not null
-                    ? (object)planReport
-                    : designReport is not null
-                        ? designReport
-                        : analysisReport
+            implementationReport,
+            report = implementationReport as object
+                ?? planReport as object
+                ?? designReport as object
+                ?? analysisReport as object
         });
     }
 }

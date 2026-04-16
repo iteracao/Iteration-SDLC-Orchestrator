@@ -100,6 +100,41 @@ else
                 }
             </MudPaper>
 
+            <MudPaper Class="pa-4 mb-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Planned backlog</MudText>
+                @if (_backlog.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No backlog items generated yet.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_backlog" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Order</MudTh>
+                            <MudTh>Requirement</MudTh>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Action</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Order">@context.PlanningOrder</MudTd>
+                            <MudTd DataLabel="Requirement">@GetRequirementTitle(context.RequirementId)</MudTd>
+                            <MudTd DataLabel="Title">@context.Title</MudTd>
+                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Action">
+                                <MudButton Size="Size.Small"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Success"
+                                           Disabled="_runningBacklogItemId == context.Id || !CanImplement(context)"
+                                           OnClick="() => StartImplementationAsync(context.Id)">
+                                    Implement
+                                </MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+
             <MudPaper Class="pa-4">
                 <MudText Typo="Typo.h6" Class="mb-3">Workflow history</MudText>
                 @if (_runs.Count == 0)
@@ -132,10 +167,12 @@ else
     private MudForm? _form;
     private readonly CreateRequirementModel _request = new();
     private readonly List<RequirementRow> _requirements = [];
+    private readonly List<BacklogRow> _backlog = [];
     private readonly List<WorkflowRunRow> _runs = [];
     private bool _loading;
     private bool _saving;
     private Guid? _runningRequirementId;
+    private Guid? _runningBacklogItemId;
     private string? _loadError;
     private string? _formMessage;
     private Severity _formSeverity = Severity.Info;
@@ -155,6 +192,7 @@ else
     private async Task LoadAsync()
     {
         _requirements.Clear();
+        _backlog.Clear();
         _runs.Clear();
         _loadError = null;
 
@@ -172,6 +210,12 @@ else
             var client = HttpClientFactory.CreateClient("api");
             var solutionId = SelectedSolutionState.Current.SolutionId;
             _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solutions/{solutionId}/requirements") ?? []);
+            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
+            _backlog.Sort((left, right) =>
+            {
+                var requirementCompare = Nullable.Compare(left.RequirementId, right.RequirementId);
+                return requirementCompare != 0 ? requirementCompare : left.PlanningOrder.CompareTo(right.PlanningOrder);
+            });
             _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
         }
         catch (Exception ex)
@@ -324,6 +368,36 @@ else
         }
     }
 
+    private async Task StartImplementationAsync(Guid backlogItemId)
+    {
+        _runningBacklogItemId = backlogItemId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/implement-solution-change", new
+            {
+                BacklogItemId = backlogItemId,
+                RequestedBy = "rui"
+            });
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Implementation workflow started.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _runningBacklogItemId = null;
+        }
+    }
+
     private static bool CanAnalyze(string status)
         => string.Equals(status, "submitted", StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, "analysis-failed", StringComparison.OrdinalIgnoreCase);
@@ -335,6 +409,25 @@ else
     private static bool CanPlan(string status)
         => string.Equals(status, "designed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, "planning-failed", StringComparison.OrdinalIgnoreCase);
+
+    private bool CanImplement(BacklogRow row)
+    {
+        if (!(string.Equals(row.Status, "NotImplemented", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(row.Status, "ImplementationError", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var previousItems = _backlog
+            .Where(x => x.RequirementId == row.RequirementId && x.PlanningOrder < row.PlanningOrder)
+            .ToList();
+
+        return previousItems.All(x => string.Equals(x.Status, "Validated", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(x.Status, "Canceled", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string GetRequirementTitle(Guid? requirementId)
+        => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Title ?? "-";
 
     private void ResetForm()
     {
@@ -363,6 +456,15 @@ else
         public string Status { get; set; } = string.Empty;
         public string Priority { get; set; } = string.Empty;
         public DateTime CreatedAtUtc { get; set; }
+    }
+
+    private sealed class BacklogRow
+    {
+        public Guid Id { get; set; }
+        public Guid? RequirementId { get; set; }
+        public int PlanningOrder { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
     }
 
     private sealed class WorkflowRunRow

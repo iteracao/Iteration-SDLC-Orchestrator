@@ -106,3 +106,48 @@ public sealed record SolutionPlanResult(
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
     string RawJson);
+
+
+public sealed record SolutionImplementationRequest(
+    Guid WorkflowRunId,
+    Guid TargetSolutionId,
+    Guid RequirementId,
+    Guid BacklogItemId,
+    Guid PlanWorkflowRunId,
+    string WorkflowCode,
+    string WorkflowName,
+    string WorkflowPurpose,
+    string RequirementTitle,
+    string RequirementDescription,
+    string BacklogTitle,
+    string BacklogDescription,
+    int PlanningOrder,
+    string PlanSummary,
+    string PlanStatus,
+    string GeneratedBacklogItemsJson,
+    string PlanOpenQuestionsJson,
+    string PlanDecisionsJson,
+    string ProfileSummary,
+    IReadOnlyList<TextDocumentInput> ProfileRules,
+    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
+    IReadOnlyList<string> KnowledgeUpdates,
+    IReadOnlyList<string> ExecutionRules,
+    IReadOnlyList<string> NextWorkflowCodes,
+    SolutionSnapshot Snapshot,
+    IReadOnlyList<FileSearchHit> SearchHits,
+    IReadOnlyDictionary<string, string> SampleFiles);
+
+public sealed record SolutionImplementationResult(
+    string Summary,
+    string Status,
+    string ImplementedChangesJson,
+    string FilesTouchedJson,
+    string TestsExecutedJson,
+    string GeneratedRequirementsJson,
+    string GeneratedOpenQuestionsJson,
+    string GeneratedDecisionsJson,
+    string DocumentationUpdatesJson,
+    string KnowledgeUpdatesJson,
+    string RecommendedNextWorkflowCodesJson,
+    string RawJson);

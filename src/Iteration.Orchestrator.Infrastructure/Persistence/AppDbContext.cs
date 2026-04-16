@@ -20,6 +20,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<AnalysisReport> AnalysisReports => Set<AnalysisReport>();
     public DbSet<DesignReport> DesignReports => Set<DesignReport>();
     public DbSet<PlanReport> PlanReports => Set<PlanReport>();
+    public DbSet<ImplementationReport> ImplementationReports => Set<ImplementationReport>();
     public DbSet<OpenQuestion> OpenQuestions => Set<OpenQuestion>();
     public DbSet<Decision> Decisions => Set<Decision>();
     public DbSet<Requirement> Requirements => Set<Requirement>();
@@ -154,6 +155,26 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasOne<Requirement>()
                 .WithMany()
                 .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ImplementationReport>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.WorkflowRunId).IsUnique();
+            e.HasIndex(x => x.RequirementId);
+            e.HasIndex(x => x.BacklogItemId);
+            e.HasOne<WorkflowRun>()
+                .WithMany()
+                .HasForeignKey(x => x.WorkflowRunId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Requirement>()
+                .WithMany()
+                .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<BacklogItem>()
+                .WithMany()
+                .HasForeignKey(x => x.BacklogItemId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

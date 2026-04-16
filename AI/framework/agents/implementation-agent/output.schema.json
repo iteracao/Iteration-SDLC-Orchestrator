@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "workflowCode",
+    "targetSolutionId",
+    "workflowRunId",
+    "completedAtUtc",
+    "status",
+    "result"
+  ],
+  "properties": {
+    "workflowCode": { "type": "string" },
+    "targetSolutionId": { "type": "string" },
+    "workflowRunId": { "type": "string" },
+    "completedAtUtc": { "type": "string" },
+    "status": { "type": "string" },
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "summary",
+        "implementedChanges",
+        "filesTouched",
+        "testsExecuted",
+        "generatedRequirements",
+        "generatedOpenQuestions",
+        "generatedDecisions",
+        "documentationUpdates",
+        "knowledgeUpdates",
+        "recommendedNextWorkflowCodes"
+      ],
+      "properties": {
+        "summary": { "type": "string" },
+        "implementedChanges": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "filesTouched": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "testsExecuted": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "generatedRequirements": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "generatedOpenQuestions": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "generatedDecisions": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "documentationUpdates": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "knowledgeUpdates": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendedNextWorkflowCodes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

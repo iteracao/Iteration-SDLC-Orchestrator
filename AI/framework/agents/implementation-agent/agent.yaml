@@ -1,0 +1,11 @@
+code: implementation-agent
+name: Implementation Agent
+description: Implements a single planned backlog slice in a grounded, repository-aware way without jumping ahead to future slices.
+
+allowedTools:
+  - solution.snapshot
+  - solution.search
+  - solution.readFile
+
+outputSchema: ../../../contracts/workflow-output-envelope.schema.json
+promptFile: prompt.md
