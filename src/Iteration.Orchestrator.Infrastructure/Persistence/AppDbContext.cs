@@ -18,6 +18,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<WorkflowRun> WorkflowRuns => Set<WorkflowRun>();
     public DbSet<AgentTaskRun> AgentTaskRuns => Set<AgentTaskRun>();
     public DbSet<AnalysisReport> AnalysisReports => Set<AnalysisReport>();
+    public DbSet<DesignReport> DesignReports => Set<DesignReport>();
     public DbSet<OpenQuestion> OpenQuestions => Set<OpenQuestion>();
     public DbSet<Decision> Decisions => Set<Decision>();
     public DbSet<Requirement> Requirements => Set<Requirement>();
@@ -120,6 +121,20 @@ public sealed class AppDbContext : DbContext, IAppDbContext
 
         modelBuilder.Entity<AgentTaskRun>(e => e.HasKey(x => x.Id));
         modelBuilder.Entity<AnalysisReport>(e => e.HasKey(x => x.Id));
+        modelBuilder.Entity<DesignReport>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.WorkflowRunId).IsUnique();
+            e.HasIndex(x => x.RequirementId);
+            e.HasOne<WorkflowRun>()
+                .WithMany()
+                .HasForeignKey(x => x.WorkflowRunId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Requirement>()
+                .WithMany()
+                .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<OpenQuestion>(e =>
         {

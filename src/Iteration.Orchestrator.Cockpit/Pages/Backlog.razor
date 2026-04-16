@@ -83,9 +83,14 @@ else
                             <MudTd DataLabel="Priority">@context.Priority</MudTd>
                             <MudTd DataLabel="Created">@context.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
                             <MudTd DataLabel="Action">
-                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="_runningRequirementId == context.Id" OnClick="() => StartAnalyzeAsync(context.Id)">
-                                    Analyze
-                                </MudButton>
+                                <MudStack Row="true" Spacing="1">
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="_runningRequirementId == context.Id || !CanAnalyze(context.Status)" OnClick="() => StartAnalyzeAsync(context.Id)">
+                                        Analyze
+                                    </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" Disabled="_runningRequirementId == context.Id || !CanDesign(context.Status)" OnClick="() => StartDesignAsync(context.Id)">
+                                        Design
+                                    </MudButton>
+                                </MudStack>
                             </MudTd>
                         </RowTemplate>
                     </MudTable>
@@ -255,6 +260,44 @@ else
             _runningRequirementId = null;
         }
     }
+
+    private async Task StartDesignAsync(Guid requirementId)
+    {
+        _runningRequirementId = requirementId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/design-solution-change", new
+            {
+                RequirementId = requirementId,
+                RequestedBy = "rui"
+            });
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Design workflow started.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _runningRequirementId = null;
+        }
+    }
+
+    private static bool CanAnalyze(string status)
+        => string.Equals(status, "submitted", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, "analysis-failed", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CanDesign(string status)
+        => string.Equals(status, "analyzed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, "design-failed", StringComparison.OrdinalIgnoreCase);
 
     private void ResetForm()
     {

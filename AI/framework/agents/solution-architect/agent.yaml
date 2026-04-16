@@ -1,0 +1,11 @@
+code: solution-architect
+name: Solution Architect
+description: Turns an analyzed requirement into a grounded proposed solution design.
+
+allowedTools:
+  - solution.snapshot
+  - solution.search
+  - solution.readFile
+
+outputSchema: ../../../contracts/workflow-output-envelope.schema.json
+promptFile: prompt.md

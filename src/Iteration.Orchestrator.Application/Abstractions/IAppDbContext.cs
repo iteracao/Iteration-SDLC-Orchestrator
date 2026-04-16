@@ -17,6 +17,7 @@ public interface IAppDbContext
     DbSet<WorkflowRun> WorkflowRuns { get; }
     DbSet<AgentTaskRun> AgentTaskRuns { get; }
     DbSet<AnalysisReport> AnalysisReports { get; }
+    DbSet<DesignReport> DesignReports { get; }
     DbSet<OpenQuestion> OpenQuestions { get; }
     DbSet<Decision> Decisions { get; }
     DbSet<Requirement> Requirements { get; }

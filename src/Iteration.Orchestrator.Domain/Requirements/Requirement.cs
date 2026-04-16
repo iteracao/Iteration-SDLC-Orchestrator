@@ -96,4 +96,25 @@ public sealed class Requirement
         Status = "analysis-failed";
         UpdatedAtUtc = DateTime.UtcNow;
     }
+
+    public void MarkUnderDesign(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "under-design";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkDesigned(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "designed";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkDesignFailed(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = "design-failed";
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
 }

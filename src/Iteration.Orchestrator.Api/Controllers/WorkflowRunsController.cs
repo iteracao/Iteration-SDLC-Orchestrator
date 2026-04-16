@@ -56,6 +56,18 @@ public sealed class WorkflowRunsController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpPost("design-solution-change")]
+    public async Task<IActionResult> StartDesign(
+        [FromBody] StartDesignRunRequest request,
+        [FromServices] StartDesignSolutionRunHandler handler,
+        CancellationToken ct)
+    {
+        var id = await handler.HandleAsync(
+            new StartDesignSolutionRunCommand(request.RequirementId, request.RequestedBy), ct);
+
+        return Ok(new { id });
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromServices] AppDbContext db,
@@ -99,12 +111,15 @@ public sealed class WorkflowRunsController : ControllerBase
         var run = await db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (run is null) return NotFound();
 
-        var report = await db.AnalysisReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
+        var analysisReport = await db.AnalysisReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
+        var designReport = await db.DesignReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
 
         return Ok(new
         {
             run,
-            report
+            analysisReport,
+            designReport,
+            report = (object?)designReport ?? analysisReport
         });
     }
 }

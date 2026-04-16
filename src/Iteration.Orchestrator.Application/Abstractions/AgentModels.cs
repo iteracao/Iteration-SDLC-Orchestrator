@@ -30,3 +30,40 @@ public sealed record SolutionAnalysisResult(
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
     string RawJson);
+
+public sealed record SolutionDesignRequest(
+    Guid WorkflowRunId,
+    Guid TargetSolutionId,
+    Guid RequirementId,
+    Guid AnalysisWorkflowRunId,
+    string WorkflowCode,
+    string WorkflowName,
+    string WorkflowPurpose,
+    string RequirementTitle,
+    string RequirementDescription,
+    string AnalysisSummary,
+    string AnalysisStatus,
+    string AnalysisArtifactsJson,
+    string AnalysisOpenQuestionsJson,
+    string AnalysisDecisionsJson,
+    string ProfileSummary,
+    IReadOnlyList<TextDocumentInput> ProfileRules,
+    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
+    IReadOnlyList<string> KnowledgeUpdates,
+    IReadOnlyList<string> ExecutionRules,
+    IReadOnlyList<string> NextWorkflowCodes,
+    SolutionSnapshot Snapshot,
+    IReadOnlyList<FileSearchHit> SearchHits,
+    IReadOnlyDictionary<string, string> SampleFiles);
+
+public sealed record SolutionDesignResult(
+    string Summary,
+    string Status,
+    string ArtifactsJson,
+    string GeneratedOpenQuestionsJson,
+    string GeneratedDecisionsJson,
+    string DocumentationUpdatesJson,
+    string KnowledgeUpdatesJson,
+    string RecommendedNextWorkflowCodesJson,
+    string RawJson);
