@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
+using Iteration.Orchestrator.Domain.Decisions;
+using Iteration.Orchestrator.Domain.Questions;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 
@@ -103,6 +105,8 @@ public sealed class StartAnalyzeSolutionRunHandler
                 result.RawJson);
 
             _db.AnalysisReports.Add(report);
+            PersistGeneratedOpenQuestions(result, solution.Id, run.Id, backlog.Id);
+            PersistGeneratedDecisions(result, solution.Id, run.Id, backlog.Id);
 
             run.Succeed("analysis-completed");
             backlog.MarkAnalysisCompleted();
@@ -184,5 +188,119 @@ public sealed class StartAnalyzeSolutionRunHandler
         }
 
         return sb.ToString().Trim();
+    }
+
+    private void PersistGeneratedOpenQuestions(
+        SolutionAnalysisResult result,
+        Guid targetSolutionId,
+        Guid workflowRunId,
+        Guid backlogItemId)
+    {
+        var items = DeserializeList<GeneratedOpenQuestionDto>(result.GeneratedOpenQuestionsJson);
+        foreach (var item in items)
+        {
+            var title = FirstNonEmpty(item.Title, "Open question from analysis");
+            var description = FirstNonEmpty(item.Description, title);
+            var createdAtUtc = ParseDateOrDefault(item.RaisedAtUtc, DateTime.UtcNow);
+            var resolvedAtUtc = ParseNullableDate(item.ResolvedAtUtc);
+
+            _db.OpenQuestions.Add(new OpenQuestion(
+                targetSolutionId,
+                workflowRunId,
+                backlogItemId,
+                title,
+                description,
+                item.Category,
+                item.Status ?? "open",
+                item.ResolutionNotes,
+                createdAtUtc,
+                resolvedAtUtc));
+        }
+    }
+
+    private void PersistGeneratedDecisions(
+        SolutionAnalysisResult result,
+        Guid targetSolutionId,
+        Guid workflowRunId,
+        Guid backlogItemId)
+    {
+        var items = DeserializeList<GeneratedDecisionDto>(result.GeneratedDecisionsJson);
+        foreach (var item in items)
+        {
+            var title = FirstNonEmpty(item.Title, "Analysis decision");
+            var summary = FirstNonEmpty(item.Summary, title);
+            var createdAtUtc = ParseDateOrDefault(item.DecidedAtUtc, DateTime.UtcNow);
+
+            _db.Decisions.Add(new Decision(
+                targetSolutionId,
+                workflowRunId,
+                backlogItemId,
+                title,
+                summary,
+                item.DecisionType ?? "technical",
+                item.Status ?? "proposed",
+                item.Rationale,
+                SerializeStringList(item.Consequences),
+                SerializeStringList(item.AlternativesConsidered),
+                createdAtUtc));
+        }
+    }
+
+    private static List<T> DeserializeList<T>(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        return JsonSerializer.Deserialize<List<T>>(json, JsonOptions) ?? [];
+    }
+
+    private static string SerializeStringList(List<string>? values)
+    {
+        var normalized = values?
+            .Select(x => x?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .ToList() ?? [];
+
+        return JsonSerializer.Serialize(normalized);
+    }
+
+    private static string FirstNonEmpty(string? value, string fallback)
+        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static DateTime ParseDateOrDefault(string? value, DateTime fallback)
+        => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : fallback;
+
+    private static DateTime? ParseNullableDate(string? value)
+        => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : null;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private sealed class GeneratedOpenQuestionDto
+    {
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? Category { get; set; }
+        public string? Status { get; set; }
+        public string? ResolutionNotes { get; set; }
+        public string? RaisedAtUtc { get; set; }
+        public string? ResolvedAtUtc { get; set; }
+    }
+
+    private sealed class GeneratedDecisionDto
+    {
+        public string? Title { get; set; }
+        public string? Summary { get; set; }
+        public string? DecisionType { get; set; }
+        public string? Status { get; set; }
+        public string? Rationale { get; set; }
+        public List<string>? Consequences { get; set; }
+        public List<string>? AlternativesConsidered { get; set; }
+        public string? DecidedAtUtc { get; set; }
     }
 }
