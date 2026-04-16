@@ -90,6 +90,9 @@ else
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" Disabled="_runningRequirementId == context.Id || !CanDesign(context.Status)" OnClick="() => StartDesignAsync(context.Id)">
                                         Design
                                     </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Info" Disabled="_runningRequirementId == context.Id || !CanPlan(context.Status)" OnClick="() => StartPlanAsync(context.Id)">
+                                        Plan
+                                    </MudButton>
                                 </MudStack>
                             </MudTd>
                         </RowTemplate>
@@ -291,6 +294,36 @@ else
         }
     }
 
+    private async Task StartPlanAsync(Guid requirementId)
+    {
+        _runningRequirementId = requirementId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/plan-implementation", new
+            {
+                RequirementId = requirementId,
+                RequestedBy = "rui"
+            });
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Plan workflow started.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _runningRequirementId = null;
+        }
+    }
+
     private static bool CanAnalyze(string status)
         => string.Equals(status, "submitted", StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, "analysis-failed", StringComparison.OrdinalIgnoreCase);
@@ -298,6 +331,10 @@ else
     private static bool CanDesign(string status)
         => string.Equals(status, "analyzed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, "design-failed", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CanPlan(string status)
+        => string.Equals(status, "designed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, "planning-failed", StringComparison.OrdinalIgnoreCase);
 
     private void ResetForm()
     {

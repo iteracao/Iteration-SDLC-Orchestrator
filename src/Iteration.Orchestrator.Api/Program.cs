@@ -34,6 +34,7 @@ builder.Services.AddScoped<CreateRequirementHandler>();
 builder.Services.AddScoped<CreateBacklogItemHandler>();
 builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 builder.Services.AddScoped<StartDesignSolutionRunHandler>();
+builder.Services.AddScoped<StartPlanImplementationRunHandler>();
 
 builder.Services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
@@ -55,6 +56,10 @@ builder.Services.AddSingleton<ISolutionAnalystAgent>(_ =>
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
 builder.Services.AddSingleton<ISolutionDesignerAgent>(_ =>
     new MicrosoftAgentFrameworkSolutionDesignerAgent(
+        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
+builder.Services.AddSingleton<ISolutionPlannerAgent>(_ =>
+    new MicrosoftAgentFrameworkImplementationPlannerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
 

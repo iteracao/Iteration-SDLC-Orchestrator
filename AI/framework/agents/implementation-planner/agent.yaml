@@ -1,6 +1,6 @@
-code: solution-architect
-name: Solution Architect
-description: Turns an analyzed requirement into a grounded proposed solution design.
+code: implementation-planner
+name: Implementation Planner
+description: Converts a grounded design into a concrete implementation plan and ordered backlog slices.
 
 allowedTools:
   - solution.snapshot

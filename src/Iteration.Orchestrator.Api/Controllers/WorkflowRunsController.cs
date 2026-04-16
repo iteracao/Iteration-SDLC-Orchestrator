@@ -68,6 +68,18 @@ public sealed class WorkflowRunsController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpPost("plan-implementation")]
+    public async Task<IActionResult> StartPlan(
+        [FromBody] StartPlanRunRequest request,
+        [FromServices] StartPlanImplementationRunHandler handler,
+        CancellationToken ct)
+    {
+        var id = await handler.HandleAsync(
+            new StartPlanImplementationRunCommand(request.RequirementId, request.RequestedBy), ct);
+
+        return Ok(new { id });
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromServices] AppDbContext db,
@@ -113,13 +125,19 @@ public sealed class WorkflowRunsController : ControllerBase
 
         var analysisReport = await db.AnalysisReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
         var designReport = await db.DesignReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
+        var planReport = await db.PlanReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
 
         return Ok(new
         {
             run,
             analysisReport,
             designReport,
-            report = (object?)designReport ?? analysisReport
+            planReport,
+            report = planReport is not null
+                    ? (object)planReport
+                    : designReport is not null
+                        ? designReport
+                        : analysisReport
         });
     }
 }

@@ -7,6 +7,8 @@ public sealed class BacklogItem
     public Guid Id { get; private set; } = Guid.NewGuid();
     public Guid TargetSolutionId { get; private set; }
     public Guid? RequirementId { get; private set; }
+    public Guid? PlanWorkflowRunId { get; private set; }
+    public int PlanningOrder { get; private set; }
     public string Title { get; private set; } = string.Empty;
     public string Description { get; private set; } = string.Empty;
     public string WorkflowCode { get; private set; } = string.Empty;
@@ -23,9 +25,24 @@ public sealed class BacklogItem
         string description,
         string workflowCode,
         PriorityLevel priority)
+        : this(targetSolutionId, requirementId, null, 0, title, description, workflowCode, priority)
+    {
+    }
+
+    public BacklogItem(
+        Guid targetSolutionId,
+        Guid? requirementId,
+        Guid? planWorkflowRunId,
+        int planningOrder,
+        string title,
+        string description,
+        string workflowCode,
+        PriorityLevel priority)
     {
         TargetSolutionId = targetSolutionId;
         RequirementId = requirementId;
+        PlanWorkflowRunId = planWorkflowRunId;
+        PlanningOrder = planningOrder;
         Title = title.Trim();
         Description = description.Trim();
         WorkflowCode = workflowCode.Trim();

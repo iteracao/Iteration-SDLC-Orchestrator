@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "required": [
+    "summary",
+    "generatedBacklogItems",
+    "risks",
+    "assumptions",
+    "recommendedNextSteps"
+  ],
+  "properties": {
+    "summary": { "type": "string" },
+    "generatedBacklogItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["order", "title", "description", "workflowCode", "priority"],
+        "properties": {
+          "order": { "type": "integer" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "workflowCode": { "type": "string" },
+          "priority": { "type": "string" }
+        }
+      }
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "recommendedNextSteps": { "type": "array", "items": { "type": "string" } }
+  }
+}

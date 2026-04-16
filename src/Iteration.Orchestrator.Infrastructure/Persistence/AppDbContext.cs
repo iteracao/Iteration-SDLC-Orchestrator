@@ -19,6 +19,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<AgentTaskRun> AgentTaskRuns => Set<AgentTaskRun>();
     public DbSet<AnalysisReport> AnalysisReports => Set<AnalysisReport>();
     public DbSet<DesignReport> DesignReports => Set<DesignReport>();
+    public DbSet<PlanReport> PlanReports => Set<PlanReport>();
     public DbSet<OpenQuestion> OpenQuestions => Set<OpenQuestion>();
     public DbSet<Decision> Decisions => Set<Decision>();
     public DbSet<Requirement> Requirements => Set<Requirement>();
@@ -89,6 +90,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.WorkflowCode).HasMaxLength(100).IsRequired();
             e.HasIndex(x => x.TargetSolutionId);
             e.HasIndex(x => x.RequirementId);
+            e.HasIndex(x => x.PlanWorkflowRunId);
             e.HasOne<Solution>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
@@ -96,6 +98,10 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasOne<Requirement>()
                 .WithMany()
                 .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<WorkflowRun>()
+                .WithMany()
+                .HasForeignKey(x => x.PlanWorkflowRunId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -122,6 +128,21 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<AgentTaskRun>(e => e.HasKey(x => x.Id));
         modelBuilder.Entity<AnalysisReport>(e => e.HasKey(x => x.Id));
         modelBuilder.Entity<DesignReport>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.WorkflowRunId).IsUnique();
+            e.HasIndex(x => x.RequirementId);
+            e.HasOne<WorkflowRun>()
+                .WithMany()
+                .HasForeignKey(x => x.WorkflowRunId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Requirement>()
+                .WithMany()
+                .HasForeignKey(x => x.RequirementId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PlanReport>(e =>
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.WorkflowRunId).IsUnique();
