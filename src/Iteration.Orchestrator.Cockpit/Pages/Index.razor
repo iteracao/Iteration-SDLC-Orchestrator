@@ -2,8 +2,8 @@
 @using System.Net.Http.Json
 @using Iteration.Orchestrator.Cockpit.Models
 @inject IHttpClientFactory HttpClientFactory
-@implements IDisposable
 @inject Iteration.Orchestrator.Cockpit.Services.SelectedSolutionState SelectedSolutionState
+@implements IDisposable
 
 <PageTitle>Cockpit</PageTitle>
 
@@ -11,22 +11,21 @@
     .cockpit-shell {
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 14px;
     }
 
     .cockpit-toolbar {
-        background: #fff;
-        border: 1px solid #eceff3;
-        border-radius: 18px;
-        padding: 14px 16px;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px 14px;
+        box-shadow: none;
     }
 
     .cockpit-board {
-        background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
-        border: 1px solid #eceff3;
-        border-radius: 22px;
-        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.05);
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
         overflow-x: auto;
     }
 
@@ -43,66 +42,58 @@
     }
 
     .pipeline-header {
-        padding: 18px 18px 12px 18px;
+        padding: 16px;
         position: sticky;
         top: 0;
         z-index: 1;
-        background: rgba(255,255,255,0.96);
-        backdrop-filter: blur(8px);
+        background: rgba(255,255,255,0.98);
         border-bottom: 1px solid #eef2f7;
     }
 
     .pipeline-row {
-        padding: 14px 18px;
-        border-top: 1px solid #f2f4f8;
+        padding: 14px 16px;
+        border-top: 1px solid #f1f5f9;
     }
 
     .pipeline-column-title {
-        font-size: 0.82rem;
+        font-size: 0.8rem;
         font-weight: 700;
         color: #334155;
         letter-spacing: 0.02em;
         text-transform: uppercase;
     }
 
-    .pipeline-column-subtitle {
-        font-size: 0.72rem;
-        color: #94a3b8;
-        margin-top: 4px;
-    }
-
     .lane-cell {
-        min-height: 92px;
+        min-height: 88px;
         display: flex;
         align-items: stretch;
     }
 
     .lane-placeholder {
         width: 100%;
-        border: 1px dashed #e7ebf1;
-        border-radius: 16px;
-        background: rgba(248, 250, 252, 0.72);
+        border: 1px dashed #edf2f7;
+        border-radius: 12px;
+        background: #fbfdff;
     }
 
     .stage-card {
         width: 100%;
-        background: #fff;
-        border: 1px solid #e8edf4;
-        border-radius: 16px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
         padding: 10px 12px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
         cursor: pointer;
-        transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+        transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
     }
 
         .stage-card:hover {
             transform: translateY(-1px);
-            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
             border-color: #cbd5e1;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
         }
 
     .requirement-card {
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        background: #fcfdff;
     }
 
     .card-date {
@@ -140,20 +131,9 @@
     }
 
     .board-empty {
-        padding: 48px 24px;
+        padding: 28px 20px 34px 20px;
         text-align: center;
         color: #64748b;
-    }
-
-    .toolbar-title {
-        font-size: 1.45rem;
-        font-weight: 700;
-        color: #0f172a;
-    }
-
-    .toolbar-subtitle {
-        color: #64748b;
-        font-size: 0.92rem;
     }
 
     .drawer-section {
@@ -163,10 +143,10 @@
     }
 
     .drawer-content-block {
-        border: 1px solid #e8edf4;
-        border-radius: 16px;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
         padding: 14px;
-        background: #fff;
+        background: #ffffff;
     }
 
     .doc-pre {
@@ -181,44 +161,51 @@
 
 <div class="cockpit-shell">
     <MudPaper Class="cockpit-toolbar" Elevation="0">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap" Spacing="2">
-           
-            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+            <div style="flex:1; min-width:320px;">
                 <MudSelect T="Guid?"
                            Value="_selectedSolutionId"
                            ValueChanged="OnSolutionSelectionChangedAsync"
                            Label="Solution"
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
-                           Style="min-width:320px; background:#fff;">
+                           FullWidth="true">
                     @foreach (var solution in _solutions)
                     {
                         <MudSelectItem T="Guid?" Value="@solution.SolutionId">@solution.Name (@solution.Code)</MudSelectItem>
                     }
                 </MudSelect>
+            </div>
 
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenCreateSolutionDialog">
-                    Create solution
-                </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreateSolutionDialog">
+                Create solution
+            </MudButton>
 
-                <MudMenu Dense="true" Disabled="SelectedSolutionState.Current is null || _documentsLoading" Color="Color.Default" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Description" Label="Documentation">
-                    @if (_documentsLoading)
+            <MudMenu Dense="true"
+                     Disabled="SelectedSolutionState.Current is null || _documentsLoading"
+                     Color="Color.Default"
+                     Variant="Variant.Outlined"
+                     StartIcon="@Icons.Material.Filled.Description"
+                     Label="Documentation">
+                @if (_documentsLoading)
+                {
+                    <MudMenuItem Disabled="true">Loading documents...</MudMenuItem>
+                }
+                else if (_documents.Count == 0)
+                {
+                    <MudMenuItem Disabled="true">No SDLC documents found</MudMenuItem>
+                }
+                else
+                {
+                    @foreach (var document in _documents)
                     {
-                        <MudMenuItem Disabled="true">Loading documents...</MudMenuItem>
+                        <MudMenuItem OnClick="() => OpenDocumentAsync(document)">@document.Name</MudMenuItem>
                     }
-                    else if (_documents.Count == 0)
-                    {
-                        <MudMenuItem Disabled="true">No SDLC documents found</MudMenuItem>
-                    }
-                    else
-                    {
-                        @foreach (var document in _documents)
-                        {
-                            <MudMenuItem OnClick="() => OpenDocumentAsync(document)">@document.Name</MudMenuItem>
-                        }
-                    }
-                </MudMenu>
-            </MudStack>
+                }
+            </MudMenu>
         </MudStack>
     </MudPaper>
 
@@ -233,12 +220,14 @@
     }
     else if (!string.IsNullOrWhiteSpace(_loadError))
     {
-        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_loadError</MudAlert>
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">
+            @_loadError
+        </MudAlert>
     }
     else if (SelectedSolutionState.Current is null)
     {
-        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            Create or select a solution to load the workflow cockpit.
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            Select a solution or create a new one to start using the cockpit.
         </MudAlert>
     }
     else
@@ -250,7 +239,6 @@
                     {
                         <div>
                             <div class="pipeline-column-title">@lane.Title</div>
-                            <div class="pipeline-column-subtitle">@lane.Subtitle</div>
                         </div>
                     }
                 </div>
@@ -266,6 +254,7 @@
                     @foreach (var requirement in _requirements)
                     {
                         var row = BuildRow(requirement);
+
                         <div class="pipeline-row">
                             @foreach (var lane in _lanes)
                             {
@@ -277,7 +266,7 @@
                                             <div class="card-date">@card.DisplayDate</div>
                                             <div class="card-title">@card.Title</div>
                                             <div class="card-status">
-                                                <span class="status-dot" style="background:@card.StatusColor;"></span>
+                                                <span class="status-dot" style="@($"background:{card.StatusColor};")"></span>
                                                 <span>@card.StatusLabel</span>
                                             </div>
                                         </div>
@@ -296,7 +285,11 @@
     }
 </div>
 
-<MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.End" Variant="DrawerVariant.Temporary" Elevation="1" Width="520px">
+<MudDrawer @bind-Open="_drawerOpen"
+           Anchor="Anchor.End"
+           Variant="DrawerVariant.Temporary"
+           Elevation="1"
+           Width="520px">
     <MudStack Class="pa-4 drawer-section">
         @if (_activeDocument is not null)
         {
@@ -309,7 +302,9 @@
             </MudStack>
 
             <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.caption" Class="mb-2">Last updated @(_activeDocument.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))</MudText>
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    Last updated @(_activeDocument.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+                </MudText>
                 <pre class="doc-pre">@_activeDocument.Content</pre>
             </MudPaper>
         }
@@ -324,8 +319,13 @@
             </MudStack>
 
             <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.caption" Class="mb-1">Created @(_activeCard.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))</MudText>
-                <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small" Style=@($"border-color:{_activeCard.StatusColor}; color:{_activeCard.StatusColor};")>
+                <MudText Typo="Typo.caption" Class="mb-1">
+                    Created @(_activeCard.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+                </MudText>
+                <MudChip T="string"
+                         Variant="Variant.Outlined"
+                         Size="Size.Small"
+                         Style="@($"border-color:{_activeCard.StatusColor}; color:{_activeCard.StatusColor};")">
                     @_activeCard.StatusLabel
                 </MudChip>
                 <MudText Typo="Typo.body2" Class="mt-3">@_activeCard.Description</MudText>
@@ -334,18 +334,37 @@
             <MudPaper Class="drawer-content-block" Elevation="0">
                 <MudText Typo="Typo.subtitle2" Class="mb-2">Actions</MudText>
                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
-                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="!CanAnalyze(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id" OnClick="() => StartAnalyzeAsync(_activeCard.Requirement.Id)">
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Disabled="!CanAnalyze(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               OnClick="() => StartAnalyzeAsync(_activeCard.Requirement.Id)">
                         Analyze
                     </MudButton>
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" Disabled="!CanDesign(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id" OnClick="() => StartDesignAsync(_activeCard.Requirement.Id)">
+
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="Color.Secondary"
+                               Disabled="!CanDesign(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               OnClick="() => StartDesignAsync(_activeCard.Requirement.Id)">
                         Design
                     </MudButton>
-                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Info" Disabled="!CanPlan(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id" OnClick="() => StartPlanAsync(_activeCard.Requirement.Id)">
+
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Text"
+                               Color="Color.Info"
+                               Disabled="!CanPlan(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               OnClick="() => StartPlanAsync(_activeCard.Requirement.Id)">
                         Plan
                     </MudButton>
+
                     @if (_activeCard.BacklogItem is not null)
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="!CanImplement(_activeCard.BacklogItem) || _runningBacklogItemId == _activeCard.BacklogItem.Id" OnClick="() => StartImplementationAsync(_activeCard.BacklogItem.Id)">
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Success"
+                                   Disabled="!CanImplement(_activeCard.BacklogItem) || _runningBacklogItemId == _activeCard.BacklogItem.Id"
+                                   OnClick="() => StartImplementationAsync(_activeCard.BacklogItem.Id)">
                             Implement
                         </MudButton>
                     }
@@ -356,12 +375,14 @@
                 <MudText Typo="Typo.subtitle2" Class="mb-2">Workflow snapshot</MudText>
                 <MudText Typo="Typo.body2">Requirement status: @_activeCard.Requirement.Status</MudText>
                 <MudText Typo="Typo.body2">Priority: @_activeCard.Requirement.Priority</MudText>
+
                 @if (_activeCard.WorkflowRun is not null)
                 {
                     <MudText Typo="Typo.body2">Workflow: @_activeCard.WorkflowRun.WorkflowCode</MudText>
                     <MudText Typo="Typo.body2">Run stage: @_activeCard.WorkflowRun.CurrentStage</MudText>
                     <MudText Typo="Typo.body2">Run status: @_activeCard.WorkflowRun.Status</MudText>
                 }
+
                 @if (_activeCard.BacklogItem is not null)
                 {
                     <MudText Typo="Typo.body2">Backlog order: @_activeCard.BacklogItem.PlanningOrder</MudText>
@@ -374,55 +395,71 @@
 
 @if (_createSolutionDialogOpen)
 {
-    <MudOverlay Visible="true" DarkBackground="true" AutoClose="false">
-        <div style="width:min(760px, calc(100vw - 32px)); margin:48px auto;">
-            <MudPaper Class="pa-4" Style="border-radius:20px;" Elevation="8">
-                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
-                    <MudText Typo="Typo.h6">Create / setup solution</MudText>
-                    <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseCreateSolutionDialog" />
-                </MudStack>
+    <div style="position:fixed; inset:0; background:rgba(15,23,42,0.38); z-index:1400; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow:auto;">
+        <MudPaper Class="pa-4" Style="width:min(760px, calc(100vw - 32px)); border-radius:16px; background:#fff;" Elevation="8">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                <MudText Typo="Typo.h6">Create / setup solution</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseCreateSolutionDialog" />
+            </MudStack>
 
-                @if (!string.IsNullOrWhiteSpace(_createSolutionMessage))
-                {
-                    <MudAlert Severity="@_createSolutionMessageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">
-                        @_createSolutionMessage
-                    </MudAlert>
-                }
+            @if (!string.IsNullOrWhiteSpace(_createSolutionMessage))
+            {
+                <MudAlert Severity="@_createSolutionMessageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                    @_createSolutionMessage
+                </MudAlert>
+            }
 
-                <MudForm @ref="_createSolutionForm">
-                    <MudGrid>
-                        <MudItem xs="12" md="6"><MudTextField T="string" Label="Code" @bind-Value="_solutionRequest.Code" Required="true" RequiredError="Code is required." /></MudItem>
-                        <MudItem xs="12" md="6"><MudTextField T="string" Label="Name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." /></MudItem>
-                        <MudItem xs="12"><MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" /></MudItem>
-                        <MudItem xs="12"><MudTextField T="string" Label="Repository Path" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." /></MudItem>
-                        <MudItem xs="12" md="6"><MudTextField T="string" Label="Main Solution File" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." /></MudItem>
-                        <MudItem xs="12" md="3"><MudTextField T="string" Label="Profile Code" @bind-Value="_solutionRequest.ProfileCode" Required="true" RequiredError="Profile code is required." /></MudItem>
-                        <MudItem xs="12" md="3"><MudTextField T="string" Label="Overlay Code" @bind-Value="_solutionRequest.SolutionOverlayCode" Required="true" RequiredError="Solution overlay code is required." /></MudItem>
-                        <MudItem xs="12"><MudTextField T="string" Label="Remote Repository URL" @bind-Value="_solutionRequest.RemoteRepositoryUrl" /></MudItem>
-                    </MudGrid>
-                </MudForm>
+            <MudForm @ref="_createSolutionForm">
+                <MudGrid>
+                    <MudItem xs="12" md="6">
+                        <MudTextField T="string" Label="Code" @bind-Value="_solutionRequest.Code" Required="true" RequiredError="Code is required." />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField T="string" Label="Name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="Repository Path" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField T="string" Label="Main Solution File" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudTextField T="string" Label="Profile Code" @bind-Value="_solutionRequest.ProfileCode" Required="true" RequiredError="Profile code is required." />
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudTextField T="string" Label="Overlay Code" @bind-Value="_solutionRequest.SolutionOverlayCode" Required="true" RequiredError="Solution overlay code is required." />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="Remote Repository URL" @bind-Value="_solutionRequest.RemoteRepositoryUrl" />
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
 
-                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="mt-4">
-                    <MudButton Variant="Variant.Text" OnClick="CloseCreateSolutionDialog">Cancel</MudButton>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_savingSolution" OnClick="CreateSolutionAsync">Create solution</MudButton>
-                </MudStack>
-            </MudPaper>
-        </div>
-    </MudOverlay>
+            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="mt-4">
+                <MudButton Variant="Variant.Text" OnClick="CloseCreateSolutionDialog">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_savingSolution" OnClick="CreateSolutionAsync">
+                    Create solution
+                </MudButton>
+            </MudStack>
+        </MudPaper>
+    </div>
 }
 
 @code {
     private static readonly IReadOnlyList<LaneDefinition> _lanes =
     [
-        new(LaneKeys.Requirement, "Requirement", "Intake"),
-    new(LaneKeys.Analysis, "Analysis", "analyze-request"),
-    new(LaneKeys.Design, "Design", "design-solution-change"),
-    new(LaneKeys.Planning, "Planning", "plan-implementation"),
-    new(LaneKeys.Implementation, "Implementation", "implement-solution-change"),
-    new(LaneKeys.Test, "Test", "validation"),
-    new(LaneKeys.Review, "Review", "review"),
-    new(LaneKeys.Deliver, "Deliver", "delivery"),
-    new(LaneKeys.Documentation, "Documentation", "docs")
+        new(LaneKeys.Requirement, "Requirement"),
+    new(LaneKeys.Analysis, "Analysis"),
+    new(LaneKeys.Design, "Design"),
+    new(LaneKeys.Planning, "Planning"),
+    new(LaneKeys.Implementation, "Implementation"),
+    new(LaneKeys.Test, "Test"),
+    new(LaneKeys.Review, "Review"),
+    new(LaneKeys.Deliver, "Deliver"),
+    new(LaneKeys.Documentation, "Documentation")
     ];
 
     private readonly List<SolutionSummary> _solutions = [];
@@ -430,6 +467,7 @@
     private readonly List<BacklogRow> _backlog = [];
     private readonly List<WorkflowRunRow> _runs = [];
     private readonly List<SolutionDocumentSummary> _documents = [];
+
     private MudForm? _createSolutionForm;
     private Guid? _selectedSolutionId;
     private bool _loading;
@@ -592,6 +630,7 @@
         if (backlogItem is not null)
         {
             var implementationRun = GetLatestRun(requirement.Id, backlogItem.Id);
+
             row[LaneKeys.Implementation] = new RequirementStageCard(
                 LaneKeys.Implementation,
                 "Implementation",
@@ -753,6 +792,7 @@
 
             var newSelection = _solutions.FirstOrDefault(x => string.Equals(x.Code, createdSolutionCode, StringComparison.OrdinalIgnoreCase))
                 ?? _solutions.OrderByDescending(x => x.CreatedUtc).FirstOrDefault();
+
             if (newSelection is not null)
             {
                 _selectedSolutionId = newSelection.SolutionId;
@@ -893,11 +933,13 @@
     private static string GetStatusColor(string status)
     {
         var normalized = status.Replace("-", " ").Trim().ToLowerInvariant();
+
         if (normalized.Contains("error") || normalized.Contains("failed")) return "#dc2626";
         if (normalized.Contains("awaiting")) return "#ea580c";
         if (normalized.Contains("running") || normalized.Contains("under")) return "#2563eb";
         if (normalized.Contains("done") || normalized.Contains("validated") || normalized.Contains("planned") || normalized.Contains("designed") || normalized.Contains("analyzed") || normalized.Contains("available")) return "#059669";
         if (normalized.Contains("canceled")) return "#475569";
+
         return "#94a3b8";
     }
 
@@ -932,7 +974,7 @@
         public const string Documentation = "documentation";
     }
 
-    private sealed record LaneDefinition(string Key, string Title, string Subtitle);
+    private sealed record LaneDefinition(string Key, string Title);
 
     private sealed record RequirementStageCard(
         string LaneKey,
