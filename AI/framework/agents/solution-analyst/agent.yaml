@@ -7,5 +7,5 @@ allowedTools:
   - solution.search
   - solution.readFile
 
-outputSchema: output.schema.json
+outputSchema: ../../../contracts/workflow-output-envelope.schema.json
 promptFile: prompt.md

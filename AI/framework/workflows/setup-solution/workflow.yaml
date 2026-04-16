@@ -48,7 +48,7 @@ executionRules:
   - Create repository root if it does not exist.
   - Initialize Git if .git does not exist.
   - Configure remote origin if remoteRepositoryUrl is provided.
-  - Create /ai/solutions/<solutionCode>/ knowledge workspace if missing.
+  - Create /AI/solutions/<solutionCode>/ knowledge workspace if missing.
   - Seed required documentation files with fixed baseline structure if missing.
   - Do not overwrite existing documents blindly; preserve existing content.
 

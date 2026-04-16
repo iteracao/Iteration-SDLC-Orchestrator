@@ -60,6 +60,7 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var request = new SolutionAnalysisRequest(
             run.Id,
+            solution.Id,
             workflow.Code,
             workflow.Name,
             workflow.Purpose,
@@ -68,7 +69,10 @@ public sealed class StartAnalyzeSolutionRunHandler
             BuildProfileSummary(profile),
             profile.Rules,
             solutionKnowledgeDocuments,
+            workflow.ProducedArtifacts,
+            workflow.KnowledgeUpdates,
             workflow.ExecutionRules,
+            workflow.NextWorkflows,
             snapshot,
             hits,
             sampleFiles);
@@ -81,17 +85,21 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         try
         {
-            var result = await _agent.AnalyzeAsync(request, ct);
+            var result = await _agent.AnalyzeAsync(request, agentDef, ct);
 
             taskRun.Succeed(result.RawJson);
 
             var report = new Domain.Reports.AnalysisReport(
                 run.Id,
                 result.Summary,
-                JsonSerializer.Serialize(result.ImpactedAreas),
-                JsonSerializer.Serialize(result.Risks),
-                JsonSerializer.Serialize(result.Assumptions),
-                JsonSerializer.Serialize(result.RecommendedNextSteps),
+                result.Status,
+                result.ArtifactsJson,
+                result.GeneratedRequirementsJson,
+                result.GeneratedOpenQuestionsJson,
+                result.GeneratedDecisionsJson,
+                result.DocumentationUpdatesJson,
+                result.KnowledgeUpdatesJson,
+                result.RecommendedNextWorkflowCodesJson,
                 result.RawJson);
 
             _db.AnalysisReports.Add(report);
@@ -121,15 +129,15 @@ public sealed class StartAnalyzeSolutionRunHandler
     {
         var relativePaths = new[]
         {
-            $"ai/solutions/{solution.Code}/context/overview.md",
-            $"ai/solutions/{solution.Code}/business/business-rules.md",
-            $"ai/solutions/{solution.Code}/business/workflows.md",
-            $"ai/solutions/{solution.Code}/architecture/architecture-overview.md",
-            $"ai/solutions/{solution.Code}/architecture/module-map.md",
-            $"ai/solutions/{solution.Code}/history/decisions.md",
-            $"ai/solutions/{solution.Code}/history/open-questions.md",
-            $"ai/solutions/{solution.Code}/history/known-gaps.md",
-            $"ai/solutions/{solution.Code}/analysis/latest-analysis.md"
+            $"AI/solutions/{solution.Code}/context/overview.md",
+            $"AI/solutions/{solution.Code}/business/business-rules.md",
+            $"AI/solutions/{solution.Code}/business/workflows.md",
+            $"AI/solutions/{solution.Code}/architecture/architecture-overview.md",
+            $"AI/solutions/{solution.Code}/architecture/module-map.md",
+            $"AI/solutions/{solution.Code}/history/decisions.md",
+            $"AI/solutions/{solution.Code}/history/open-questions.md",
+            $"AI/solutions/{solution.Code}/history/known-gaps.md",
+            $"AI/solutions/{solution.Code}/analysis/latest-analysis.md"
         };
 
         var docs = new List<TextDocumentInput>();

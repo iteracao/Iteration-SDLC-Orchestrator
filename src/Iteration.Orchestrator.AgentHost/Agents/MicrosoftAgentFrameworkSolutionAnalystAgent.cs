@@ -17,54 +17,52 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
     }
 
-    public async Task<SolutionAnalysisResult> AnalyzeAsync(SolutionAnalysisRequest request, CancellationToken ct)
+    public async Task<SolutionAnalysisResult> AnalyzeAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(agentDefinition);
 
         var chatClient = new OllamaChatClient(new Uri(_endpoint), modelId: _model);
 
         AIAgent agent = chatClient.AsAIAgent(
-            name: "SolutionAnalyst",
-            instructions: """
-You are a senior .NET solution analyst for an SDLC orchestrator.
-
-Analyze the provided request against the provided workflow guidance, profile rules,
-solution knowledge, and repository evidence.
-Return ONLY valid JSON with this exact shape:
-{
-  "summary": "string",
-  "impactedAreas": [
-    { "area": "string", "reason": "string", "confidence": "low|medium|high" }
-  ],
-  "risks": ["string"],
-  "assumptions": ["string"],
-  "recommendedNextSteps": ["string"]
-}
-
-Rules:
-- Do not include markdown.
-- Do not include commentary outside JSON.
-- Be concise but specific.
-- Use solution knowledge as the current truth unless repository evidence clearly contradicts it.
-- Use repository evidence as proof, not as a replacement for canonical docs.
-- Separate risks from assumptions.
-""");
+            name: agentDefinition.Name,
+            instructions: BuildInstructions(agentDefinition));
 
         var prompt = BuildPrompt(request);
         var rawResponse = await agent.RunAsync(prompt, cancellationToken: ct);
-        var rawJson = rawResponse?.ToString() ?? string.Empty;
-
-        var parsed = Parse(rawJson);
+        var envelope = ParseAndNormalize(rawResponse?.ToString() ?? string.Empty, request);
+        var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
 
         return new SolutionAnalysisResult(
-            parsed.Summary,
-            parsed.ImpactedAreas
-                .Select(x => new ImpactedAreaResult(x.Area, x.Reason, NormalizeConfidence(x.Confidence)))
-                .ToList(),
-            parsed.Risks,
-            parsed.Assumptions,
-            parsed.RecommendedNextSteps,
-            rawJson);
+            envelope.Result!.Summary,
+            envelope.Status,
+            JsonSerializer.Serialize(envelope.Result.Artifacts, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.GeneratedRequirements, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.GeneratedOpenQuestions, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.GeneratedDecisions, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.DocumentationUpdates, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.KnowledgeUpdates, JsonOptions),
+            JsonSerializer.Serialize(envelope.Result.RecommendedNextWorkflowCodes, JsonOptions),
+            normalizedJson);
+    }
+
+    private static string BuildInstructions(AgentDefinition agentDefinition)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(agentDefinition.PromptText.Trim());
+        sb.AppendLine();
+        sb.AppendLine("Output contract:");
+        sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
+        sb.AppendLine();
+        sb.AppendLine("Global rules:");
+        sb.AppendLine("- Return JSON only.");
+        sb.AppendLine("- Do not include markdown fences or commentary outside the JSON object.");
+        sb.AppendLine("- Satisfy every required field in the schema.");
+        sb.AppendLine("- Keep structured workflow sections populated with concrete content or planned workflow items.");
+        return sb.ToString();
     }
 
     private static string BuildPrompt(SolutionAnalysisRequest request)
@@ -73,6 +71,10 @@ Rules:
 
         sb.AppendLine("WORKFLOW RUN ID:");
         sb.AppendLine(request.WorkflowRunId.ToString());
+        sb.AppendLine();
+
+        sb.AppendLine("TARGET SOLUTION ID:");
+        sb.AppendLine(request.TargetSolutionId.ToString());
         sb.AppendLine();
 
         sb.AppendLine("WORKFLOW:");
@@ -103,10 +105,31 @@ Rules:
         AppendDocuments(sb, request.SolutionKnowledgeDocuments);
         sb.AppendLine();
 
+        sb.AppendLine("WORKFLOW PRODUCED ARTIFACTS:");
+        foreach (var artifact in request.ProducedArtifacts)
+        {
+            sb.AppendLine($"- {artifact.Type}: {artifact.Name}");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("WORKFLOW KNOWLEDGE UPDATES:");
+        foreach (var update in request.KnowledgeUpdates)
+        {
+            sb.AppendLine($"- {update}");
+        }
+        sb.AppendLine();
+
         sb.AppendLine("WORKFLOW EXECUTION RULES:");
         foreach (var rule in request.ExecutionRules)
         {
             sb.AppendLine($"- {rule}");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("WORKFLOW NEXT OPTIONS:");
+        foreach (var workflowCode in request.NextWorkflowCodes)
+        {
+            sb.AppendLine($"- {workflowCode}");
         }
         sb.AppendLine();
 
@@ -140,22 +163,102 @@ Rules:
         }
     }
 
-    private static AgentResponse Parse(string raw)
+    private static OutputEnvelope ParseAndNormalize(string raw, SolutionAnalysisRequest request)
     {
         var cleaned = ExtractJsonObject(raw);
-        var parsed = JsonSerializer.Deserialize<AgentResponse>(cleaned, JsonOptions);
+        var parsed = JsonSerializer.Deserialize<OutputEnvelope>(cleaned, JsonOptions)
+            ?? throw new InvalidOperationException($"Agent returned an empty or invalid JSON payload. Raw response: {raw}");
 
-        if (parsed is null)
-        {
-            throw new InvalidOperationException($"Agent returned an empty or invalid JSON payload. Raw response: {raw}");
-        }
-
-        parsed.ImpactedAreas ??= [];
-        parsed.Risks ??= [];
-        parsed.Assumptions ??= [];
-        parsed.RecommendedNextSteps ??= [];
+        parsed.WorkflowCode = string.IsNullOrWhiteSpace(parsed.WorkflowCode) ? request.WorkflowCode : parsed.WorkflowCode.Trim();
+        parsed.TargetSolutionId = string.IsNullOrWhiteSpace(parsed.TargetSolutionId) ? request.TargetSolutionId.ToString() : parsed.TargetSolutionId.Trim();
+        parsed.WorkflowRunId = string.IsNullOrWhiteSpace(parsed.WorkflowRunId) ? request.WorkflowRunId.ToString() : parsed.WorkflowRunId.Trim();
+        parsed.CompletedAtUtc = NormalizeCompletedAtUtc(parsed.CompletedAtUtc);
+        parsed.Status = NormalizeStatus(parsed.Status, parsed.Result?.GeneratedOpenQuestions?.Count ?? 0);
+        parsed.Result ??= new ResultPayload();
+        parsed.Result.Summary = string.IsNullOrWhiteSpace(parsed.Result.Summary)
+            ? $"Analysis completed for '{request.BacklogTitle}'."
+            : parsed.Result.Summary.Trim();
+        parsed.Result.Artifacts = NormalizeArtifacts(parsed.Result.Artifacts, request.ProducedArtifacts);
+        parsed.Result.GeneratedRequirements ??= [];
+        parsed.Result.GeneratedOpenQuestions ??= [];
+        parsed.Result.GeneratedDecisions ??= [];
+        parsed.Result.DocumentationUpdates = NormalizeStringList(parsed.Result.DocumentationUpdates, request.KnowledgeUpdates);
+        parsed.Result.KnowledgeUpdates = NormalizeStringList(parsed.Result.KnowledgeUpdates, request.KnowledgeUpdates);
+        parsed.Result.RecommendedNextWorkflowCodes = NormalizeStringList(
+            parsed.Result.RecommendedNextWorkflowCodes,
+            request.NextWorkflowCodes.Count > 0 ? request.NextWorkflowCodes : [request.WorkflowCode]);
 
         return parsed;
+    }
+
+    private static List<ArtifactPayload> NormalizeArtifacts(
+        List<ArtifactPayload>? artifacts,
+        IReadOnlyList<WorkflowArtifactDefinition> fallbackArtifacts)
+    {
+        var normalized = artifacts?
+            .Where(x => !string.IsNullOrWhiteSpace(x.ArtifactType) && !string.IsNullOrWhiteSpace(x.Name))
+            .Select(x => new ArtifactPayload
+            {
+                ArtifactType = x.ArtifactType.Trim(),
+                Name = x.Name.Trim(),
+                Path = string.IsNullOrWhiteSpace(x.Path) ? null : x.Path.Trim()
+            })
+            .ToList() ?? [];
+
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        return fallbackArtifacts.Count > 0
+            ? fallbackArtifacts.Select(x => new ArtifactPayload
+            {
+                ArtifactType = x.Type,
+                Name = x.Name,
+                Path = null
+            }).ToList()
+            : [new ArtifactPayload { ArtifactType = "analysis-report", Name = "Analysis Report" }];
+    }
+
+    private static List<string> NormalizeStringList(List<string>? values, IReadOnlyList<string> fallbackValues)
+    {
+        var normalized = values?
+            .Select(x => x?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        return fallbackValues
+            .Select(x => x?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string NormalizeCompletedAtUtc(string? completedAtUtc)
+    {
+        return DateTimeOffset.TryParse(completedAtUtc, out var parsed)
+            ? parsed.UtcDateTime.ToString("O")
+            : DateTime.UtcNow.ToString("O");
+    }
+
+    private static string NormalizeStatus(string? status, int openQuestionCount)
+    {
+        return status?.Trim().ToLowerInvariant() switch
+        {
+            "completed" => "completed",
+            "completed-with-open-questions" => "completed-with-open-questions",
+            "blocked" => "blocked",
+            "failed" => "failed",
+            _ => openQuestionCount > 0 ? "completed-with-open-questions" : "completed"
+        };
     }
 
     private static string ExtractJsonObject(string raw)
@@ -176,35 +279,39 @@ Rules:
         return raw[start..(end + 1)];
     }
 
-    private static string NormalizeConfidence(string? confidence)
-    {
-        return confidence?.Trim().ToLowerInvariant() switch
-        {
-            "low" => "low",
-            "high" => "high",
-            _ => "medium"
-        };
-    }
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true
     };
 
-    private sealed class AgentResponse
+    private sealed class OutputEnvelope
     {
-        public string Summary { get; set; } = string.Empty;
-        public List<ImpactedArea> ImpactedAreas { get; set; } = [];
-        public List<string> Risks { get; set; } = [];
-        public List<string> Assumptions { get; set; } = [];
-        public List<string> RecommendedNextSteps { get; set; } = [];
+        public string WorkflowCode { get; set; } = string.Empty;
+        public string TargetSolutionId { get; set; } = string.Empty;
+        public string? WorkflowRunId { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public string CompletedAtUtc { get; set; } = string.Empty;
+        public ResultPayload? Result { get; set; }
     }
 
-    private sealed class ImpactedArea
+    private sealed class ResultPayload
     {
-        public string Area { get; set; } = string.Empty;
-        public string Reason { get; set; } = string.Empty;
-        public string Confidence { get; set; } = "medium";
+        public string Summary { get; set; } = string.Empty;
+        public List<ArtifactPayload>? Artifacts { get; set; }
+        public List<JsonElement>? GeneratedRequirements { get; set; }
+        public List<JsonElement>? GeneratedOpenQuestions { get; set; }
+        public List<JsonElement>? GeneratedDecisions { get; set; }
+        public List<string>? DocumentationUpdates { get; set; }
+        public List<string>? KnowledgeUpdates { get; set; }
+        public List<string>? RecommendedNextWorkflowCodes { get; set; }
+    }
+
+    private sealed class ArtifactPayload
+    {
+        public string ArtifactType { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Path { get; set; }
     }
 }
