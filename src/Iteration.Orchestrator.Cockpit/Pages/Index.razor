@@ -329,16 +329,16 @@
         <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="cockpit-toolbar-row">
             <div class="toolbar-select-host">
                 <MudSelect T="Guid?"
-                           Value="_selectedSolutionId"
-                           ValueChanged="OnSolutionSelectionChangedAsync"
-                           Label="Solution"
+                           Value="_selectedTargetId"
+                           ValueChanged="OnSolutionTargetSelectionChangedAsync"
+                           Label="Solution / target"
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            Dense="true"
                            FullWidth="true">
-                    @foreach (var solution in _solutions)
+                    @foreach (var option in SolutionTargetOptions)
                     {
-                        <MudSelectItem T="Guid?" Value="@solution.SolutionId">@solution.Name</MudSelectItem>
+                        <MudSelectItem T="Guid?" Value="@option.Target.Id">@option.Label</MudSelectItem>
                     }
                 </MudSelect>
             </div>
@@ -680,7 +680,7 @@
     private readonly List<SolutionDocumentSummary> _documents = [];
 
     private MudForm? _createSolutionForm;
-    private Guid? _selectedSolutionId;
+    private Guid? _selectedTargetId;
     private bool _loading;
     private bool _drawerOpen;
     private bool _documentsLoading;
@@ -699,6 +699,11 @@
         => _solutions.SelectMany(solution => solution.Targets.Select(target => new OverlayOption(solution, target)))
             .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
 
+    private IEnumerable<SolutionTargetOption> SolutionTargetOptions
+        => _solutions
+            .SelectMany(solution => solution.Targets.Select(target => new SolutionTargetOption(solution, target)))
+            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
+
     protected override async Task OnInitializedAsync()
     {
         _solutionRequest.ProfileCode = DefaultProfileCode;
@@ -711,7 +716,7 @@
 
     private async void HandleSolutionChanged()
     {
-        _selectedSolutionId = SelectedSolutionState.Current?.SolutionId;
+        _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id;
         await InvokeAsync(async () =>
         {
             await LoadDocumentsAsync();
@@ -730,24 +735,24 @@
     {
         if (SelectedSolutionState.Current is not null)
         {
-            _selectedSolutionId = SelectedSolutionState.Current.SolutionId;
+            _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id ?? SelectedSolutionState.Current.Targets.FirstOrDefault()?.Id;
             return;
         }
 
         var first = _solutions.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
         if (first is not null)
         {
-            _selectedSolutionId = first.SolutionId;
+            _selectedTargetId = first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id;
             SelectedSolutionState.SetCurrent(first, first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id);
             await LoadDocumentsAsync();
         }
     }
 
-    private async Task OnSolutionSelectionChangedAsync(Guid? solutionId)
+    private async Task OnSolutionTargetSelectionChangedAsync(Guid? targetId)
     {
-        _selectedSolutionId = solutionId;
-        var selected = _solutions.FirstOrDefault(x => x.SolutionId == solutionId);
-        SelectedSolutionState.SetCurrent(selected, selected?.Targets.Count == 1 ? selected.Targets[0].Id : selected?.Targets.FirstOrDefault()?.Id);
+        _selectedTargetId = targetId;
+        var selected = _solutions.FirstOrDefault(x => x.Targets.Any(target => target.Id == targetId));
+        SelectedSolutionState.SetCurrent(selected, targetId);
         await LoadDocumentsAsync();
         await LoadCockpitAsync();
     }
@@ -759,7 +764,7 @@
         _runs.Clear();
         _loadError = null;
 
-        if (SelectedSolutionState.Current is null)
+        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
         {
             StateHasChanged();
             return;
@@ -772,7 +777,8 @@
         {
             var client = HttpClientFactory.CreateClient("api");
             var solutionId = SelectedSolutionState.Current.SolutionId;
-            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solutions/{solutionId}/requirements") ?? []);
+            var targetSolutionId = SelectedSolutionState.CurrentTarget.Id;
+            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId}/requirements") ?? []);
             _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
             _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
         }
@@ -1068,7 +1074,7 @@
 
             if (newSelection is not null)
             {
-                _selectedSolutionId = newSelection.SolutionId;
+                _selectedTargetId = newSelection.Targets.Count == 1 ? newSelection.Targets[0].Id : newSelection.Targets.FirstOrDefault()?.Id;
                 SelectedSolutionState.SetCurrent(newSelection, newSelection.Targets.Count == 1 ? newSelection.Targets[0].Id : newSelection.Targets.FirstOrDefault()?.Id);
             }
 
@@ -1353,6 +1359,13 @@
     }
 
     private sealed class OverlayOption(SolutionSummary solution, SolutionTargetSummary target)
+    {
+        public SolutionSummary Solution { get; } = solution;
+        public SolutionTargetSummary Target { get; } = target;
+        public string Label => $"{Solution.Name} / {Target.DisplayName}";
+    }
+
+    private sealed class SolutionTargetOption(SolutionSummary solution, SolutionTargetSummary target)
     {
         public SolutionSummary Solution { get; } = solution;
         public SolutionTargetSummary Target { get; } = target;

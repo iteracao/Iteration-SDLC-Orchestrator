@@ -28,14 +28,14 @@ public sealed class RequirementsController : ControllerBase
         return Ok(new { id });
     }
 
-    [HttpGet("api/solutions/{solutionId:guid}/requirements")]
-    public async Task<IActionResult> ListBySolution(
-        Guid solutionId,
+    [HttpGet("api/solution-targets/{targetSolutionId:guid}/requirements")]
+    public async Task<IActionResult> ListByTargetSolution(
+        Guid targetSolutionId,
         [FromServices] AppDbContext db,
         CancellationToken ct)
     {
         var items = await db.Requirements
-            .Where(x => x.TargetSolutionId == solutionId)
+            .Where(x => x.TargetSolutionId == targetSolutionId)
             .OrderByDescending(x => x.CreatedAtUtc)
             .ToListAsync(ct);
 

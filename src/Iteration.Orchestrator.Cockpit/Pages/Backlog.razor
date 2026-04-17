@@ -196,7 +196,7 @@ else
         _runs.Clear();
         _loadError = null;
 
-        if (SelectedSolutionState.Current is null)
+        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
         {
             StateHasChanged();
             return;
@@ -209,7 +209,8 @@ else
         {
             var client = HttpClientFactory.CreateClient("api");
             var solutionId = SelectedSolutionState.Current.SolutionId;
-            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solutions/{solutionId}/requirements") ?? []);
+            var targetSolutionId = SelectedSolutionState.CurrentTarget.Id;
+            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId}/requirements") ?? []);
             _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
             _backlog.Sort((left, right) =>
             {
@@ -231,7 +232,7 @@ else
 
     private async Task CreateRequirementAsync()
     {
-        if (SelectedSolutionState.Current is null)
+        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
         {
             return;
         }
@@ -253,7 +254,7 @@ else
             var client = HttpClientFactory.CreateClient("api");
             var response = await client.PostAsJsonAsync("api/requirements", new
             {
-                TargetSolutionId = SelectedSolutionState.Current.SolutionId,
+                TargetSolutionId = SelectedSolutionState.CurrentTarget.Id,
                 _request.Title,
                 _request.Description,
                 RequirementType = "functional",
