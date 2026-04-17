@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Iteration.Orchestrator.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260416181500_InitialClean")]
-    partial class InitialClean
+    [Migration("20260417130742_InitialTargetScopedModel")]
+    partial class InitialTargetScopedModel
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -552,6 +552,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Name")
+                        .IsUnique();
+
                     b.ToTable("Solutions");
                 });
 
@@ -705,7 +708,7 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         .HasForeignKey("RequirementId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -724,7 +727,7 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         .HasForeignKey("RequirementId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -748,7 +751,7 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         .HasForeignKey("RequirementId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -823,7 +826,7 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         .HasForeignKey("ParentRequirementId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -856,7 +859,7 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         .HasForeignKey("RequirementId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.Solution", null)
+                    b.HasOne("Iteration.Orchestrator.Domain.Solutions.SolutionTarget", null)
                         .WithMany()
                         .HasForeignKey("TargetSolutionId")
                         .OnDelete(DeleteBehavior.Cascade)

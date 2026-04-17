@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Iteration.Orchestrator.Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialClean : Migration
+    public partial class InitialTargetScopedModel : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -114,9 +114,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                 {
                     table.PrimaryKey("PK_BacklogItems", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_BacklogItems_Solutions_TargetSolutionId",
+                        name: "FK_BacklogItems_SolutionTargets_TargetSolutionId",
                         column: x => x.TargetSolutionId,
-                        principalTable: "Solutions",
+                        principalTable: "SolutionTargets",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -149,9 +149,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.SetNull);
                     table.ForeignKey(
-                        name: "FK_Decisions_Solutions_TargetSolutionId",
+                        name: "FK_Decisions_SolutionTargets_TargetSolutionId",
                         column: x => x.TargetSolutionId,
-                        principalTable: "Solutions",
+                        principalTable: "SolutionTargets",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -237,9 +237,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.SetNull);
                     table.ForeignKey(
-                        name: "FK_OpenQuestions_Solutions_TargetSolutionId",
+                        name: "FK_OpenQuestions_SolutionTargets_TargetSolutionId",
                         column: x => x.TargetSolutionId,
-                        principalTable: "Solutions",
+                        principalTable: "SolutionTargets",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -303,9 +303,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.SetNull);
                     table.ForeignKey(
-                        name: "FK_Requirements_Solutions_TargetSolutionId",
+                        name: "FK_Requirements_SolutionTargets_TargetSolutionId",
                         column: x => x.TargetSolutionId,
-                        principalTable: "Solutions",
+                        principalTable: "SolutionTargets",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -342,9 +342,9 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.SetNull);
                     table.ForeignKey(
-                        name: "FK_WorkflowRuns_Solutions_TargetSolutionId",
+                        name: "FK_WorkflowRuns_SolutionTargets_TargetSolutionId",
                         column: x => x.TargetSolutionId,
-                        principalTable: "Solutions",
+                        principalTable: "SolutionTargets",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -461,6 +461,12 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                 name: "IX_Requirements_WorkflowRunId",
                 table: "Requirements",
                 column: "WorkflowRunId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Solutions_Name",
+                table: "Solutions",
+                column: "Name",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_SolutionTargets_Code",
@@ -606,11 +612,11 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                 table: "WorkflowRuns");
 
             migrationBuilder.DropForeignKey(
-                name: "FK_BacklogItems_Solutions_TargetSolutionId",
+                name: "FK_BacklogItems_SolutionTargets_TargetSolutionId",
                 table: "BacklogItems");
 
             migrationBuilder.DropForeignKey(
-                name: "FK_WorkflowRuns_Solutions_TargetSolutionId",
+                name: "FK_WorkflowRuns_SolutionTargets_TargetSolutionId",
                 table: "WorkflowRuns");
 
             migrationBuilder.DropForeignKey(
@@ -639,10 +645,10 @@ namespace Iteration.Orchestrator.Infrastructure.Migrations
                 name: "PlanReports");
 
             migrationBuilder.DropTable(
-                name: "SolutionTargets");
+                name: "Requirements");
 
             migrationBuilder.DropTable(
-                name: "Requirements");
+                name: "SolutionTargets");
 
             migrationBuilder.DropTable(
                 name: "Solutions");

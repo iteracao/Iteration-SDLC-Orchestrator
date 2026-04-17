@@ -714,7 +714,11 @@
         SelectedSolutionState.Changed += HandleSolutionChanged;
         await LoadSolutionsAsync();
         await EnsureSelectedSolutionAsync();
-        await LoadCockpitAsync();
+
+        if (SelectedSolutionState.Current is null)
+        {
+            await LoadCockpitAsync();
+        }
     }
 
     private async void HandleSolutionChanged()
