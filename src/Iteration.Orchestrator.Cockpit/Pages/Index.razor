@@ -115,14 +115,9 @@
     }
 
     .create-panel .mud-input-control-helper-container {
-        min-height: 18px;
-    }
-
-    .create-panel .mud-input-helper-text,
-    .create-panel .mud-input-error {
-        margin-top: 2px;
-        font-size: 0.75rem;
-        line-height: 1.2;
+        min-height: 20px;
+        display: flex;
+        align-items: flex-start;
     }
 
     .create-panel-actions {
@@ -317,6 +312,16 @@
         color: #24292f;
     }
 
+
+    .mud-popover .mud-list-item.mud-selected-item {
+        background-color: rgba(0, 0, 0, 0.1) !important; /* light gray */
+        color: var(--mud-palette-text-primary) !important;
+    }
+
+    .mud-popover .mud-list-item.mud-selected-item:hover {
+        background-color: "rgba(0, 0, 0, 0.08) !important;
+    }
+
 </style>
 
 <div class="cockpit-shell">
@@ -399,26 +404,27 @@
 
             <MudForm @ref="_createSolutionForm">
                 <MudGrid Class="create-panel-form-grid" Spacing="1">
+
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Solution name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Solution name" HelperText=" " @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Profile" Value="@_solutionRequest.ProfileCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Profile" HelperText=" " Value="@_solutionRequest.ProfileCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Description" HelperText=" " @bind-Value="_solutionRequest.Description" Lines="3" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Repository folder" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Repository folder" HelperText=" " @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Main solution file" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Main solution file" HelperText=" " @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudTextField T="string" Label="Target" Value="@_solutionRequest.TargetCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                        <MudTextField T="string" Label="Target" HelperText=" " Value="@_solutionRequest.TargetCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudSelect T="Guid?" Label="Overlay source" Value="_solutionRequest.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
+                        <MudSelect T="Guid?" Label="Overlay source" HelperText=" " Value="_solutionRequest.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
                             <MudSelectItem T="Guid?" Value="@((Guid?)null)">(none)</MudSelectItem>
                             @foreach (var overlayOption in OverlayOptions)
                             {
@@ -429,6 +435,7 @@
                     <MudItem xs="12">
                         <MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="_solutionRequest.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
+
                 </MudGrid>
             </MudForm>
 

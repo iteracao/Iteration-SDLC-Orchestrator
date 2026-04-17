@@ -85,6 +85,16 @@ public sealed class SetupSolutionHandler
             throw new InvalidOperationException("Solution not found.");
         }
 
+        var nameInUse = await _db.Solutions.AnyAsync(
+        x => x.Name == command.Name
+             && (!command.SolutionId.HasValue || x.Id != command.SolutionId.Value),
+        ct);
+
+        if (nameInUse)
+        {
+            throw new InvalidOperationException("Solution name must be unique. Choose a different name.");
+        }
+
         if (solutionRecord is null)
         {
             solutionRecord = new Solution(command.Name, command.Description, profileCode);

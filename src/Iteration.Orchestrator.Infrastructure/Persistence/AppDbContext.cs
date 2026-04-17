@@ -35,6 +35,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
             e.Property(x => x.Description).HasMaxLength(4000).IsRequired();
             e.Property(x => x.ProfileCode).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<SolutionTarget>(e =>
