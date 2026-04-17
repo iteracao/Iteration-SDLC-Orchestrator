@@ -15,6 +15,8 @@ public sealed record SolutionAnalysisRequest(
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
+    IReadOnlyList<string> RepositoryFiles,
+    IReadOnlyList<string> RepositoryDocumentationFiles,
     SolutionSnapshot Snapshot,
     IReadOnlyList<FileSearchHit> SearchHits,
     IReadOnlyDictionary<string, string> SampleFiles);
@@ -53,6 +55,8 @@ public sealed record SolutionDesignRequest(
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
+    IReadOnlyList<string> RepositoryFiles,
+    IReadOnlyList<string> RepositoryDocumentationFiles,
     SolutionSnapshot Snapshot,
     IReadOnlyList<FileSearchHit> SearchHits,
     IReadOnlyDictionary<string, string> SampleFiles);
@@ -91,6 +95,8 @@ public sealed record SolutionPlanRequest(
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
+    IReadOnlyList<string> RepositoryFiles,
+    IReadOnlyList<string> RepositoryDocumentationFiles,
     SolutionSnapshot Snapshot,
     IReadOnlyList<FileSearchHit> SearchHits,
     IReadOnlyDictionary<string, string> SampleFiles);
@@ -134,6 +140,8 @@ public sealed record SolutionImplementationRequest(
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
+    IReadOnlyList<string> RepositoryFiles,
+    IReadOnlyList<string> RepositoryDocumentationFiles,
     SolutionSnapshot Snapshot,
     IReadOnlyList<FileSearchHit> SearchHits,
     IReadOnlyDictionary<string, string> SampleFiles);

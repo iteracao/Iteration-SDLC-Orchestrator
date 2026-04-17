@@ -27,23 +27,31 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(agentDefinition);
 
-        var chatClient = new OllamaChatClient(new Uri(_endpoint), modelId: _model);
-
-        AIAgent agent = chatClient.AsAIAgent(
-            name: agentDefinition.Name,
-            instructions: BuildInstructions(agentDefinition));
-
+        var instructions = BuildInstructions(agentDefinition);
         var prompt = BuildPrompt(request);
+        var allowedPaths = request.RepositoryFiles
+            .Concat(request.RepositoryDocumentationFiles)
+            .Concat(request.SolutionKnowledgeDocuments.Select(x => x.Path))
+            .Concat(request.ProfileRules.Select(x => x.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
         await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
 
         try
         {
-            await _logs.AppendLineAsync(request.WorkflowRunId, $"Calling model '{_model}' at '{_endpoint}'.", ct);
-            var rawResponse = await agent.RunAsync(prompt, cancellationToken: ct);
-            var rawText = rawResponse?.ToString() ?? string.Empty;
-            await _logs.AppendLineAsync(request.WorkflowRunId, "Raw agent response received.", ct);
-            await _logs.AppendBlockAsync(request.WorkflowRunId, "Raw response", rawText, ct);
+            var rawText = await FileAwareAgentRunner.RunAsync(
+                _endpoint,
+                _model,
+                agentDefinition.Name,
+                instructions,
+                prompt,
+                request.Snapshot.RepositoryPath,
+                allowedPaths,
+                request.WorkflowRunId,
+                _logs,
+                ct);
 
             var envelope = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
@@ -81,6 +89,9 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Return JSON only.");
         sb.AppendLine("- Do not include markdown fences or commentary outside the JSON object.");
         sb.AppendLine("- Satisfy every required field in the schema.");
+        sb.AppendLine("- You may inspect files by returning ONLY a JSON object with this exact schema: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
+        sb.AppendLine("- Request files only from the advertised repository/documentation lists.");
+        sb.AppendLine("- Do not assume file contents without reading them first when they are needed.");
         sb.AppendLine("- Keep structured workflow sections populated with concrete content or planned workflow items.");
         return sb.ToString();
     }
@@ -105,6 +116,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine(request.WorkflowPurpose ?? string.Empty);
         sb.AppendLine();
 
+        sb.AppendLine("WORKFLOW DISCIPLINE:");
+        sb.AppendLine("- This is an ANALYSIS workflow.");
+        sb.AppendLine("- Understand the requirement and current implementation.");
+        sb.AppendLine("- Do NOT design the solution, create a backlog, or describe implementation steps.");
+        sb.AppendLine();
+
         sb.AppendLine("REQUIREMENT TITLE:");
         sb.AppendLine(request.RequirementTitle ?? string.Empty);
         sb.AppendLine();
@@ -117,12 +134,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine(request.ProfileSummary ?? string.Empty);
         sb.AppendLine();
 
-        sb.AppendLine("PROFILE RULES:");
-        AppendDocuments(sb, request.ProfileRules);
+        sb.AppendLine("FRAMEWORK DOCUMENTS (READ BY PATH WHEN NEEDED):");
+        AppendDocumentPaths(sb, request.ProfileRules);
         sb.AppendLine();
 
-        sb.AppendLine("SOLUTION KNOWLEDGE DOCUMENTS:");
-        AppendDocuments(sb, request.SolutionKnowledgeDocuments);
+        sb.AppendLine("SOLUTION DOCUMENTS (READ BY PATH WHEN NEEDED):");
+        AppendDocumentPaths(sb, request.SolutionKnowledgeDocuments);
         sb.AppendLine();
 
         sb.AppendLine("WORKFLOW PRODUCED ARTIFACTS:");
@@ -153,21 +170,33 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
         sb.AppendLine();
 
+        sb.AppendLine("INPUT USAGE RULES:");
+        sb.AppendLine("- Repository files under src/ and the repository root are the primary evidence of actual implementation.");
+        sb.AppendLine("- Solution documents under AI/solutions/... are curated knowledge and may be incomplete.");
+        sb.AppendLine("- Framework documents are rules and constraints, not facts about the current implementation.");
+        sb.AppendLine("- Start from high-level files, then drill into relevant files only.");
+        sb.AppendLine("- Do not read files blindly; request only the files needed to complete this workflow.");
+        sb.AppendLine();
+
+        sb.AppendLine("REPOSITORY FILES (READ BY PATH WHEN NEEDED):");
+        AppendPathList(sb, request.RepositoryFiles);
+        sb.AppendLine();
+
+        sb.AppendLine("REPOSITORY DOCUMENTATION FILES (READ BY PATH WHEN NEEDED):");
+        AppendPathList(sb, request.RepositoryDocumentationFiles);
+        sb.AppendLine();
+
         sb.AppendLine("SOLUTION SNAPSHOT:");
         sb.AppendLine(JsonSerializer.Serialize(request.Snapshot, JsonOptions));
         sb.AppendLine();
 
-        sb.AppendLine("SEARCH HITS:");
+        sb.AppendLine("SEARCH HITS (HINTS ONLY):");
         sb.AppendLine(JsonSerializer.Serialize(request.SearchHits, JsonOptions));
-        sb.AppendLine();
-
-        sb.AppendLine("SAMPLE FILES:");
-        sb.AppendLine(JsonSerializer.Serialize(request.SampleFiles, JsonOptions));
 
         return sb.ToString();
     }
 
-    private static void AppendDocuments(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)
+    private static void AppendDocumentPaths(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)
     {
         if (documents.Count == 0)
         {
@@ -177,9 +206,21 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         foreach (var document in documents)
         {
-            sb.AppendLine($"FILE: {document.Path}");
-            sb.AppendLine(document.Content);
-            sb.AppendLine();
+            sb.AppendLine($"- {document.Path}");
+        }
+    }
+
+    private static void AppendPathList(StringBuilder sb, IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0)
+        {
+            sb.AppendLine("(none)");
+            return;
+        }
+
+        foreach (var path in paths)
+        {
+            sb.AppendLine($"- {path}");
         }
     }
 

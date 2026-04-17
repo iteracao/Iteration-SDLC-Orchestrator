@@ -99,6 +99,8 @@ public sealed class StartPlanImplementationRunHandler
         await _db.SaveChangesAsync(ct);
 
         var snapshot = await _bridge.GetSolutionSnapshotAsync(solution, ct);
+        var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
+        var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetRepositoryDocumentationFiles(solution.RepositoryPath);
         var searchQuery = $"{requirement.Title} {requirement.Description}".Trim();
         var hits = await _bridge.SearchFilesAsync(solution, searchQuery, ct);
 
@@ -132,6 +134,8 @@ public sealed class StartPlanImplementationRunHandler
             workflow.KnowledgeUpdates,
             workflow.ExecutionRules,
             workflow.NextWorkflows,
+            repositoryFiles,
+            repositoryDocumentationFiles,
             snapshot,
             hits,
             sampleFiles);
