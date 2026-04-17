@@ -1,3 +1,4 @@
+using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Api.Contracts;
 using Iteration.Orchestrator.Application.Solutions;
 using Iteration.Orchestrator.Application.Workflows;
@@ -149,6 +150,26 @@ public sealed class WorkflowRunsController : ControllerBase
         {
             return StatusCode(500, new { message = ex.Message });
         }
+    }
+
+    [HttpGet("{id:guid}/log")]
+    public async Task<IActionResult> GetLog(
+        Guid id,
+        [FromServices] IWorkflowRunLogStore logs,
+        CancellationToken ct)
+    {
+        var content = await logs.ReadAsync(id, ct);
+        if (content is null)
+        {
+            return NotFound(new { message = "Workflow log not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName = $"{id}.log",
+            content
+        });
     }
 
     [HttpGet]

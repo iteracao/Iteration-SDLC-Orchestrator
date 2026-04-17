@@ -19,6 +19,7 @@ public sealed class StartImplementSolutionChangeRunHandler
     private readonly ISolutionImplementationAgent _agent;
     private readonly IArtifactStore _artifacts;
     private readonly IWorkflowExecutionQueue _queue;
+    private readonly IWorkflowRunLogStore _logs;
 
     public StartImplementSolutionChangeRunHandler(
         IAppDbContext db,
@@ -26,7 +27,8 @@ public sealed class StartImplementSolutionChangeRunHandler
         ISolutionBridge bridge,
         ISolutionImplementationAgent agent,
         IArtifactStore artifacts,
-        IWorkflowExecutionQueue queue)
+        IWorkflowExecutionQueue queue,
+        IWorkflowRunLogStore logs)
     {
         _db = db;
         _config = config;
@@ -34,6 +36,7 @@ public sealed class StartImplementSolutionChangeRunHandler
         _agent = agent;
         _artifacts = artifacts;
         _queue = queue;
+        _logs = logs;
     }
 
     public async Task<Guid> HandleAsync(StartImplementSolutionChangeRunCommand command, CancellationToken ct)
@@ -80,6 +83,7 @@ public sealed class StartImplementSolutionChangeRunHandler
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
+        await _logs.AppendLineAsync(run.Id, "Workflow run created and queued.", ct);
         await _queue.EnqueueAsync(run.Id, ct);
         return run.Id;
     }
@@ -119,6 +123,8 @@ public sealed class StartImplementSolutionChangeRunHandler
         var workflow = await _config.GetWorkflowAsync("implement-solution-change", ct);
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
+
+        await _logs.AppendLineAsync(run.Id, "Background workflow execution started.", ct);
 
         run.Start("implementation");
         await _db.SaveChangesAsync(ct);
@@ -166,6 +172,7 @@ public sealed class StartImplementSolutionChangeRunHandler
             sampleFiles);
 
         var inputJson = JsonSerializer.Serialize(request);
+        await _logs.AppendBlockAsync(run.Id, "Workflow input", inputJson, ct);
         var taskRun = new AgentTaskRun(run.Id, agentDef.Code, inputJson);
         taskRun.Start();
         _db.AgentTaskRuns.Add(taskRun);
@@ -173,6 +180,7 @@ public sealed class StartImplementSolutionChangeRunHandler
 
         try
         {
+            await _logs.AppendLineAsync(run.Id, "Calling workflow agent.", ct);
             var result = await _agent.ImplementAsync(request, agentDef, ct);
 
             taskRun.Succeed(result.RawJson);
@@ -210,6 +218,8 @@ public sealed class StartImplementSolutionChangeRunHandler
         }
         catch (Exception ex)
         {
+            await _logs.AppendLineAsync(run.Id, "Workflow execution failed.", CancellationToken.None);
+            await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
             taskRun.Fail(ex.Message);
             run.Fail("implementation", ex.Message);
             backlogItem.MarkImplementationError();

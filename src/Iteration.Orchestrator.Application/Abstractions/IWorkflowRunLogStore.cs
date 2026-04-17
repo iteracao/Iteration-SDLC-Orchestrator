@@ -1,0 +1,8 @@
+namespace Iteration.Orchestrator.Application.Abstractions;
+
+public interface IWorkflowRunLogStore
+{
+    Task AppendLineAsync(Guid workflowRunId, string message, CancellationToken ct);
+    Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct);
+    Task<string?> ReadAsync(Guid workflowRunId, CancellationToken ct);
+}

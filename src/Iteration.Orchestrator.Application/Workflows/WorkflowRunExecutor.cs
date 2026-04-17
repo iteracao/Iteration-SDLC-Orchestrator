@@ -10,19 +10,22 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
     private readonly StartDesignSolutionRunHandler _designHandler;
     private readonly StartPlanImplementationRunHandler _planHandler;
     private readonly StartImplementSolutionChangeRunHandler _implementationHandler;
+    private readonly IWorkflowRunLogStore _logs;
 
     public WorkflowRunExecutor(
         IAppDbContext db,
         StartAnalyzeSolutionRunHandler analyzeHandler,
         StartDesignSolutionRunHandler designHandler,
         StartPlanImplementationRunHandler planHandler,
-        StartImplementSolutionChangeRunHandler implementationHandler)
+        StartImplementSolutionChangeRunHandler implementationHandler,
+        IWorkflowRunLogStore logs)
     {
         _db = db;
         _analyzeHandler = analyzeHandler;
         _designHandler = designHandler;
         _planHandler = planHandler;
         _implementationHandler = implementationHandler;
+        _logs = logs;
     }
 
     public async Task ExecuteAsync(Guid workflowRunId, CancellationToken ct)
@@ -32,6 +35,8 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         {
             return;
         }
+
+        await _logs.AppendLineAsync(workflowRunId, $"Workflow executor picked run for code '{run.WorkflowCode}'.", ct);
 
         try
         {
@@ -55,6 +60,8 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         }
         catch (Exception ex)
         {
+            await _logs.AppendLineAsync(workflowRunId, "Workflow executor caught a top-level failure.", CancellationToken.None);
+            await _logs.AppendBlockAsync(workflowRunId, "Executor exception", ex.ToString(), CancellationToken.None);
             await MarkFailedAsync(run, ex.Message, ct);
             throw;
         }
@@ -68,6 +75,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         }
 
         run.Fail(run.CurrentStage, reason);
+        await _logs.AppendLineAsync(run.Id, $"Workflow marked as failed. Reason: {reason}", CancellationToken.None);
 
         if (run.RequirementId.HasValue)
         {

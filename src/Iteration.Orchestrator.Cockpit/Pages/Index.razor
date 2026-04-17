@@ -571,6 +571,20 @@
                 <pre class="doc-pre">@_activeDocument.Content</pre>
             </MudPaper>
         }
+        else if (_activeWorkflowLog is not null)
+        {
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h6">Workflow log</MudText>
+                    <MudText Typo="Typo.caption">@_activeWorkflowLog.FileName</MudText>
+                </MudStack>
+                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
+            </MudStack>
+
+            <MudPaper Class="drawer-content-block" Elevation="0">
+                <pre class="doc-pre">@_activeWorkflowLog.Content</pre>
+            </MudPaper>
+        }
         else if (_activeCard is not null)
         {
             <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
@@ -644,6 +658,15 @@
                     <MudText Typo="Typo.body2">Workflow: @_activeCard.WorkflowRun.WorkflowCode</MudText>
                     <MudText Typo="Typo.body2">Run stage: @_activeCard.WorkflowRun.CurrentStage</MudText>
                     <MudText Typo="Typo.body2">Run status: @_activeCard.WorkflowRun.Status</MudText>
+
+                    @if (!string.IsNullOrWhiteSpace(_activeCard.WorkflowRun.FailureReason))
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_activeCard.WorkflowRun.FailureReason</MudAlert>
+                    }
+
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
+                        View log
+                    </MudButton>
                 }
 
                 @if (_activeCard.BacklogItem is not null)
@@ -704,6 +727,7 @@
     private Severity _createSolutionMessageSeverity = Severity.Info;
     private RequirementStageCard? _activeCard;
     private SolutionDocumentContent? _activeDocument;
+    private WorkflowLogContent? _activeWorkflowLog;
     private readonly SetupSolutionModel _solutionRequest = new();
 
     private IEnumerable<OverlayOption> OverlayOptions
@@ -1012,6 +1036,7 @@
     private void OpenCard(RequirementStageCard card)
     {
         _activeDocument = null;
+        _activeWorkflowLog = null;
         _activeCard = card;
         _drawerOpen = true;
     }
@@ -1027,6 +1052,16 @@
         var path = Uri.EscapeDataString(document.RelativePath);
         _activeDocument = await client.GetFromJsonAsync<SolutionDocumentContent>($"api/solutions/{SelectedSolutionState.Current.SolutionId}/documents/content?path={path}");
         _activeCard = null;
+        _activeWorkflowLog = null;
+        _drawerOpen = true;
+    }
+
+    private async Task OpenWorkflowLogAsync(Guid workflowRunId)
+    {
+        var client = HttpClientFactory.CreateClient("api");
+        _activeWorkflowLog = await client.GetFromJsonAsync<WorkflowLogContent>($"api/workflow-runs/{workflowRunId}/log");
+        _activeCard = null;
+        _activeDocument = null;
         _drawerOpen = true;
     }
 
@@ -1035,6 +1070,7 @@
         _drawerOpen = false;
         _activeCard = null;
         _activeDocument = null;
+        _activeWorkflowLog = null;
     }
 
     private void OpenCreateSolutionPanel()
@@ -1493,6 +1529,13 @@
         public DateTime LastModifiedUtc { get; set; }
     }
 
+    private sealed class WorkflowLogContent
+    {
+        public Guid WorkflowRunId { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+
     private sealed class RequirementRow
     {
         public Guid Id { get; set; }
@@ -1527,5 +1570,6 @@
         public string CurrentStage { get; set; } = string.Empty;
         public DateTime StartedUtc { get; set; }
         public DateTime? CompletedUtc { get; set; }
+        public string? FailureReason { get; set; }
     }
 }

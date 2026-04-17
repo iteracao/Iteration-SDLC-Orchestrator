@@ -10,11 +10,13 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
 {
     private readonly string _endpoint;
     private readonly string _model;
+    private readonly IWorkflowRunLogStore _logs;
 
-    public MicrosoftAgentFrameworkSolutionImplementationAgent(string endpoint, string model)
+    public MicrosoftAgentFrameworkSolutionImplementationAgent(string endpoint, string model, IWorkflowRunLogStore logs)
     {
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
+        _logs = logs;
     }
 
     public async Task<SolutionImplementationResult> ImplementAsync(SolutionImplementationRequest request, AgentDefinition agentDefinition, CancellationToken ct)
@@ -22,11 +24,22 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
         var chatClient = new OllamaChatClient(new Uri(_endpoint), modelId: _model);
         AIAgent agent = chatClient.AsAIAgent(name: agentDefinition.Name, instructions: BuildInstructions(agentDefinition));
         var prompt = BuildPrompt(request);
-        var rawResponse = await agent.RunAsync(prompt, cancellationToken: ct);
-        var envelope = ParseAndNormalize(rawResponse?.ToString() ?? string.Empty, request);
-        var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
+        await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
+        await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
 
-        return new SolutionImplementationResult(
+        try
+        {
+            await _logs.AppendLineAsync(request.WorkflowRunId, $"Calling model '{_model}' at '{_endpoint}'.", ct);
+            var rawResponse = await agent.RunAsync(prompt, cancellationToken: ct);
+            var rawText = rawResponse?.ToString() ?? string.Empty;
+            await _logs.AppendLineAsync(request.WorkflowRunId, "Raw agent response received.", ct);
+            await _logs.AppendBlockAsync(request.WorkflowRunId, "Raw response", rawText, ct);
+
+            var envelope = ParseAndNormalize(rawText, request);
+            var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
+            await _logs.AppendLineAsync(request.WorkflowRunId, "Agent response parsed successfully.", ct);
+
+            return new SolutionImplementationResult(
             envelope.Result!.Summary,
             envelope.Status,
             JsonSerializer.Serialize(envelope.Result.ImplementedChanges, JsonOptions),
@@ -39,6 +52,13 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
             JsonSerializer.Serialize(envelope.Result.KnowledgeUpdates, JsonOptions),
             JsonSerializer.Serialize(envelope.Result.RecommendedNextWorkflowCodes, JsonOptions),
             normalizedJson);
+        }
+        catch (Exception ex)
+        {
+            await _logs.AppendLineAsync(request.WorkflowRunId, "Agent execution failed.", CancellationToken.None);
+            await _logs.AppendBlockAsync(request.WorkflowRunId, "Exception", ex.ToString(), CancellationToken.None);
+            throw;
+        }
     }
 
     private static string BuildInstructions(AgentDefinition agentDefinition)

@@ -57,28 +57,33 @@ builder.Services.AddSingleton<IConfigCatalog>(_ =>
     new FileSystemConfigCatalog(resolvedConfigRoot));
 
 builder.Services.AddSingleton<ISolutionBridge, LocalFileSystemSolutionBridge>();
-builder.Services.AddSingleton<ISolutionAnalystAgent>(_ =>
+builder.Services.AddSingleton<ISolutionAnalystAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionAnalystAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
-builder.Services.AddSingleton<ISolutionDesignerAgent>(_ =>
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+        sp.GetRequiredService<IWorkflowRunLogStore>()));
+builder.Services.AddSingleton<ISolutionDesignerAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionDesignerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
-builder.Services.AddSingleton<ISolutionPlannerAgent>(_ =>
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+        sp.GetRequiredService<IWorkflowRunLogStore>()));
+builder.Services.AddSingleton<ISolutionPlannerAgent>(sp =>
     new MicrosoftAgentFrameworkImplementationPlannerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
-builder.Services.AddSingleton<ISolutionImplementationAgent>(_ =>
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+        sp.GetRequiredService<IWorkflowRunLogStore>()));
+builder.Services.AddSingleton<ISolutionImplementationAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionImplementationAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b"));
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+        sp.GetRequiredService<IWorkflowRunLogStore>()));
 
 builder.Services.AddSingleton<ISolutionSetupService, FileSystemSolutionSetupService>();
 
 var artifactRoot = builder.Configuration["ArtifactRoot"] ?? "data";
-builder.Services.AddSingleton<IArtifactStore>(_ => new FileSystemArtifactStore(
-    Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, artifactRoot))));
+var resolvedArtifactRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, artifactRoot));
+builder.Services.AddSingleton<IArtifactStore>(_ => new FileSystemArtifactStore(resolvedArtifactRoot));
+builder.Services.AddSingleton<IWorkflowRunLogStore>(_ => new FileSystemWorkflowRunLogStore(resolvedArtifactRoot));
 
 var app = builder.Build();
 
