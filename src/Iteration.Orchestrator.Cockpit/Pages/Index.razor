@@ -8,6 +8,7 @@
 <PageTitle>Cockpit</PageTitle>
 
 <style>
+
     .cockpit-shell {
         display: flex;
         flex-direction: column;
@@ -15,146 +16,20 @@
     }
 
     .cockpit-toolbar {
-        background: #f5f7fa;
-        border: 1px solid #d9e0e8;
-        border-radius: 12px;
-        padding: 4px 8px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        box-shadow: none;
     }
 
     .cockpit-toolbar-row {
-        gap: 5px;
+        gap: 6px;
     }
 
-    .toolbar-select-host,
-    .create-panel .mud-select {
+    .toolbar-select-host {
         flex: 1;
         min-width: 0;
-    }
-
-    .toolbar-select-host .mud-input-control,
-    .create-panel .mud-select .mud-input-control {
-        margin-top: 0;
-    }
-
-    .toolbar-select-host .mud-input-control-input-container,
-    .create-panel .mud-select .mud-input-control-input-container {
-        background: #ffffff;
-        border-radius: 9px;
-    }
-
-    .toolbar-select-host .mud-input-label,
-    .create-panel .mud-select .mud-input-label {
-        font-size: 0.66rem;
-        color: #64748b;
-        background: #ffffff;
-        padding: 0 3px;
-    }
-
-    .toolbar-select-host .mud-input > input,
-    .toolbar-select-host .mud-select-input,
-    .create-panel .mud-select .mud-input > input,
-    .create-panel .mud-select .mud-select-input {
-        font-size: 0.86rem;
-        color: #1e293b;
-        font-family: inherit;
-        font-weight: 400;
-    }
-
-    .toolbar-select-host .mud-input-label.mud-input-label-inputcontrol,
-    .create-panel .mud-select .mud-input-label.mud-input-label-inputcontrol {
-        font-size: 0.66rem;
-    }
-
-    .toolbar-select-host .mud-input-slot,
-    .create-panel .mud-select .mud-input-slot {
-        display: flex;
-        align-items: center;
-        min-height: 32px;
-        height: 32px;
-        background: #ffffff;
-        padding-top: 0;
-        padding-bottom: 0;
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-
-    .toolbar-select-host .mud-input-root,
-    .create-panel .mud-select .mud-input-root {
-        font-size: 0.86rem;
-    }
-
-    .toolbar-select-host .mud-input-outlined,
-    .create-panel .mud-select .mud-input-outlined {
-        --mud-palette-lines-inputs: #cbd5e1;
-    }
-
-    .toolbar-select-host .mud-input-outlined-border,
-    .create-panel .mud-select .mud-input-outlined-border {
-        border-color: #cbd5e1 !important;
-        border-width: 1px !important;
-    }
-
-    .toolbar-select-host .mud-input-root:hover .mud-input-outlined-border,
-    .create-panel .mud-select .mud-input-root:hover .mud-input-outlined-border {
-        border-color: #b8c4d4 !important;
-    }
-
-    .toolbar-select-host .mud-input-root.mud-input-focused .mud-input-outlined-border,
-    .create-panel .mud-select .mud-input-root.mud-input-focused .mud-input-outlined-border {
-        border-color: #b8c4d4 !important;
-    }
-
-    .toolbar-select-host .mud-input-root.mud-input-focused .mud-input-label,
-    .create-panel .mud-select .mud-input-root.mud-input-focused .mud-input-label {
-        color: #64748b;
-    }
-
-    .toolbar-select-host .mud-select-input,
-    .toolbar-select-host .mud-input-label-inputcontrol,
-    .create-panel .mud-select .mud-select-input,
-    .create-panel .mud-select .mud-input-label-inputcontrol {
-        line-height: 1.2;
-        display: flex;
-        align-items: center;
-    }
-
-    .toolbar-select-host .mud-input-adornment,
-    .create-panel .mud-select .mud-input-adornment {
-        margin-top: 0;
-        align-self: center;
-        height: 100%;
-        display: flex;
-        align-items: center;
-    }
-
-    .toolbar-select-host .mud-input-adornment-end,
-    .create-panel .mud-select .mud-input-adornment-end {
-        margin-inline-start: auto;
-        padding-left: 0;
-        flex: 0 0 auto;
-    }
-
-    .toolbar-select-host .mud-icon-root,
-    .create-panel .mud-select .mud-icon-root {
-        color: #64748b;
-        font-size: 0.92rem;
-    }
-
-    .toolbar-select-host .mud-select-input,
-    .create-panel .mud-select .mud-select-input {
-        padding-top: 0;
-        padding-bottom: 0;
-        min-height: 100%;
-        height: 100%;
-        flex: 1 1 auto;
-        align-self: stretch;
-        padding-right: 0;
-        box-sizing: border-box;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        transform: translateY(1px);
     }
 
     .toolbar-action-button {
@@ -167,48 +42,48 @@
         transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
     }
 
-    .toolbar-action-button:hover {
-        background: #f8fafc;
-        border-color: #bcc7d5;
-        color: #1e293b;
-    }
+        .toolbar-action-button:hover {
+            background: #f8fafc;
+            border-color: #bcc7d5;
+            color: #1e293b;
+        }
 
-    .toolbar-action-button:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(91, 79, 229, 0.12);
-    }
+        .toolbar-action-button:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(91, 79, 229, 0.12);
+        }
 
-    .toolbar-action-button.toolbar-action-primary {
-        background: #eef2f8;
-        border-color: #cfd8e3;
-        color: #4b5b70;
-    }
+        .toolbar-action-button.toolbar-action-primary {
+            background: #eef2f8;
+            border-color: #cfd8e3;
+            color: #4b5b70;
+        }
 
-    .toolbar-action-button.toolbar-action-primary .mud-icon-root {
-        color: #4b5b70;
-    }
+            .toolbar-action-button.toolbar-action-primary .mud-icon-root {
+                color: #4b5b70;
+            }
 
-    .toolbar-action-button .mud-icon-root {
-        font-size: 0.92rem;
-    }
+        .toolbar-action-button .mud-icon-root {
+            font-size: 0.92rem;
+        }
 
-    .toolbar-action-button.toolbar-action-primary:hover {
-        background: #e6ebf3;
-        border-color: #bcc7d5;
-        color: #334155;
-    }
+        .toolbar-action-button.toolbar-action-primary:hover {
+            background: #e6ebf3;
+            border-color: #bcc7d5;
+            color: #334155;
+        }
 
-    .toolbar-action-button.toolbar-action-disabled {
-        background: #f2f5f9;
-        border-color: #e5e7eb;
-        color: #94a3b8;
-    }
+        .toolbar-action-button.toolbar-action-disabled {
+            background: #f2f5f9;
+            border-color: #e5e7eb;
+            color: #94a3b8;
+        }
 
     .create-panel {
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
-        padding: 10px 12px;
+        padding: 12px;
     }
 
     .create-panel-header {
@@ -240,104 +115,17 @@
         font-size: 0.8rem;
     }
 
-    .create-panel .mud-input-control {
-        margin-top: 0;
-    }
-
-    .create-panel .mud-input-label {
-        font-size: 0.64rem;
-        color: #64748b;
-    }
-
-    .create-panel .mud-input > input,
-    .create-panel .mud-select-input,
-    .create-panel .mud-input > textarea {
-        font-size: 0.84rem;
-        color: #1e293b;
-        font-family: inherit;
-        font-weight: 400;
-    }
-
-    .create-panel .mud-input-label.mud-input-label-inputcontrol {
-        font-size: 0.64rem;
-    }
-
-    .create-panel .mud-input-slot {
-        display: flex;
-        align-items: center;
-        position: relative;
-        min-height: 32px;
-        background: #ffffff;
-        padding-top: 0;
-        padding-bottom: 0;
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-
-    .create-panel .mud-input-outlined-border {
-        border-width: 1px !important;
-    }
-
-    .create-panel .mud-input-adornment {
-        margin-top: 0;
-        align-self: center;
-        height: 100%;
-        display: flex;
-        align-items: center;
-    }
-
-    .create-panel .mud-input-adornment .mud-icon-root,
-    .create-panel .mud-input-slot .mud-icon-root {
-        font-size: 0.9rem;
-        color: #64748b;
-    }
-
-    .create-panel .mud-input-control-helper-container .mud-input-helper-text,
-    .create-panel .mud-input-control-helper-container .mud-input-error {
-        color: transparent !important;
-        font-size: 0 !important;
-        line-height: 0 !important;
-        user-select: none;
-    }
-
-    .create-panel .mud-input > textarea {
-        min-height: 68px;
-    }
-
-    .create-panel .mud-select-input,
-    .create-panel .mud-input > input {
-        min-height: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        line-height: 1.2;
-        padding-top: 0;
-        padding-bottom: 0;
-        box-sizing: border-box;
-    }
-
-    .create-panel .mud-input-label-inputcontrol {
-        line-height: 1;
-    }
-
-    .toolbar-select-host .mud-select-icon,
-    .create-panel .mud-select-icon,
-    .toolbar-select-host .mud-input-adornment-end,
-    .create-panel .mud-input-adornment-end {
-        display: none !important;
-    }
-
     .create-panel-actions {
         margin-top: 10px;
         gap: 6px;
     }
 
-    .create-panel-actions .mud-button-root {
-        min-width: 0;
-        height: 30px;
-        padding: 0 10px;
-        font-size: 0.8rem;
-    }
+        .create-panel-actions .mud-button-root {
+            min-width: 0;
+            height: 30px;
+            padding: 0 10px;
+            font-size: 0.8rem;
+        }
 
     .cockpit-board {
         background: #ffffff;
@@ -419,9 +207,9 @@
         min-width: 68px;
     }
 
-    .pipeline-step-shell:last-child {
-        flex: 0 0 auto;
-    }
+        .pipeline-step-shell:last-child {
+            flex: 0 0 auto;
+        }
 
     .pipeline-step {
         display: flex;
@@ -441,37 +229,37 @@
         transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease, background-color 0.14s ease, color 0.14s ease;
     }
 
-    .pipeline-step-button:hover:not(:disabled) {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10);
-    }
+        .pipeline-step-button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10);
+        }
 
-    .pipeline-step-button:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
-    }
+        .pipeline-step-button:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+        }
 
-    .pipeline-step-button:disabled {
-        background: #f8fafc;
-        color: var(--step-color, #94a3b8);
-        opacity: 1;
-    }
+        .pipeline-step-button:disabled {
+            background: #f8fafc;
+            color: var(--step-color, #94a3b8);
+            opacity: 1;
+        }
 
-    .pipeline-step-button.is-running {
-        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
-    }
+        .pipeline-step-button.is-running {
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+        }
 
-    .pipeline-step-button.is-waiting {
-        background: #fffdf4;
-    }
+        .pipeline-step-button.is-waiting {
+            background: #fffdf4;
+        }
 
-    .pipeline-step-button.is-complete {
-        background: #f3fbf7;
-    }
+        .pipeline-step-button.is-complete {
+            background: #f3fbf7;
+        }
 
-    .pipeline-step-button.is-error {
-        background: #fff5f5;
-    }
+        .pipeline-step-button.is-error {
+            background: #fff5f5;
+        }
 
     .pipeline-step-dot {
         width: 6px;
@@ -519,6 +307,8 @@
         font-size: 0.82rem;
         color: #334155;
     }
+
+
 </style>
 
 <div class="cockpit-shell">
