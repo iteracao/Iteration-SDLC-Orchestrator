@@ -110,14 +110,14 @@ public sealed class WorkflowRunsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(
         [FromServices] AppDbContext db,
-        [FromQuery] Guid? solutionId,
+        [FromQuery] Guid? targetSolutionId,
         CancellationToken ct)
     {
         var query = db.WorkflowRuns.AsQueryable();
 
-        if (solutionId.HasValue)
+        if (targetSolutionId.HasValue)
         {
-            query = query.Where(x => x.TargetSolutionId == solutionId.Value);
+            query = query.Where(x => x.TargetSolutionId == targetSolutionId.Value);
         }
 
         var runs = await query

@@ -37,15 +37,15 @@ public sealed class BacklogController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(
         [FromServices] AppDbContext db,
-        [FromQuery] Guid? solutionId,
+        [FromQuery] Guid? targetSolutionId,
         [FromQuery] Guid? requirementId,
         CancellationToken ct)
     {
         var query = db.BacklogItems.AsQueryable();
 
-        if (solutionId.HasValue)
+        if (targetSolutionId.HasValue)
         {
-            query = query.Where(x => x.TargetSolutionId == solutionId.Value);
+            query = query.Where(x => x.TargetSolutionId == targetSolutionId.Value);
         }
 
         if (requirementId.HasValue)

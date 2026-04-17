@@ -66,7 +66,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.OriginatingBacklogItemId);
             e.HasIndex(x => x.WorkflowRunId);
             e.HasIndex(x => x.ParentRequirementId);
-            e.HasOne<Solution>()
+            e.HasOne<SolutionTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -93,7 +93,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.TargetSolutionId);
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.PlanWorkflowRunId);
-            e.HasOne<Solution>()
+            e.HasOne<SolutionTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -113,7 +113,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.TargetSolutionId);
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.BacklogItemId);
-            e.HasOne<Solution>()
+            e.HasOne<SolutionTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -191,7 +191,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.WorkflowRunId);
             e.HasIndex(x => x.BacklogItemId);
-            e.HasOne<Solution>()
+            e.HasOne<SolutionTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -223,7 +223,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => x.RequirementId);
             e.HasIndex(x => x.WorkflowRunId);
             e.HasIndex(x => x.BacklogItemId);
-            e.HasOne<Solution>()
+            e.HasOne<SolutionTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetSolutionId)
                 .OnDelete(DeleteBehavior.Cascade);

@@ -43,14 +43,8 @@ public sealed class StartPlanImplementationRunHandler
             throw new InvalidOperationException("Requirement must be in 'designed' status before planning can start.");
         }
 
-        var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == requirement.TargetSolutionId, ct);
-        if (!solutionExists)
-        {
-            throw new InvalidOperationException("Target solution not found.");
-        }
-
-        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.SolutionId == requirement.TargetSolutionId, ct)
-            ?? throw new InvalidOperationException("Target solution setup not found.");
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
 
         var designReport = await _db.DesignReports
             .Where(x => x.WorkflowRunId == requirement.WorkflowRunId)
@@ -66,7 +60,7 @@ public sealed class StartPlanImplementationRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, null, solution.SolutionId, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
         run.Start("implementation-planning");
         requirement.MarkUnderPlanning(run.Id);
 
@@ -87,7 +81,7 @@ public sealed class StartPlanImplementationRunHandler
 
         var request = new SolutionPlanRequest(
             run.Id,
-            solution.SolutionId,
+            solution.Id,
             requirement.Id,
             designReport.WorkflowRunId,
             workflow.Code,

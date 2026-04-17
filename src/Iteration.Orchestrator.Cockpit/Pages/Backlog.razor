@@ -11,7 +11,7 @@
     Requirements are the canonical intake object. Backlog remains downstream implementation work linked to requirements.
 </MudText>
 
-@if (SelectedSolutionState.Current is null)
+@if (SelectedSolutionState.CurrentTarget is null)
 {
     <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
         Select a solution first on the Solutions page.
@@ -196,7 +196,7 @@ else
         _runs.Clear();
         _loadError = null;
 
-        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
+        if (SelectedSolutionState.CurrentTarget is null)
         {
             StateHasChanged();
             return;
@@ -208,16 +208,20 @@ else
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            var solutionId = SelectedSolutionState.Current.SolutionId;
-            var targetSolutionId = SelectedSolutionState.CurrentTarget.Id;
-            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId}/requirements") ?? []);
-            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
+            var targetSolutionId = SelectedSolutionState.CurrentTarget?.Id;
+            if (!targetSolutionId.HasValue)
+            {
+                return;
+            }
+
+            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId.Value}/requirements") ?? []);
+            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?targetSolutionId={targetSolutionId.Value}") ?? []);
             _backlog.Sort((left, right) =>
             {
                 var requirementCompare = Nullable.Compare(left.RequirementId, right.RequirementId);
                 return requirementCompare != 0 ? requirementCompare : left.PlanningOrder.CompareTo(right.PlanningOrder);
             });
-            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
+            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?targetSolutionId={targetSolutionId.Value}") ?? []);
         }
         catch (Exception ex)
         {
@@ -232,7 +236,7 @@ else
 
     private async Task CreateRequirementAsync()
     {
-        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
+        if (SelectedSolutionState.CurrentTarget is null)
         {
             return;
         }

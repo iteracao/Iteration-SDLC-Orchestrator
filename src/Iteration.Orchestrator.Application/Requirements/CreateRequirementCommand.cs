@@ -23,8 +23,8 @@ public sealed class CreateRequirementHandler
 
     public async Task<Guid> HandleAsync(CreateRequirementCommand command, CancellationToken ct)
     {
-        var targetSolutionExists = await _db.SolutionTargets.AnyAsync(x => x.Id == command.TargetSolutionId, ct);
-        if (!targetSolutionExists)
+        var solutionExists = await _db.SolutionTargets.AnyAsync(x => x.Id == command.TargetSolutionId, ct);
+        if (!solutionExists)
         {
             throw new InvalidOperationException("Target solution not found.");
         }

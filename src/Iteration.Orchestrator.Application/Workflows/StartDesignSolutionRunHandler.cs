@@ -42,14 +42,8 @@ public sealed class StartDesignSolutionRunHandler
             throw new InvalidOperationException("Requirement must be in 'analyzed' status before design can start.");
         }
 
-        var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == requirement.TargetSolutionId, ct);
-        if (!solutionExists)
-        {
-            throw new InvalidOperationException("Target solution not found.");
-        }
-
-        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.SolutionId == requirement.TargetSolutionId, ct)
-            ?? throw new InvalidOperationException("Target solution setup not found.");
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
 
         var analysisReport = await _db.AnalysisReports
             .Where(x => x.WorkflowRunId == requirement.WorkflowRunId)
@@ -65,7 +59,7 @@ public sealed class StartDesignSolutionRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, null, solution.SolutionId, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
         run.Start("solution-design");
         requirement.MarkUnderDesign(run.Id);
 
@@ -86,7 +80,7 @@ public sealed class StartDesignSolutionRunHandler
 
         var request = new SolutionDesignRequest(
             run.Id,
-            solution.SolutionId,
+            solution.Id,
             requirement.Id,
             analysisReport.WorkflowRunId,
             workflow.Code,

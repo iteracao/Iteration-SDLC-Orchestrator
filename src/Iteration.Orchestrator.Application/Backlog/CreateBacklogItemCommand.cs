@@ -24,7 +24,7 @@ public sealed class CreateBacklogItemHandler
 
     public async Task<Guid> HandleAsync(CreateBacklogItemCommand command, CancellationToken ct)
     {
-        var solutionExists = await _db.Solutions.AnyAsync(x => x.Id == command.TargetSolutionId, ct);
+        var solutionExists = await _db.SolutionTargets.AnyAsync(x => x.Id == command.TargetSolutionId, ct);
         if (!solutionExists)
         {
             throw new InvalidOperationException("Target solution not found.");

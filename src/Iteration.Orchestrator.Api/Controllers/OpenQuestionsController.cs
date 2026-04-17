@@ -5,17 +5,17 @@ using Microsoft.EntityFrameworkCore;
 namespace Iteration.Orchestrator.Api.Controllers;
 
 [ApiController]
-[Route("api/solutions/{solutionId:guid}/open-questions")]
+[Route("api/solution-targets/{targetSolutionId:guid}/open-questions")]
 public sealed class OpenQuestionsController : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(
-        Guid solutionId,
+        Guid targetSolutionId,
         [FromServices] AppDbContext db,
         CancellationToken ct)
     {
         var items = await db.OpenQuestions
-            .Where(x => x.TargetSolutionId == solutionId)
+            .Where(x => x.TargetSolutionId == targetSolutionId)
             .OrderByDescending(x => x.CreatedAtUtc)
             .ToListAsync(ct);
 

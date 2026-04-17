@@ -56,8 +56,8 @@ public sealed class StartImplementSolutionChangeRunHandler
         var requirement = await _db.Requirements.FindAsync([backlogItem.RequirementId.Value], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.SolutionId == requirement.TargetSolutionId, ct)
-            ?? throw new InvalidOperationException("Target solution setup not found.");
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
 
         var blockingItemsExist = await _db.BacklogItems
             .Where(x => x.RequirementId == requirement.Id)
@@ -78,7 +78,7 @@ public sealed class StartImplementSolutionChangeRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.SolutionId, workflow.Code, command.RequestedBy);
+        var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.Id, workflow.Code, command.RequestedBy);
         run.Start("implementation");
         requirement.MarkImplementing(run.Id);
 
@@ -99,7 +99,7 @@ public sealed class StartImplementSolutionChangeRunHandler
 
         var request = new SolutionImplementationRequest(
             run.Id,
-            solution.SolutionId,
+            solution.Id,
             requirement.Id,
             backlogItem.Id,
             backlogItem.PlanWorkflowRunId.Value,

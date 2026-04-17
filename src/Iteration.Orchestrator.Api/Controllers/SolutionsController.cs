@@ -130,21 +130,35 @@ public sealed class SolutionsController : ControllerBase
             return NotFound();
         }
 
-        var workflowRunIds = await db.WorkflowRuns
-            .Where(x => x.TargetSolutionId == id)
+        var targetIds = await db.SolutionTargets
+            .Where(x => x.SolutionId == id)
             .Select(x => x.Id)
             .ToListAsync(ct);
 
-        if (workflowRunIds.Count > 0)
+        var workflowRunIds = await db.WorkflowRuns
+            .Where(x => targetIds.Contains(x.TargetSolutionId))
+            .Select(x => x.Id)
+            .ToListAsync(ct);
+
+        if (workflowRunIds.Any())
         {
             var agentTaskRuns = await db.AgentTaskRuns
                 .Where(x => workflowRunIds.Contains(x.WorkflowRunId))
                 .ToListAsync(ct);
 
-            if (agentTaskRuns.Count > 0)
+            if (agentTaskRuns.Any())
             {
                 db.AgentTaskRuns.RemoveRange(agentTaskRuns);
             }
+        }
+
+        var targets = await db.SolutionTargets
+            .Where(x => x.SolutionId == id)
+            .ToListAsync(ct);
+
+        if (targets.Any())
+        {
+            db.SolutionTargets.RemoveRange(targets);
         }
 
         db.Solutions.Remove(solution);

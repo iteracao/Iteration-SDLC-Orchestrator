@@ -330,15 +330,15 @@
             <div class="toolbar-select-host">
                 <MudSelect T="Guid?"
                            Value="_selectedTargetId"
-                           ValueChanged="OnSolutionTargetSelectionChangedAsync"
+                           ValueChanged="OnSolutionSelectionChangedAsync"
                            Label="Solution / target"
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            Dense="true"
                            FullWidth="true">
-                    @foreach (var option in SolutionTargetOptions)
+                    @foreach (var option in _solutionTargetOptions)
                     {
-                        <MudSelectItem T="Guid?" Value="@option.Target.Id">@option.Label</MudSelectItem>
+                        <MudSelectItem T="Guid?" Value="@option.TargetId">@option.Label</MudSelectItem>
                     }
                 </MudSelect>
             </div>
@@ -681,6 +681,14 @@
 
     private MudForm? _createSolutionForm;
     private Guid? _selectedTargetId;
+    private List<SolutionTargetOption> _solutionTargetOptions => _solutions
+        .SelectMany(solution => solution.Targets.Select(target => new SolutionTargetOption
+        {
+            TargetId = target.Id,
+            Label = $"{solution.Name} / {target.DisplayName}"
+        }))
+        .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase)
+        .ToList();
     private bool _loading;
     private bool _drawerOpen;
     private bool _documentsLoading;
@@ -697,11 +705,6 @@
 
     private IEnumerable<OverlayOption> OverlayOptions
         => _solutions.SelectMany(solution => solution.Targets.Select(target => new OverlayOption(solution, target)))
-            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
-
-    private IEnumerable<SolutionTargetOption> SolutionTargetOptions
-        => _solutions
-            .SelectMany(solution => solution.Targets.Select(target => new SolutionTargetOption(solution, target)))
             .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
@@ -735,7 +738,7 @@
     {
         if (SelectedSolutionState.Current is not null)
         {
-            _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id ?? SelectedSolutionState.Current.Targets.FirstOrDefault()?.Id;
+            _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id;
             return;
         }
 
@@ -743,15 +746,15 @@
         if (first is not null)
         {
             _selectedTargetId = first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id;
-            SelectedSolutionState.SetCurrent(first, first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id);
+            SelectedSolutionState.SetCurrent(first, _selectedTargetId);
             await LoadDocumentsAsync();
         }
     }
 
-    private async Task OnSolutionTargetSelectionChangedAsync(Guid? targetId)
+    private async Task OnSolutionSelectionChangedAsync(Guid? targetId)
     {
         _selectedTargetId = targetId;
-        var selected = _solutions.FirstOrDefault(x => x.Targets.Any(target => target.Id == targetId));
+        var selected = _solutions.FirstOrDefault(x => x.Targets.Any(t => t.Id == targetId));
         SelectedSolutionState.SetCurrent(selected, targetId);
         await LoadDocumentsAsync();
         await LoadCockpitAsync();
@@ -764,7 +767,7 @@
         _runs.Clear();
         _loadError = null;
 
-        if (SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null)
+        if (SelectedSolutionState.Current is null)
         {
             StateHasChanged();
             return;
@@ -776,11 +779,15 @@
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            var solutionId = SelectedSolutionState.Current.SolutionId;
-            var targetSolutionId = SelectedSolutionState.CurrentTarget.Id;
-            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId}/requirements") ?? []);
-            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?solutionId={solutionId}") ?? []);
-            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?solutionId={solutionId}") ?? []);
+            var targetSolutionId = SelectedSolutionState.CurrentTarget?.Id;
+            if (!targetSolutionId.HasValue)
+            {
+                return;
+            }
+
+            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId.Value}/requirements") ?? []);
+            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?targetSolutionId={targetSolutionId.Value}") ?? []);
+            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?targetSolutionId={targetSolutionId.Value}") ?? []);
         }
         catch (Exception ex)
         {
@@ -1075,7 +1082,7 @@
             if (newSelection is not null)
             {
                 _selectedTargetId = newSelection.Targets.Count == 1 ? newSelection.Targets[0].Id : newSelection.Targets.FirstOrDefault()?.Id;
-                SelectedSolutionState.SetCurrent(newSelection, newSelection.Targets.Count == 1 ? newSelection.Targets[0].Id : newSelection.Targets.FirstOrDefault()?.Id);
+                SelectedSolutionState.SetCurrent(newSelection, _selectedTargetId);
             }
 
             _createSolutionPanelOpen = false;
@@ -1365,11 +1372,10 @@
         public string Label => $"{Solution.Name} / {Target.DisplayName}";
     }
 
-    private sealed class SolutionTargetOption(SolutionSummary solution, SolutionTargetSummary target)
+    private sealed class SolutionTargetOption
     {
-        public SolutionSummary Solution { get; } = solution;
-        public SolutionTargetSummary Target { get; } = target;
-        public string Label => $"{Solution.Name} / {Target.DisplayName}";
+        public Guid TargetId { get; set; }
+        public string Label { get; set; } = string.Empty;
     }
 
     private sealed class ApiErrorResponse
