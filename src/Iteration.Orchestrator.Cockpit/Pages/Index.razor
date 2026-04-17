@@ -11,134 +11,489 @@
     .cockpit-shell {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 8px;
     }
 
     .cockpit-toolbar {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
+        background: #f5f7fa;
+        border: 1px solid #d9e0e8;
         border-radius: 12px;
-        padding: 12px 14px;
-        box-shadow: none;
+        padding: 4px 8px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    }
+
+    .cockpit-toolbar-row {
+        gap: 5px;
+    }
+
+    .toolbar-select-host,
+    .create-panel .mud-select {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .toolbar-select-host .mud-input-control,
+    .create-panel .mud-select .mud-input-control {
+        margin-top: 0;
+    }
+
+    .toolbar-select-host .mud-input-control-input-container,
+    .create-panel .mud-select .mud-input-control-input-container {
+        background: #ffffff;
+        border-radius: 9px;
+    }
+
+    .toolbar-select-host .mud-input-label,
+    .create-panel .mud-select .mud-input-label {
+        font-size: 0.66rem;
+        color: #64748b;
+        background: #ffffff;
+        padding: 0 3px;
+    }
+
+    .toolbar-select-host .mud-input > input,
+    .toolbar-select-host .mud-select-input,
+    .create-panel .mud-select .mud-input > input,
+    .create-panel .mud-select .mud-select-input {
+        font-size: 0.86rem;
+        color: #1e293b;
+        font-family: inherit;
+        font-weight: 400;
+    }
+
+    .toolbar-select-host .mud-input-label.mud-input-label-inputcontrol,
+    .create-panel .mud-select .mud-input-label.mud-input-label-inputcontrol {
+        font-size: 0.66rem;
+    }
+
+    .toolbar-select-host .mud-input-slot,
+    .create-panel .mud-select .mud-input-slot {
+        display: flex;
+        align-items: center;
+        min-height: 32px;
+        height: 32px;
+        background: #ffffff;
+        padding-top: 0;
+        padding-bottom: 0;
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .toolbar-select-host .mud-input-root,
+    .create-panel .mud-select .mud-input-root {
+        font-size: 0.86rem;
+    }
+
+    .toolbar-select-host .mud-input-outlined,
+    .create-panel .mud-select .mud-input-outlined {
+        --mud-palette-lines-inputs: #cbd5e1;
+    }
+
+    .toolbar-select-host .mud-input-outlined-border,
+    .create-panel .mud-select .mud-input-outlined-border {
+        border-color: #cbd5e1 !important;
+        border-width: 1px !important;
+    }
+
+    .toolbar-select-host .mud-input-root:hover .mud-input-outlined-border,
+    .create-panel .mud-select .mud-input-root:hover .mud-input-outlined-border {
+        border-color: #b8c4d4 !important;
+    }
+
+    .toolbar-select-host .mud-input-root.mud-input-focused .mud-input-outlined-border,
+    .create-panel .mud-select .mud-input-root.mud-input-focused .mud-input-outlined-border {
+        border-color: #b8c4d4 !important;
+    }
+
+    .toolbar-select-host .mud-input-root.mud-input-focused .mud-input-label,
+    .create-panel .mud-select .mud-input-root.mud-input-focused .mud-input-label {
+        color: #64748b;
+    }
+
+    .toolbar-select-host .mud-select-input,
+    .toolbar-select-host .mud-input-label-inputcontrol,
+    .create-panel .mud-select .mud-select-input,
+    .create-panel .mud-select .mud-input-label-inputcontrol {
+        line-height: 1.2;
+        display: flex;
+        align-items: center;
+    }
+
+    .toolbar-select-host .mud-input-adornment,
+    .create-panel .mud-select .mud-input-adornment {
+        margin-top: 0;
+        align-self: center;
+        height: 100%;
+        display: flex;
+        align-items: center;
+    }
+
+    .toolbar-select-host .mud-input-adornment-end,
+    .create-panel .mud-select .mud-input-adornment-end {
+        margin-inline-start: auto;
+        padding-left: 0;
+        flex: 0 0 auto;
+    }
+
+    .toolbar-select-host .mud-icon-root,
+    .create-panel .mud-select .mud-icon-root {
+        color: #64748b;
+        font-size: 0.92rem;
+    }
+
+    .toolbar-select-host .mud-select-input,
+    .create-panel .mud-select .mud-select-input {
+        padding-top: 0;
+        padding-bottom: 0;
+        min-height: 100%;
+        height: 100%;
+        flex: 1 1 auto;
+        align-self: stretch;
+        padding-right: 0;
+        box-sizing: border-box;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transform: translateY(1px);
+    }
+
+    .toolbar-action-button {
+        width: 31px;
+        height: 31px;
+        border: 1px solid #cfd8e3;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #5b6878;
+        transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+    }
+
+    .toolbar-action-button:hover {
+        background: #f8fafc;
+        border-color: #bcc7d5;
+        color: #1e293b;
+    }
+
+    .toolbar-action-button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(91, 79, 229, 0.12);
+    }
+
+    .toolbar-action-button.toolbar-action-primary {
+        background: #eef2f8;
+        border-color: #cfd8e3;
+        color: #4b5b70;
+    }
+
+    .toolbar-action-button.toolbar-action-primary .mud-icon-root {
+        color: #4b5b70;
+    }
+
+    .toolbar-action-button .mud-icon-root {
+        font-size: 0.92rem;
+    }
+
+    .toolbar-action-button.toolbar-action-primary:hover {
+        background: #e6ebf3;
+        border-color: #bcc7d5;
+        color: #334155;
+    }
+
+    .toolbar-action-button.toolbar-action-disabled {
+        background: #f2f5f9;
+        border-color: #e5e7eb;
+        color: #94a3b8;
     }
 
     .create-panel {
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
-        padding: 16px;
+        padding: 10px 12px;
+    }
+
+    .create-panel-header {
+        margin-bottom: 8px;
+    }
+
+    .create-panel-title {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: #1e293b;
+        line-height: 1.2;
+    }
+
+    .create-panel-close {
+        width: 28px;
+        height: 28px;
+        color: #64748b;
+    }
+
+    .create-panel-form-grid {
+        --mud-grid-spacing-xs: 8px;
+        --mud-grid-spacing-sm: 8px;
+        --mud-grid-spacing-md: 8px;
+    }
+
+    .create-panel .mud-alert {
+        padding-top: 6px;
+        padding-bottom: 6px;
+        font-size: 0.8rem;
+    }
+
+    .create-panel .mud-input-control {
+        margin-top: 0;
+    }
+
+    .create-panel .mud-input-label {
+        font-size: 0.64rem;
+        color: #64748b;
+    }
+
+    .create-panel .mud-input > input,
+    .create-panel .mud-select-input,
+    .create-panel .mud-input > textarea {
+        font-size: 0.84rem;
+        color: #1e293b;
+        font-family: inherit;
+        font-weight: 400;
+    }
+
+    .create-panel .mud-input-label.mud-input-label-inputcontrol {
+        font-size: 0.64rem;
+    }
+
+    .create-panel .mud-input-slot {
+        display: flex;
+        align-items: center;
+        position: relative;
+        min-height: 32px;
+        background: #ffffff;
+        padding-top: 0;
+        padding-bottom: 0;
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .create-panel .mud-input-outlined-border {
+        border-width: 1px !important;
+    }
+
+    .create-panel .mud-input-adornment {
+        margin-top: 0;
+        align-self: center;
+        height: 100%;
+        display: flex;
+        align-items: center;
+    }
+
+    .create-panel .mud-input-adornment .mud-icon-root,
+    .create-panel .mud-input-slot .mud-icon-root {
+        font-size: 0.9rem;
+        color: #64748b;
+    }
+
+    .create-panel .mud-input-control-helper-container .mud-input-helper-text,
+    .create-panel .mud-input-control-helper-container .mud-input-error {
+        color: transparent !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+        user-select: none;
+    }
+
+    .create-panel .mud-input > textarea {
+        min-height: 68px;
+    }
+
+    .create-panel .mud-select-input,
+    .create-panel .mud-input > input {
+        min-height: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        line-height: 1.2;
+        padding-top: 0;
+        padding-bottom: 0;
+        box-sizing: border-box;
+    }
+
+    .create-panel .mud-input-label-inputcontrol {
+        line-height: 1;
+    }
+
+    .toolbar-select-host .mud-select-icon,
+    .create-panel .mud-select-icon,
+    .toolbar-select-host .mud-input-adornment-end,
+    .create-panel .mud-input-adornment-end {
+        display: none !important;
+    }
+
+    .create-panel-actions {
+        margin-top: 10px;
+        gap: 6px;
+    }
+
+    .create-panel-actions .mud-button-root {
+        min-width: 0;
+        height: 30px;
+        padding: 0 10px;
+        font-size: 0.8rem;
     }
 
     .cockpit-board {
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 14px;
-        overflow-x: auto;
-    }
-
-    .pipeline-grid {
-        min-width: 1500px;
-    }
-
-    .pipeline-header,
-    .pipeline-row {
-        display: grid;
-        grid-template-columns: 270px repeat(8, 180px);
-        gap: 12px;
-        align-items: start;
-    }
-
-    .pipeline-header {
-        padding: 16px;
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: rgba(255,255,255,0.98);
-        border-bottom: 1px solid #eef2f7;
-    }
-
-    .pipeline-row {
-        padding: 14px 16px;
-        border-top: 1px solid #f1f5f9;
-    }
-
-    .pipeline-column-title {
-        font-size: 0.8rem;
-        font-weight: 700;
-        color: #334155;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-    }
-
-    .lane-cell {
-        min-height: 88px;
-        display: flex;
-        align-items: stretch;
-    }
-
-    .lane-placeholder {
-        width: 100%;
-        border: 1px dashed #edf2f7;
-        border-radius: 12px;
-        background: #fbfdff;
-    }
-
-    .stage-card {
-        width: 100%;
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
         padding: 10px 12px;
-        cursor: pointer;
-        transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
     }
 
-    .stage-card:hover {
-        transform: translateY(-1px);
-        border-color: #cbd5e1;
-        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+    .pipeline-card-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
     }
 
-    .requirement-card {
-        background: #fcfdff;
+    .requirement-pipeline-card {
+        background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+        border: 1px solid var(--pipeline-color, #cbd5e1);
+        border-left-width: 4px;
+        border-radius: 14px;
+        padding: 14px 16px;
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
     }
 
-    .card-date {
-        font-size: 0.72rem;
-        color: #94a3b8;
-        margin-bottom: 6px;
-    }
-
-    .card-title {
-        font-size: 0.88rem;
-        font-weight: 700;
-        color: #1e293b;
-        line-height: 1.25;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        min-height: 2.2em;
-    }
-
-    .card-status {
-        margin-top: 10px;
-        font-size: 0.74rem;
-        color: #64748b;
+    .pipeline-card-header {
         display: flex;
         align-items: center;
-        gap: 6px;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
     }
 
-    .status-dot {
-        width: 8px;
-        height: 8px;
+    .pipeline-card-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .pipeline-requirement-chip {
+        max-width: 100%;
+        border-color: var(--pipeline-color, #cbd5e1) !important;
+        color: #1e293b !important;
+        background: #ffffff !important;
+        font-weight: 700;
+    }
+
+    .pipeline-status-chip {
+        border-color: var(--pipeline-color, #cbd5e1) !important;
+        color: var(--pipeline-color, #64748b) !important;
+        background: transparent !important;
+        font-weight: 600;
+    }
+
+    .pipeline-card-date {
+        font-size: 0.75rem;
+        color: #64748b;
+        white-space: nowrap;
+    }
+
+    .pipeline-card-description {
+        margin: 0 0 14px 0;
+        font-size: 0.86rem;
+        line-height: 1.45;
+        color: #475569;
+    }
+
+    .pipeline-flow {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        overflow-x: auto;
+        padding-bottom: 4px;
+    }
+
+    .pipeline-step-shell {
+        display: flex;
+        align-items: center;
+        flex: 1 1 0;
+        min-width: 68px;
+    }
+
+    .pipeline-step-shell:last-child {
+        flex: 0 0 auto;
+    }
+
+    .pipeline-step {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+    }
+
+    .pipeline-step-button {
+        width: 42px;
+        height: 42px;
+        border: 2px solid var(--step-color, #cbd5e1);
         border-radius: 999px;
-        flex: none;
+        background: #ffffff;
+        color: var(--step-color, #64748b);
+        transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+    }
+
+    .pipeline-step-button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10);
+    }
+
+    .pipeline-step-button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+    }
+
+    .pipeline-step-button:disabled {
+        background: #f8fafc;
+        color: var(--step-color, #94a3b8);
+        opacity: 1;
+    }
+
+    .pipeline-step-button.is-running {
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+    }
+
+    .pipeline-step-button.is-waiting {
+        background: #fffdf4;
+    }
+
+    .pipeline-step-button.is-complete {
+        background: #f3fbf7;
+    }
+
+    .pipeline-step-button.is-error {
+        background: #fff5f5;
+    }
+
+    .pipeline-step-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--step-color, #cbd5e1);
+    }
+
+    .pipeline-step-connector {
+        height: 2px;
+        flex: 1 1 auto;
+        min-width: 28px;
+        margin: 0 10px;
+        background: linear-gradient(90deg, var(--line-color, #dbe4ee) 0%, var(--line-color, #dbe4ee) 100%);
     }
 
     .board-empty {
-        padding: 28px 20px 34px 20px;
+        min-height: 84px;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         text-align: center;
         color: #64748b;
     }
@@ -168,14 +523,15 @@
 
 <div class="cockpit-shell">
     <MudPaper Class="cockpit-toolbar" Elevation="0">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
-            <div style="flex:1; min-width:320px;">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="cockpit-toolbar-row">
+            <div class="toolbar-select-host">
                 <MudSelect T="Guid?"
                            Value="_selectedSolutionId"
                            ValueChanged="OnSolutionSelectionChangedAsync"
                            Label="Solution"
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
+                           Dense="true"
                            FullWidth="true">
                     @foreach (var solution in _solutions)
                     {
@@ -184,34 +540,40 @@
                 </MudSelect>
             </div>
 
-            <MudButton Variant="Variant.Filled"
-                       Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Add"
-                       OnClick="OpenCreateSolutionPanel">
-                Create solution
-            </MudButton>
+            <MudIconButton Icon="@Icons.Material.Filled.Add"
+                           Size="Size.Small"
+                           Class="toolbar-action-button toolbar-action-primary"
+                           OnClick="OpenCreateSolutionPanel"
+                           aria-label="Create Solution" />
 
             <MudMenu Dense="true"
-                     Disabled="SelectedSolutionState.Current is null || _documentsLoading"
-                     Color="Color.Default"
-                     Variant="Variant.Outlined"
-                     StartIcon="@Icons.Material.Filled.Description"
-                     Label="Documentation">
-                @if (_documentsLoading)
-                {
-                    <MudMenuItem Disabled="true">Loading documents...</MudMenuItem>
-                }
-                else if (_documents.Count == 0)
-                {
-                    <MudMenuItem Disabled="true">No SDLC documents found</MudMenuItem>
-                }
-                else
-                {
-                    @foreach (var document in _documents)
+                     Disabled="SelectedSolutionState.Current is null || _documentsLoading">
+                <ActivatorContent>
+                    <MudTooltip Text="Documentation">
+                        <MudIconButton Icon="@Icons.Material.Filled.Description"
+                                       Size="Size.Small"
+                                       Class="@($"toolbar-action-button{(SelectedSolutionState.Current is null || _documentsLoading ? " toolbar-action-disabled" : string.Empty)}")"
+                                       Disabled="SelectedSolutionState.Current is null || _documentsLoading"
+                                       aria-label="Documentation" />
+                    </MudTooltip>
+                </ActivatorContent>
+                <ChildContent>
+                    @if (_documentsLoading)
                     {
-                        <MudMenuItem OnClick="() => OpenDocumentAsync(document)">@document.Name</MudMenuItem>
+                        <MudMenuItem Disabled="true">Loading documents...</MudMenuItem>
                     }
-                }
+                    else if (_documents.Count == 0)
+                    {
+                        <MudMenuItem Disabled="true">No SDLC documents found</MudMenuItem>
+                    }
+                    else
+                    {
+                        @foreach (var document in _documents)
+                        {
+                            <MudMenuItem OnClick="() => OpenDocumentAsync(document)">@document.Name</MudMenuItem>
+                        }
+                    }
+                </ChildContent>
             </MudMenu>
         </MudStack>
     </MudPaper>
@@ -219,9 +581,12 @@
     @if (_createSolutionPanelOpen)
     {
         <MudPaper Class="create-panel" Elevation="0">
-            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
-                <MudText Typo="Typo.h6">Create / setup solution</MudText>
-                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseCreateSolutionPanel" />
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="create-panel-header">
+                <MudText Class="create-panel-title">Create / setup solution</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                               Size="Size.Small"
+                               Class="create-panel-close"
+                               OnClick="CloseCreateSolutionPanel" />
             </MudStack>
 
             @if (!string.IsNullOrWhiteSpace(_createSolutionMessage))
@@ -232,27 +597,27 @@
             }
 
             <MudForm @ref="_createSolutionForm">
-                <MudGrid>
+                <MudGrid Class="create-panel-form-grid" Spacing="1">
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Solution name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." />
+                        <MudTextField T="string" Label="Solution name" @bind-Value="_solutionRequest.Name" Required="true" RequiredError="Name is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Profile" Value="@_solutionRequest.ProfileCode" ReadOnly="true" Disabled="true" />
+                        <MudTextField T="string" Label="Profile" Value="@_solutionRequest.ProfileCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" />
+                        <MudTextField T="string" Label="Description" @bind-Value="_solutionRequest.Description" Lines="3" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="Repository folder" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." />
+                        <MudTextField T="string" Label="Repository folder" @bind-Value="_solutionRequest.RepositoryPath" Required="true" RequiredError="Repository path is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Label="Main solution file" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." />
+                        <MudTextField T="string" Label="Main solution file" @bind-Value="_solutionRequest.MainSolutionFile" Required="true" RequiredError="Main solution file is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudTextField T="string" Label="Target" Value="@_solutionRequest.TargetCode" ReadOnly="true" Disabled="true" />
+                        <MudTextField T="string" Label="Target" Value="@_solutionRequest.TargetCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                     <MudItem xs="12" md="3">
-                        <MudSelect T="Guid?" Label="Overlay source" Value="_solutionRequest.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Clearable="true">
+                        <MudSelect T="Guid?" Label="Overlay source" Value="_solutionRequest.OverlayTargetId" ValueChanged="OnOverlayTargetChangedAsync" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
                             <MudSelectItem T="Guid?" Value="@((Guid?)null)">(none)</MudSelectItem>
                             @foreach (var overlayOption in OverlayOptions)
                             {
@@ -261,14 +626,14 @@
                         </MudSelect>
                     </MudItem>
                     <MudItem xs="12">
-                        <MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="_solutionRequest.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." />
+                        <MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="_solutionRequest.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
                     </MudItem>
                 </MudGrid>
             </MudForm>
 
-            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="mt-4">
-                <MudButton Variant="Variant.Text" OnClick="CloseCreateSolutionPanel">Cancel</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_savingSolution" OnClick="CreateSolutionAsync">
+            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="create-panel-actions">
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="CloseCreateSolutionPanel">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_savingSolution" OnClick="CreateSolutionAsync">
                     Create solution
                 </MudButton>
             </MudStack>
@@ -301,54 +666,76 @@
     else
     {
         <MudPaper Class="cockpit-board" Elevation="0">
-            <div class="pipeline-grid">
-                <div class="pipeline-header">
-                    @foreach (var lane in _lanes)
+            @if (_requirements.Count == 0)
+            {
+                <div class="board-empty">
+                    No requirements exist yet for the selected solution.
+                </div>
+            }
+            else
+            {
+                <div class="pipeline-card-list">
+                    @foreach (var requirement in _requirements)
                     {
-                        <div>
-                            <div class="pipeline-column-title">@lane.Title</div>
+                        var pipeline = BuildPipeline(requirement);
+
+                        <div class="requirement-pipeline-card" style="@($"--pipeline-color:{pipeline.RequirementState.Color};")">
+                            <div class="pipeline-card-header">
+                                <div class="pipeline-card-meta">
+                                    <MudChip T="string"
+                                             Class="pipeline-requirement-chip"
+                                             Variant="Variant.Outlined"
+                                             Size="Size.Small">
+                                        @pipeline.Requirement.Title
+                                    </MudChip>
+                                    <MudChip T="string"
+                                             Class="pipeline-status-chip"
+                                             Variant="Variant.Outlined"
+                                             Size="Size.Small">
+                                        @pipeline.RequirementState.Label
+                                    </MudChip>
+                                </div>
+                                <div class="pipeline-card-date">
+                                    Created @pipeline.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd")
+                                </div>
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(pipeline.Requirement.Description))
+                            {
+                                <p class="pipeline-card-description">@pipeline.Requirement.Description</p>
+                            }
+
+                            <div class="pipeline-flow">
+                                @for (var index = 0; index < pipeline.Steps.Count; index++)
+                                {
+                                    var step = pipeline.Steps[index];
+
+                                    <div class="pipeline-step-shell">
+                                        <div class="pipeline-step">
+                                            <MudTooltip Text="@BuildPipelineTooltip(step)">
+                                                <MudIconButton Icon="@step.Icon"
+                                                               Size="Size.Medium"
+                                                               Disabled="@step.Disabled"
+                                                               Class="@($"pipeline-step-button {step.State.CssClass}")"
+                                                               Style="@($"--step-color:{step.State.Color};")"
+                                                               aria-label="@step.LaneTitle"
+                                                               @onclick="() => OpenCard(step.Card)" />
+                                            </MudTooltip>
+                                            <span class="pipeline-step-dot" style="@($"--step-color:{step.State.Color};")"></span>
+                                        </div>
+
+                                        @if (index < pipeline.Steps.Count - 1)
+                                        {
+                                            var connectorColor = GetConnectorColor(step.State, pipeline.Steps[index + 1].State);
+                                            <div class="pipeline-step-connector" style="@($"--line-color:{connectorColor};")"></div>
+                                        }
+                                    </div>
+                                }
+                            </div>
                         </div>
                     }
                 </div>
-
-                @if (_requirements.Count == 0)
-                {
-                    <div class="board-empty">
-                        No requirements exist yet for the selected solution.
-                    </div>
-                }
-                else
-                {
-                    @foreach (var requirement in _requirements)
-                    {
-                        var row = BuildRow(requirement);
-
-                        <div class="pipeline-row">
-                            @foreach (var lane in _lanes)
-                            {
-                                <div class="lane-cell">
-                                    @if (row.TryGetValue(lane.Key, out var card))
-                                    {
-                                        <div class="stage-card @(lane.Key == LaneKeys.Requirement ? "requirement-card" : string.Empty)"
-                                             @onclick="() => OpenCard(card)">
-                                            <div class="card-date">@card.DisplayDate</div>
-                                            <div class="card-title">@card.Title</div>
-                                            <div class="card-status">
-                                                <span class="status-dot" style="@($"background:{card.StatusColor};")"></span>
-                                                <span>@card.StatusLabel</span>
-                                            </div>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <div class="lane-placeholder"></div>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    }
-                }
-            </div>
+            }
         </MudPaper>
     }
 </div>
@@ -393,7 +780,7 @@
                 <MudChip T="string"
                          Variant="Variant.Outlined"
                          Size="Size.Small"
-                         Style="@($"border-color:{_activeCard.StatusColor}; color:{_activeCard.StatusColor};")">
+                         Style="@($"border-color:{_activeCard.State.Color}; color:{_activeCard.State.Color};")">
                     @_activeCard.StatusLabel
                 </MudChip>
                 <MudText Typo="Typo.body2" Class="mt-3">@_activeCard.Description</MudText>
@@ -462,17 +849,17 @@
 </MudDrawer>
 
 @code {
-    private static readonly IReadOnlyList<LaneDefinition> _lanes =
+    private static readonly IReadOnlyList<PipelineDefinition> _pipelineDefinitions =
     [
-        new(LaneKeys.Requirement, "Requirement"),
-        new(LaneKeys.Analysis, "Analysis"),
-        new(LaneKeys.Design, "Design"),
-        new(LaneKeys.Planning, "Planning"),
-        new(LaneKeys.Implementation, "Implementation"),
-        new(LaneKeys.Test, "Test"),
-        new(LaneKeys.Review, "Review"),
-        new(LaneKeys.Deliver, "Deliver"),
-        new(LaneKeys.Documentation, "Documentation")
+        new(LaneKeys.Requirement, "Requirement", Icons.Material.Filled.Flag),
+        new(LaneKeys.Analysis, "Analysis", Icons.Material.Filled.Search),
+        new(LaneKeys.Design, "Design", Icons.Material.Filled.Draw),
+        new(LaneKeys.Planning, "Planning", Icons.Material.Filled.AccountTree),
+        new(LaneKeys.Implementation, "Implementation", Icons.Material.Filled.Code),
+        new(LaneKeys.Test, "Test", Icons.Material.Filled.FactCheck),
+        new(LaneKeys.Review, "Review", Icons.Material.Filled.RateReview),
+        new(LaneKeys.Deliver, "Deliver", Icons.Material.Filled.LocalShipping),
+        new(LaneKeys.Documentation, "Documentation", Icons.Material.Filled.Description)
     ];
 
     private const string DefaultProfileCode = "dotnet-web-enterprise";
@@ -616,21 +1003,23 @@
         }
     }
 
-    private Dictionary<string, RequirementStageCard> BuildRow(RequirementRow requirement)
+    private RequirementPipelineViewModel BuildPipeline(RequirementRow requirement)
     {
-        var row = new Dictionary<string, RequirementStageCard>(StringComparer.OrdinalIgnoreCase)
+        var requirementCard = new RequirementStageCard(
+            LaneKeys.Requirement,
+            "Requirement",
+            requirement.Title,
+            requirement.Description,
+            requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
+            HumanizeRequirementStatus(requirement.Status),
+            GetRequirementVisualState(requirement.Status),
+            requirement,
+            null,
+            GetLatestRun(requirement.Id, null));
+
+        var cards = new Dictionary<string, RequirementStageCard>(StringComparer.OrdinalIgnoreCase)
         {
-            [LaneKeys.Requirement] = new RequirementStageCard(
-                LaneKeys.Requirement,
-                "Requirement",
-                requirement.Title,
-                requirement.Description,
-                requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
-                HumanizeRequirementStatus(requirement.Status),
-                GetStatusColor(requirement.Status),
-                requirement,
-                null,
-                GetLatestRun(requirement.Id, null))
+            [LaneKeys.Requirement] = requirementCard
         };
 
         var requirementRunGroups = _runs
@@ -638,9 +1027,9 @@
             .GroupBy(x => x.WorkflowCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(x => x.StartedUtc).First(), StringComparer.OrdinalIgnoreCase);
 
-        AddRequirementWorkflowCard(row, LaneKeys.Analysis, requirementRunGroups, requirement, "analyze-request", "Analysis");
-        AddRequirementWorkflowCard(row, LaneKeys.Design, requirementRunGroups, requirement, "design-solution-change", "Design");
-        AddRequirementWorkflowCard(row, LaneKeys.Planning, requirementRunGroups, requirement, "plan-implementation", "Planning");
+        AddRequirementWorkflowCard(cards, LaneKeys.Analysis, requirementRunGroups, requirement, "analyze-request", "Analysis");
+        AddRequirementWorkflowCard(cards, LaneKeys.Design, requirementRunGroups, requirement, "design-solution-change", "Design");
+        AddRequirementWorkflowCard(cards, LaneKeys.Planning, requirementRunGroups, requirement, "plan-implementation", "Planning");
 
         var backlogItem = _backlog
             .Where(x => x.RequirementId == requirement.Id)
@@ -653,28 +1042,28 @@
         {
             var implementationRun = GetLatestRun(requirement.Id, backlogItem.Id);
 
-            row[LaneKeys.Implementation] = new RequirementStageCard(
+            cards[LaneKeys.Implementation] = new RequirementStageCard(
                 LaneKeys.Implementation,
                 "Implementation",
                 backlogItem.Title,
                 backlogItem.Description,
                 backlogItem.CreatedUtc.ToLocalTime().ToString("dd MMM"),
                 HumanizeBacklogStatus(backlogItem.Status),
-                GetStatusColor(backlogItem.Status),
+                GetBacklogVisualState(backlogItem.Status),
                 requirement,
                 backlogItem,
                 implementationRun);
 
             if (string.Equals(backlogItem.Status, "AwaitingValidation", StringComparison.OrdinalIgnoreCase))
             {
-                row[LaneKeys.Test] = new RequirementStageCard(
+                cards[LaneKeys.Test] = new RequirementStageCard(
                     LaneKeys.Test,
                     "Test",
                     backlogItem.Title,
                     "Implementation is waiting for validation before the next slice can continue.",
                     (backlogItem.UpdatedUtc ?? backlogItem.CreatedUtc).ToLocalTime().ToString("dd MMM"),
                     "Awaiting validation",
-                    GetStatusColor("awaiting-validation"),
+                    GetBacklogVisualState(backlogItem.Status),
                     requirement,
                     backlogItem,
                     implementationRun);
@@ -683,20 +1072,24 @@
 
         if (HasDocumentation(requirement))
         {
-            row[LaneKeys.Documentation] = new RequirementStageCard(
+            cards[LaneKeys.Documentation] = new RequirementStageCard(
                 LaneKeys.Documentation,
                 "Documentation",
                 "SDLC documents",
                 "Solution SDLC documentation workspace is available for this requirement context.",
                 requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
                 _documents.Count == 0 ? "Empty" : "Available",
-                _documents.Count == 0 ? "#94a3b8" : "#0f766e",
+                _documents.Count == 0 ? VisualStatePalette.Default : VisualStatePalette.Success,
                 requirement,
                 null,
                 null);
         }
 
-        return row;
+        var steps = _pipelineDefinitions
+            .Select(definition => BuildPipelineStep(definition, cards, requirement, backlogItem))
+            .ToList();
+
+        return new RequirementPipelineViewModel(requirement, requirementCard.State, steps);
     }
 
     private void AddRequirementWorkflowCard(
@@ -719,11 +1112,57 @@
             requirement.Description,
             run.StartedUtc.ToLocalTime().ToString("dd MMM"),
             HumanizeWorkflowStatus(run.Status),
-            GetStatusColor(run.Status.ToString()),
+            GetWorkflowVisualState(run.Status),
             requirement,
             null,
             run);
     }
+
+    private RequirementPipelineStep BuildPipelineStep(
+        PipelineDefinition definition,
+        IReadOnlyDictionary<string, RequirementStageCard> cards,
+        RequirementRow requirement,
+        BacklogRow? backlogItem)
+    {
+        if (cards.TryGetValue(definition.Key, out var existing))
+        {
+            return new RequirementPipelineStep(definition.Key, definition.Title, definition.Icon, existing, false);
+        }
+
+        var placeholder = CreatePlaceholderCard(definition, requirement, backlogItem);
+        return new RequirementPipelineStep(definition.Key, definition.Title, definition.Icon, placeholder, true);
+    }
+
+    private static RequirementStageCard CreatePlaceholderCard(PipelineDefinition definition, RequirementRow requirement, BacklogRow? backlogItem)
+        => new(
+            definition.Key,
+            definition.Title,
+            requirement.Title,
+            BuildPlaceholderDescription(definition.Key),
+            requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
+            "Unavailable",
+            VisualStatePalette.Default,
+            requirement,
+            definition.Key == LaneKeys.Implementation || definition.Key == LaneKeys.Test ? backlogItem : null,
+            null);
+
+    private static string BuildPlaceholderDescription(string laneKey)
+        => laneKey switch
+        {
+            LaneKeys.Requirement => "Requirement intake is the starting point for the workflow pipeline.",
+            LaneKeys.Analysis => "Analysis has not started for this requirement.",
+            LaneKeys.Design => "Design is not available yet for this requirement.",
+            LaneKeys.Planning => "Planning is not available yet for this requirement.",
+            LaneKeys.Implementation => "Implementation has not started for the active backlog item.",
+            LaneKeys.Test => "Validation is not waiting on this requirement right now.",
+            LaneKeys.Review => "Review is not available in the current workflow slice.",
+            LaneKeys.Deliver => "Delivery is not available in the current workflow slice.",
+            LaneKeys.Documentation => "Solution documentation is not available for this requirement yet.",
+            _ => "This workflow step is not available."
+        };
+
+    private static string BuildPipelineTooltip(RequirementPipelineStep step)
+        => $"{step.LaneTitle} - {step.Card.StatusLabel}";
 
     private WorkflowRunRow? GetLatestRun(Guid requirementId, Guid? backlogItemId)
         => _runs
@@ -974,17 +1413,45 @@
             _ => status
         };
 
-    private static string GetStatusColor(string status)
+    private static VisualState GetRequirementVisualState(string status)
     {
         var normalized = status.Replace("-", " ").Trim().ToLowerInvariant();
 
-        if (normalized.Contains("error") || normalized.Contains("failed")) return "#dc2626";
-        if (normalized.Contains("awaiting")) return "#ea580c";
-        if (normalized.Contains("running") || normalized.Contains("under")) return "#2563eb";
-        if (normalized.Contains("done") || normalized.Contains("validated") || normalized.Contains("planned") || normalized.Contains("designed") || normalized.Contains("analyzed") || normalized.Contains("available")) return "#059669";
-        if (normalized.Contains("canceled")) return "#475569";
+        if (normalized.Contains("failed") || normalized.Contains("canceled")) return VisualStatePalette.Error;
+        if (normalized.Contains("awaiting")) return VisualStatePalette.Waiting;
+        if (normalized.Contains("under")) return VisualStatePalette.Running;
+        if (normalized.Contains("planned") || normalized.Contains("designed") || normalized.Contains("analyzed")) return VisualStatePalette.Success;
 
-        return "#94a3b8";
+        return VisualStatePalette.Default;
+    }
+
+    private static VisualState GetBacklogVisualState(string status)
+        => status switch
+        {
+            "AwaitingValidation" => VisualStatePalette.Waiting,
+            "Validated" => VisualStatePalette.Success,
+            "ImplementationError" => VisualStatePalette.Error,
+            "Canceled" => VisualStatePalette.Error,
+            _ => VisualStatePalette.Default
+        };
+
+    private static VisualState GetWorkflowVisualState(int status)
+        => status switch
+        {
+            2 => VisualStatePalette.Running,
+            3 => VisualStatePalette.Success,
+            4 => VisualStatePalette.Error,
+            _ => VisualStatePalette.Default
+        };
+
+    private static string GetConnectorColor(VisualState current, VisualState next)
+    {
+        if (next != VisualStatePalette.Default)
+        {
+            return next.Color;
+        }
+
+        return current != VisualStatePalette.Default ? current.Color : VisualStatePalette.Default.Color;
     }
 
     private Task OnOverlayTargetChangedAsync(Guid? targetId)
@@ -1024,7 +1491,7 @@
         public const string Documentation = "documentation";
     }
 
-    private sealed record LaneDefinition(string Key, string Title);
+    private sealed record PipelineDefinition(string Key, string Title, string Icon);
 
     private sealed record RequirementStageCard(
         string LaneKey,
@@ -1033,10 +1500,36 @@
         string Description,
         string DisplayDate,
         string StatusLabel,
-        string StatusColor,
+        VisualState State,
         RequirementRow Requirement,
         BacklogRow? BacklogItem,
         WorkflowRunRow? WorkflowRun);
+
+    private sealed record RequirementPipelineViewModel(
+        RequirementRow Requirement,
+        VisualState RequirementState,
+        IReadOnlyList<RequirementPipelineStep> Steps);
+
+    private sealed record RequirementPipelineStep(
+        string LaneKey,
+        string LaneTitle,
+        string Icon,
+        RequirementStageCard Card,
+        bool Disabled)
+    {
+        public VisualState State => Card.State;
+    }
+
+    private sealed record VisualState(string Label, string Color, string CssClass);
+
+    private static class VisualStatePalette
+    {
+        public static readonly VisualState Default = new("Default", "#94a3b8", "is-default");
+        public static readonly VisualState Running = new("Running", "#2563eb", "is-running");
+        public static readonly VisualState Success = new("Completed", "#16a34a", "is-complete");
+        public static readonly VisualState Waiting = new("Waiting", "#d4a017", "is-waiting");
+        public static readonly VisualState Error = new("Error", "#dc2626", "is-error");
+    }
 
     private sealed class SetupSolutionModel
     {
