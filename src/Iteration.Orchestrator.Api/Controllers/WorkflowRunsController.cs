@@ -65,10 +65,21 @@ public sealed class WorkflowRunsController : ControllerBase
         [FromServices] StartAnalyzeSolutionRunHandler handler,
         CancellationToken ct)
     {
-        var id = await handler.HandleAsync(
-            new StartAnalyzeSolutionRunCommand(request.RequirementId, request.RequestedBy), ct);
+        try
+        {
+            var id = await handler.HandleAsync(
+                new StartAnalyzeSolutionRunCommand(request.RequirementId, request.RequestedBy), ct);
 
-        return Ok(new { id });
+            return Ok(new { id });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = ex.Message });
+        }
     }
 
     [HttpPost("design-solution-change")]

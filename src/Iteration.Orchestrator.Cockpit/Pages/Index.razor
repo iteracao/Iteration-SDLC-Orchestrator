@@ -1146,7 +1146,15 @@
         {
             var client = HttpClientFactory.CreateClient("api");
             var response = await client.PostAsJsonAsync(endpoint, new { RequirementId = requirementId, RequestedBy = "rui" });
-            response.EnsureSuccessStatusCode();
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = await ReadApiErrorAsync(response);
+                StateHasChanged();
+                return;
+            }
+
+            _loadError = null;
             await LoadCockpitAsync();
         }
         finally
