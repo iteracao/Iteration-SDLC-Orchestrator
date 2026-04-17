@@ -18,19 +18,22 @@ public sealed class StartImplementSolutionChangeRunHandler
     private readonly ISolutionBridge _bridge;
     private readonly ISolutionImplementationAgent _agent;
     private readonly IArtifactStore _artifacts;
+    private readonly IWorkflowExecutionQueue _queue;
 
     public StartImplementSolutionChangeRunHandler(
         IAppDbContext db,
         IConfigCatalog config,
         ISolutionBridge bridge,
         ISolutionImplementationAgent agent,
-        IArtifactStore artifacts)
+        IArtifactStore artifacts,
+        IWorkflowExecutionQueue queue)
     {
         _db = db;
         _config = config;
         _bridge = bridge;
         _agent = agent;
         _artifacts = artifacts;
+        _queue = queue;
     }
 
     public async Task<Guid> HandleAsync(StartImplementSolutionChangeRunCommand command, CancellationToken ct)
@@ -71,6 +74,45 @@ public sealed class StartImplementSolutionChangeRunHandler
             throw new InvalidOperationException("A previous backlog item must be validated before this implementation can start.");
         }
 
+        var workflow = await _config.GetWorkflowAsync("implement-solution-change", ct);
+        var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.Id, workflow.Code, command.RequestedBy);
+        requirement.MarkImplementing(run.Id);
+
+        _db.WorkflowRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
+        await _queue.EnqueueAsync(run.Id, ct);
+        return run.Id;
+    }
+
+    public async Task ExecuteAsync(Guid workflowRunId, CancellationToken ct)
+    {
+        var run = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == workflowRunId, ct)
+            ?? throw new InvalidOperationException("Workflow run not found.");
+
+        if (run.RequirementId is null || run.BacklogItemId is null)
+        {
+            throw new InvalidOperationException("Workflow run is not linked to the required entities.");
+        }
+
+        var backlogItem = await _db.BacklogItems.FindAsync([run.BacklogItemId.Value], ct)
+            ?? throw new InvalidOperationException("Backlog item not found.");
+
+        if (!backlogItem.RequirementId.HasValue)
+        {
+            throw new InvalidOperationException("Backlog item is not linked to a requirement.");
+        }
+
+        if (!backlogItem.PlanWorkflowRunId.HasValue)
+        {
+            throw new InvalidOperationException("Backlog item is not linked to a planning workflow run.");
+        }
+
+        var requirement = await _db.Requirements.FindAsync([backlogItem.RequirementId.Value], ct)
+            ?? throw new InvalidOperationException("Requirement not found.");
+
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
+
         var planReport = await _db.PlanReports.FirstOrDefaultAsync(x => x.WorkflowRunId == backlogItem.PlanWorkflowRunId.Value, ct)
             ?? throw new InvalidOperationException("Plan report not found for backlog item.");
 
@@ -78,11 +120,7 @@ public sealed class StartImplementSolutionChangeRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.Id, workflow.Code, command.RequestedBy);
         run.Start("implementation");
-        requirement.MarkImplementing(run.Id);
-
-        _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
 
         var snapshot = await _bridge.GetSolutionSnapshotAsync(solution, ct);
@@ -169,7 +207,6 @@ public sealed class StartImplementSolutionChangeRunHandler
 
             await _artifacts.SaveTextAsync(run.Id, "implementation-request.input.json", inputJson, ct);
             await _artifacts.SaveTextAsync(run.Id, "implementation-result.json", result.RawJson, ct);
-            return run.Id;
         }
         catch (Exception ex)
         {
@@ -177,7 +214,7 @@ public sealed class StartImplementSolutionChangeRunHandler
             run.Fail("implementation", ex.Message);
             backlogItem.MarkImplementationError();
             requirement.MarkImplementationFailed(run.Id);
-            await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
     }

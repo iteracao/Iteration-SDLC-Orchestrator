@@ -173,6 +173,9 @@ else
     private bool _saving;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
+    private bool _refreshInProgress;
+    private CancellationTokenSource? _pollingCts;
+    private Task? _pollingTask;
     private string? _loadError;
     private string? _formMessage;
     private Severity _formSeverity = Severity.Info;
@@ -191,6 +194,12 @@ else
 
     private async Task LoadAsync()
     {
+        if (_refreshInProgress)
+        {
+            return;
+        }
+
+        _refreshInProgress = true;
         _requirements.Clear();
         _backlog.Clear();
         _runs.Clear();
@@ -230,8 +239,81 @@ else
         finally
         {
             _loading = false;
+            _refreshInProgress = false;
+            EnsurePollingState();
             StateHasChanged();
         }
+    }
+
+
+    private void EnsurePollingState()
+    {
+        if (_runs.Any(x => x.Status is 1 or 2))
+        {
+            StartPolling();
+            return;
+        }
+
+        StopPolling();
+    }
+
+    private void StartPolling()
+    {
+        if (_pollingTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        _pollingCts?.Cancel();
+        _pollingCts?.Dispose();
+        _pollingCts = new CancellationTokenSource();
+        _pollingTask = MonitorAsync(_pollingCts.Token);
+    }
+
+    private void StopPolling()
+    {
+        _pollingCts?.Cancel();
+        _pollingCts?.Dispose();
+        _pollingCts = null;
+        _pollingTask = null;
+    }
+
+    private async Task MonitorAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (_refreshInProgress || SelectedSolutionState.CurrentTarget is null)
+                {
+                    continue;
+                }
+
+                await InvokeAsync(LoadAsync);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+            if (!string.IsNullOrWhiteSpace(error?.Message))
+            {
+                return error.Message;
+            }
+        }
+        catch
+        {
+        }
+
+        return $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
     }
 
     private async Task CreateRequirementAsync()
@@ -443,6 +525,7 @@ else
 
     public void Dispose()
     {
+        StopPolling();
         SelectedSolutionState.Changed -= HandleSolutionChanged;
     }
 
@@ -470,6 +553,11 @@ else
         public int PlanningOrder { get; set; }
         public string Title { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
+    }
+
+    private sealed class ApiErrorResponse
+    {
+        public string? Message { get; set; }
     }
 
     private sealed class WorkflowRunRow

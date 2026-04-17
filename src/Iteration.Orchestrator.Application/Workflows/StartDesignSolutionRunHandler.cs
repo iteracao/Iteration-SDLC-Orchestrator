@@ -3,7 +3,6 @@ using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Decisions;
 using Iteration.Orchestrator.Domain.Questions;
-using Iteration.Orchestrator.Domain.Requirements;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 using Microsoft.EntityFrameworkCore;
@@ -17,19 +16,22 @@ public sealed class StartDesignSolutionRunHandler
     private readonly ISolutionBridge _bridge;
     private readonly ISolutionDesignerAgent _agent;
     private readonly IArtifactStore _artifacts;
+    private readonly IWorkflowExecutionQueue _queue;
 
     public StartDesignSolutionRunHandler(
         IAppDbContext db,
         IConfigCatalog config,
         ISolutionBridge bridge,
         ISolutionDesignerAgent agent,
-        IArtifactStore artifacts)
+        IArtifactStore artifacts,
+        IWorkflowExecutionQueue queue)
     {
         _db = db;
         _config = config;
         _bridge = bridge;
         _agent = agent;
         _artifacts = artifacts;
+        _queue = queue;
     }
 
     public async Task<Guid> HandleAsync(StartDesignSolutionRunCommand command, CancellationToken ct)
@@ -41,6 +43,33 @@ public sealed class StartDesignSolutionRunHandler
         {
             throw new InvalidOperationException("Requirement must be in 'analyzed' status before design can start.");
         }
+
+        var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
+
+        var workflow = await _config.GetWorkflowAsync("design-solution-change", ct);
+
+        var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
+        requirement.MarkUnderDesign(run.Id);
+
+        _db.WorkflowRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
+        await _queue.EnqueueAsync(run.Id, ct);
+        return run.Id;
+    }
+
+    public async Task ExecuteAsync(Guid workflowRunId, CancellationToken ct)
+    {
+        var run = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == workflowRunId, ct)
+            ?? throw new InvalidOperationException("Workflow run not found.");
+
+        if (run.RequirementId is null)
+        {
+            throw new InvalidOperationException("Workflow run is not linked to a requirement.");
+        }
+
+        var requirement = await _db.Requirements.FindAsync([run.RequirementId.Value], ct)
+            ?? throw new InvalidOperationException("Requirement not found.");
 
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
@@ -59,11 +88,7 @@ public sealed class StartDesignSolutionRunHandler
         var profile = await _config.GetProfileAsync(solution.ProfileCode, ct);
         var agentDef = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
-        var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
         run.Start("solution-design");
-        requirement.MarkUnderDesign(run.Id);
-
-        _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
 
         var snapshot = await _bridge.GetSolutionSnapshotAsync(solution, ct);
@@ -140,14 +165,13 @@ public sealed class StartDesignSolutionRunHandler
 
             await _artifacts.SaveTextAsync(run.Id, "design-request.input.json", inputJson, ct);
             await _artifacts.SaveTextAsync(run.Id, "design-report.json", result.RawJson, ct);
-            return run.Id;
         }
         catch (Exception ex)
         {
             taskRun.Fail(ex.Message);
             run.Fail("solution-design", ex.Message);
             requirement.MarkDesignFailed(run.Id);
-            await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
     }
@@ -170,13 +194,9 @@ public sealed class StartDesignSolutionRunHandler
         };
 
         var docs = new List<TextDocumentInput>();
-
         foreach (var relativePath in relativePaths)
         {
-            var fullPath = Path.Combine(
-                solution.RepositoryPath,
-                relativePath.Replace('/', Path.DirectorySeparatorChar));
-
+            var fullPath = Path.Combine(solution.RepositoryPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(fullPath))
             {
                 continue;

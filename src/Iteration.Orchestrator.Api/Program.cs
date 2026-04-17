@@ -11,6 +11,7 @@ using Iteration.Orchestrator.Infrastructure.Config;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Iteration.Orchestrator.Infrastructure.AI;
 using Iteration.Orchestrator.Infrastructure.Solutions;
+using Iteration.Orchestrator.Api.Background;
 using Iteration.Orchestrator.SolutionBridge.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,6 +38,10 @@ builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 builder.Services.AddScoped<StartDesignSolutionRunHandler>();
 builder.Services.AddScoped<StartPlanImplementationRunHandler>();
 builder.Services.AddScoped<StartImplementSolutionChangeRunHandler>();
+builder.Services.AddScoped<IWorkflowRunExecutor, WorkflowRunExecutor>();
+
+builder.Services.AddSingleton<IWorkflowExecutionQueue, InMemoryWorkflowExecutionQueue>();
+builder.Services.AddHostedService<WorkflowExecutionBackgroundService>();
 
 builder.Services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 

@@ -696,6 +696,9 @@
     private bool _savingSolution;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
+    private bool _isRefreshingWorkflowState;
+    private CancellationTokenSource? _workflowPollingCts;
+    private Task? _workflowPollingTask;
     private string? _loadError;
     private string? _createSolutionMessage;
     private Severity _createSolutionMessageSeverity = Severity.Info;
@@ -766,6 +769,12 @@
 
     private async Task LoadCockpitAsync()
     {
+        if (_isRefreshingWorkflowState)
+        {
+            return;
+        }
+
+        _isRefreshingWorkflowState = true;
         _requirements.Clear();
         _backlog.Clear();
         _runs.Clear();
@@ -800,6 +809,8 @@
         finally
         {
             _loading = false;
+            _isRefreshingWorkflowState = false;
+            EnsureWorkflowPollingState();
             StateHasChanged();
         }
     }
@@ -1170,12 +1181,80 @@
         {
             var client = HttpClientFactory.CreateClient("api");
             var response = await client.PostAsJsonAsync("api/workflow-runs/implement-solution-change", new { BacklogItemId = backlogItemId, RequestedBy = "rui" });
-            response.EnsureSuccessStatusCode();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = await ReadApiErrorAsync(response);
+                StateHasChanged();
+                return;
+            }
+
+            _loadError = null;
             await LoadCockpitAsync();
         }
         finally
         {
             _runningBacklogItemId = null;
+        }
+    }
+
+
+    private void EnsureWorkflowPollingState()
+    {
+        if (HasActiveWorkflowRuns())
+        {
+            StartWorkflowPolling();
+            return;
+        }
+
+        StopWorkflowPolling();
+    }
+
+    private bool HasActiveWorkflowRuns()
+        => _runs.Any(x => x.Status is 1 or 2);
+
+    private void StartWorkflowPolling()
+    {
+        if (_workflowPollingTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        _workflowPollingCts?.Cancel();
+        _workflowPollingCts?.Dispose();
+        _workflowPollingCts = new CancellationTokenSource();
+        _workflowPollingTask = MonitorWorkflowChangesAsync(_workflowPollingCts.Token);
+    }
+
+    private void StopWorkflowPolling()
+    {
+        _workflowPollingCts?.Cancel();
+        _workflowPollingCts?.Dispose();
+        _workflowPollingCts = null;
+        _workflowPollingTask = null;
+    }
+
+    private async Task MonitorWorkflowChangesAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (_isRefreshingWorkflowState || SelectedSolutionState.CurrentTarget is null)
+                {
+                    continue;
+                }
+
+                await InvokeAsync(async () =>
+                {
+                    await LoadCockpitAsync();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -1308,6 +1387,7 @@
 
     public void Dispose()
     {
+        StopWorkflowPolling();
         SelectedSolutionState.Changed -= HandleSolutionChanged;
     }
 
