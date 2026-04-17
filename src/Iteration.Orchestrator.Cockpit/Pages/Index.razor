@@ -8,153 +8,166 @@
 <PageTitle>Cockpit</PageTitle>
 
 <style>
-
     .cockpit-shell {
+        max-width: 1280px;
+        margin: 0 auto;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 24px;
+        color: #24292f;
     }
 
     .cockpit-toolbar {
         background: transparent;
         border: 0;
         border-radius: 0;
-        padding: 0;
+        padding: 0 0 16px 0;
         box-shadow: none;
+        border-bottom: 1px solid #d8dee4;
     }
 
     .cockpit-toolbar-row {
-        gap: 6px;
+        gap: 8px;
+        justify-content: flex-start;
     }
 
     .toolbar-select-host {
-        flex: 1;
-        min-width: 0;
+        flex: 0 1 420px;
+        min-width: 260px;
+        max-width: 520px;
     }
 
     .toolbar-action-button {
-        width: 31px;
-        height: 31px;
-        border: 1px solid #cfd8e3;
-        border-radius: 999px;
-        background: #ffffff;
-        color: #5b6878;
-        transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+        width: 32px;
+        height: 32px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        background: #f6f8fa;
+        color: #57606a;
+        transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
     }
 
-        .toolbar-action-button:hover {
-            background: #f8fafc;
-            border-color: #bcc7d5;
-            color: #1e293b;
-        }
+    .toolbar-action-button:hover {
+        background: #f3f4f6;
+        border-color: #afb8c1;
+        color: #24292f;
+    }
 
-        .toolbar-action-button:focus-visible {
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(91, 79, 229, 0.12);
-        }
+    .toolbar-action-button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
 
-        .toolbar-action-button.toolbar-action-primary {
-            background: #eef2f8;
-            border-color: #cfd8e3;
-            color: #4b5b70;
-        }
+    .toolbar-action-button.toolbar-action-primary {
+        background: #f6f8fa;
+        border-color: #d0d7de;
+        color: #24292f;
+    }
 
-            .toolbar-action-button.toolbar-action-primary .mud-icon-root {
-                color: #4b5b70;
-            }
+    .toolbar-action-button.toolbar-action-primary .mud-icon-root,
+    .toolbar-action-button .mud-icon-root {
+        color: inherit;
+        font-size: 1rem;
+    }
 
-        .toolbar-action-button .mud-icon-root {
-            font-size: 0.92rem;
-        }
-
-        .toolbar-action-button.toolbar-action-primary:hover {
-            background: #e6ebf3;
-            border-color: #bcc7d5;
-            color: #334155;
-        }
-
-        .toolbar-action-button.toolbar-action-disabled {
-            background: #f2f5f9;
-            border-color: #e5e7eb;
-            color: #94a3b8;
-        }
+    .toolbar-action-button.toolbar-action-disabled {
+        background: #f6f8fa;
+        border-color: #eaeef2;
+        color: #8c959f;
+    }
 
     .create-panel {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 12px;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        padding: 0 0 24px 0;
+        border-bottom: 1px solid #d8dee4;
     }
 
     .create-panel-header {
-        margin-bottom: 8px;
+        margin-bottom: 12px;
+        padding-bottom: 0;
     }
 
     .create-panel-title {
-        font-size: 0.98rem;
-        font-weight: 700;
-        color: #1e293b;
-        line-height: 1.2;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #24292f;
+        line-height: 1.25;
     }
 
     .create-panel-close {
         width: 28px;
         height: 28px;
-        color: #64748b;
+        color: #57606a;
     }
 
     .create-panel-form-grid {
-        --mud-grid-spacing-xs: 8px;
-        --mud-grid-spacing-sm: 8px;
-        --mud-grid-spacing-md: 8px;
+        --mud-grid-spacing-xs: 12px;
+        --mud-grid-spacing-sm: 12px;
+        --mud-grid-spacing-md: 12px;
     }
 
     .create-panel .mud-alert {
-        padding-top: 6px;
-        padding-bottom: 6px;
-        font-size: 0.8rem;
+        margin-bottom: 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+    }
+
+    .create-panel .mud-input-control-helper-container {
+        min-height: 18px;
+    }
+
+    .create-panel .mud-input-helper-text,
+    .create-panel .mud-input-error {
+        margin-top: 2px;
+        font-size: 0.75rem;
+        line-height: 1.2;
     }
 
     .create-panel-actions {
-        margin-top: 10px;
-        gap: 6px;
+        margin-top: 16px;
+        gap: 8px;
     }
 
-        .create-panel-actions .mud-button-root {
-            min-width: 0;
-            height: 30px;
-            padding: 0 10px;
-            font-size: 0.8rem;
-        }
+    .create-panel-actions .mud-button-root {
+        min-width: 0;
+        height: 32px;
+        padding: 0 12px;
+        font-size: 0.85rem;
+        border-radius: 6px;
+        text-transform: none;
+        font-weight: 600;
+    }
 
     .cockpit-board {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 14px;
-        padding: 10px 12px;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
     }
 
     .pipeline-card-list {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 16px;
     }
 
     .requirement-pipeline-card {
-        background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-        border: 1px solid var(--pipeline-color, #cbd5e1);
-        border-left-width: 4px;
-        border-radius: 14px;
-        padding: 14px 16px;
-        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+        background: #ffffff;
+        border: 1px solid #d8dee4;
+        border-left-width: 3px;
+        border-radius: 6px;
+        padding: 16px;
+        box-shadow: none;
     }
 
     .pipeline-card-header {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
     }
 
     .pipeline-card-meta {
@@ -166,30 +179,32 @@
 
     .pipeline-requirement-chip {
         max-width: 100%;
-        border-color: var(--pipeline-color, #cbd5e1) !important;
-        color: #1e293b !important;
-        background: #ffffff !important;
-        font-weight: 700;
+        border-color: #d0d7de !important;
+        color: #24292f !important;
+        background: #f6f8fa !important;
+        font-weight: 600;
+        border-radius: 999px;
     }
 
     .pipeline-status-chip {
-        border-color: var(--pipeline-color, #cbd5e1) !important;
-        color: var(--pipeline-color, #64748b) !important;
-        background: transparent !important;
+        border-color: var(--pipeline-color, #d0d7de) !important;
+        color: var(--pipeline-color, #57606a) !important;
+        background: #ffffff !important;
         font-weight: 600;
+        border-radius: 999px;
     }
 
     .pipeline-card-date {
         font-size: 0.75rem;
-        color: #64748b;
+        color: #57606a;
         white-space: nowrap;
     }
 
     .pipeline-card-description {
         margin: 0 0 14px 0;
-        font-size: 0.86rem;
+        font-size: 0.875rem;
         line-height: 1.45;
-        color: #475569;
+        color: #57606a;
     }
 
     .pipeline-flow {
@@ -197,7 +212,7 @@
         align-items: center;
         gap: 0;
         overflow-x: auto;
-        padding-bottom: 4px;
+        padding-bottom: 2px;
     }
 
     .pipeline-step-shell {
@@ -207,9 +222,9 @@
         min-width: 68px;
     }
 
-        .pipeline-step-shell:last-child {
-            flex: 0 0 auto;
-        }
+    .pipeline-step-shell:last-child {
+        flex: 0 0 auto;
+    }
 
     .pipeline-step {
         display: flex;
@@ -220,70 +235,64 @@
     }
 
     .pipeline-step-button {
-        width: 42px;
-        height: 42px;
-        border: 2px solid var(--step-color, #cbd5e1);
+        width: 40px;
+        height: 40px;
+        border: 1px solid var(--step-color, #d0d7de);
         border-radius: 999px;
         background: #ffffff;
-        color: var(--step-color, #64748b);
-        transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+        color: var(--step-color, #57606a);
+        transition: border-color 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+        box-shadow: none;
     }
 
-        .pipeline-step-button:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10);
-        }
+    .pipeline-step-button:hover:not(:disabled) {
+        background: #f6f8fa;
+        transform: none;
+        box-shadow: none;
+    }
 
-        .pipeline-step-button:focus-visible {
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
-        }
+    .pipeline-step-button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
 
-        .pipeline-step-button:disabled {
-            background: #f8fafc;
-            color: var(--step-color, #94a3b8);
-            opacity: 1;
-        }
+    .pipeline-step-button:disabled {
+        background: #f6f8fa;
+        color: var(--step-color, #8c959f);
+        opacity: 1;
+    }
 
-        .pipeline-step-button.is-running {
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
-        }
+    .pipeline-step-button.is-running,
+    .pipeline-step-button.is-waiting,
+    .pipeline-step-button.is-complete,
+    .pipeline-step-button.is-error {
+        box-shadow: none;
+    }
 
-        .pipeline-step-button.is-waiting {
-            background: #fffdf4;
-        }
-
-        .pipeline-step-button.is-complete {
-            background: #f3fbf7;
-        }
-
-        .pipeline-step-button.is-error {
-            background: #fff5f5;
-        }
+    .pipeline-step-button.is-waiting { background: #fff8c5; }
+    .pipeline-step-button.is-complete { background: #dafbe1; }
+    .pipeline-step-button.is-error { background: #ffebe9; }
 
     .pipeline-step-dot {
         width: 6px;
         height: 6px;
         border-radius: 999px;
-        background: var(--step-color, #cbd5e1);
+        background: var(--step-color, #d0d7de);
     }
 
     .pipeline-step-connector {
-        height: 2px;
+        height: 1px;
         flex: 1 1 auto;
         min-width: 28px;
-        margin: 0 10px;
-        background: linear-gradient(90deg, var(--line-color, #dbe4ee) 0%, var(--line-color, #dbe4ee) 100%);
+        margin: 0 12px;
+        background: var(--line-color, #d8dee4);
     }
 
     .board-empty {
-        min-height: 84px;
-        padding: 10px 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        color: #64748b;
+        padding: 8px 0 0 0;
+        text-align: left;
+        color: #57606a;
+        font-size: 0.875rem;
     }
 
     .drawer-section {
@@ -293,8 +302,8 @@
     }
 
     .drawer-content-block {
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
         padding: 14px;
         background: #ffffff;
     }
@@ -305,9 +314,8 @@
         margin: 0;
         font-family: Consolas, 'Courier New', monospace;
         font-size: 0.82rem;
-        color: #334155;
+        color: #24292f;
     }
-
 
 </style>
 
@@ -330,15 +338,18 @@
                 </MudSelect>
             </div>
 
-            <MudIconButton Icon="@Icons.Material.Filled.Add"
-                           Size="Size.Small"
-                           Class="toolbar-action-button toolbar-action-primary"
-                           OnClick="OpenCreateSolutionPanel"
-                           aria-label="Create Solution" />
+                <MudTooltip Text="Create Solution" ShowOnHover="true" ShowOnFocus="false" ShowOnClick="false">
+                    <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                    Size="Size.Small"
+                                    Class="toolbar-action-button toolbar-action-primary"
+                                    OnClick="OpenCreateSolutionPanel"
+                                    aria-label="Create Solution" />
+                </MudTooltip>
 
-            <MudMenu Dense="true"
+                <MudMenu Dense="true"
                      Disabled="SelectedSolutionState.Current is null || _documentsLoading">
                 <ActivatorContent>
+                    
                     <MudTooltip Text="Documentation">
                         <MudIconButton Icon="@Icons.Material.Filled.Description"
                                        Size="Size.Small"
