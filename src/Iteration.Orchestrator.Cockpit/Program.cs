@@ -9,10 +9,7 @@ builder.Services.AddServerSideBlazor(options =>
     options.DetailedErrors = true;
 });
 
-builder.Services.AddMudServices(config =>
-{
-    config.PopoverOptions.ThrowOnDuplicateProvider = false;
-});
+builder.Services.AddMudServices();
 
 builder.Services.AddScoped<SelectedSolutionState>();
 
