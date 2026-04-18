@@ -15,17 +15,24 @@ public sealed class RequirementsController : ControllerBase
         [FromServices] CreateRequirementHandler handler,
         CancellationToken ct)
     {
-        var id = await handler.HandleAsync(
-            new CreateRequirementCommand(
-                request.TargetSolutionId,
-                request.Title,
-                request.Description,
-                request.RequirementType,
-                request.Source,
-                request.Priority),
-            ct);
+        try
+        {
+            var id = await handler.HandleAsync(
+                new CreateRequirementCommand(
+                    request.TargetSolutionId,
+                    request.Title,
+                    request.Description,
+                    request.RequirementType,
+                    request.Source,
+                    request.Priority),
+                ct);
 
-        return Ok(new { id });
+            return Ok(new { id });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("api/requirements/{requirementId:guid}/commit")]

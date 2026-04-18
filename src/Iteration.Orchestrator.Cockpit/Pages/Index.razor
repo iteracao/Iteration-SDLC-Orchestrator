@@ -76,6 +76,26 @@
         color: #8c959f;
     }
 
+    .toolbar-requirement-button {
+        min-width: 150px;
+        height: 40px;
+        padding: 0 16px;
+        border-radius: 0;
+        border: 1px solid #24292f;
+        background: #ffffff;
+        color: #24292f;
+        font-size: 0.9rem;
+        font-weight: 600;
+        text-transform: none;
+        box-shadow: none;
+    }
+
+    .toolbar-requirement-button:disabled {
+        border-color: #d0d7de;
+        color: #8c959f;
+        background: #f6f8fa;
+    }
+
     .create-panel {
         background: transparent;
         border: 0;
@@ -402,18 +422,18 @@
                 </MudSelect>
             </div>
 
-                <MudTooltip Text="Create solution" ShowOnHover="true" ShowOnFocus="false" ShowOnClick="false">
-                    <MudIconButton Icon="@Icons.Material.Filled.Add"
-                                    Size="Size.Small"
-                                    Class="toolbar-action-button toolbar-action-primary"
-                                    OnClick="OpenCreateSolutionPanel"
-                                    aria-label="Create solution" />
-                </MudTooltip>
+            <MudTooltip Text="Create solution" ShowOnHover="true" ShowOnFocus="false" ShowOnClick="false">
+                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                Size="Size.Small"
+                                Class="@($"toolbar-action-button toolbar-action-primary{(CanOpenSolutionPanel ? string.Empty : " toolbar-action-disabled")}")"
+                                Disabled="!CanOpenSolutionPanel"
+                                OnClick="OpenCreateSolutionPanel"
+                                aria-label="Create solution" />
+            </MudTooltip>
 
-                <MudMenu Dense="true"
+            <MudMenu Dense="true"
                      Disabled="SelectedSolutionState.Current is null || _documentsLoading">
                 <ActivatorContent>
-                    
                     <MudTooltip Text="Documentation">
                         <MudIconButton Icon="@Icons.Material.Filled.Description"
                                        Size="Size.Small"
@@ -440,6 +460,15 @@
                     }
                 </ChildContent>
             </MudMenu>
+
+            <MudSpacer />
+
+            <MudButton Variant="Variant.Outlined"
+                       Class="toolbar-requirement-button"
+                       Disabled="!CanOpenRequirementPanel"
+                       OnClick="OpenCreateRequirementPanel">
+                + requirement
+            </MudButton>
         </MudStack>
     </MudPaper>
 
@@ -502,6 +531,71 @@
                 <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="CloseCreateSolutionPanel">Cancel</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_savingSolution" OnClick="CreateSolutionAsync">
                     Create solution
+                </MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+
+    @if (_createRequirementPanelOpen)
+    {
+        <MudPaper Class="create-panel" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="create-panel-header">
+                <MudText Class="create-panel-title">Create requirement</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                               Size="Size.Small"
+                               Class="create-panel-close"
+                               OnClick="CloseCreateRequirementPanel" />
+            </MudStack>
+
+            @if (!string.IsNullOrWhiteSpace(_createRequirementMessage))
+            {
+                <MudAlert Severity="@_createRequirementMessageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                    @_createRequirementMessage
+                </MudAlert>
+            }
+
+            <MudForm @ref="_createRequirementForm">
+                <MudGrid Class="create-panel-form-grid" Spacing="1">
+                    <MudItem xs="12" md="8">
+                        <MudTextField T="string" Label="Title" HelperText=" " @bind-Value="_requirementRequest.Title" Required="true" RequiredError="Title is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudTextField T="string" Label="Target" HelperText=" " Value="@SelectedTargetLabel" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="Description" HelperText=" " @bind-Value="_requirementRequest.Description" Lines="4" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="string" Label="Type" HelperText=" " @bind-Value="_requirementRequest.RequirementType" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
+                            <MudSelectItem T="string" Value="@("functional")">Functional</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("non-functional")">Non-functional</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("technical")">Technical</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("business")">Business</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="string" Label="Source" HelperText=" " @bind-Value="_requirementRequest.Source" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
+                            <MudSelectItem T="string" Value="@("user")">User</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("system")">System</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("backlog")">Backlog</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="string" Label="Priority" HelperText=" " @bind-Value="_requirementRequest.Priority" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
+                            <MudSelectItem T="string" Value="@("low")">Low</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("medium")">Medium</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("high")">High</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("critical")">Critical</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+
+            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="create-panel-actions">
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="CloseCreateRequirementPanel">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_savingRequirement" OnClick="CreateRequirementAsync">
+                    Create requirement
                 </MudButton>
             </MudStack>
         </MudPaper>
@@ -806,6 +900,7 @@
     private readonly List<SolutionDocumentSummary> _documents = [];
 
     private MudForm? _createSolutionForm;
+    private MudForm? _createRequirementForm;
     private Guid? _selectedTargetId;
     private List<SolutionTargetOption> _solutionTargetOptions => _solutions
         .SelectMany(solution => solution.Targets.Select(target => new SolutionTargetOption
@@ -819,7 +914,9 @@
     private bool _drawerOpen;
     private bool _documentsLoading;
     private bool _createSolutionPanelOpen;
+    private bool _createRequirementPanelOpen;
     private bool _savingSolution;
+    private bool _savingRequirement;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
     private Guid? _mutatingWorkflowRunId;
@@ -832,14 +929,33 @@
     private string? _loadError;
     private string? _createSolutionMessage;
     private Severity _createSolutionMessageSeverity = Severity.Info;
+    private string? _createRequirementMessage;
+    private Severity _createRequirementMessageSeverity = Severity.Info;
     private RequirementStageCard? _activeCard;
     private SolutionDocumentContent? _activeDocument;
     private WorkflowLogContent? _activeWorkflowLog;
     private readonly SetupSolutionModel _solutionRequest = new();
+    private readonly CreateRequirementModel _requirementRequest = new();
 
     private IEnumerable<OverlayOption> OverlayOptions
         => _solutions.SelectMany(solution => solution.Targets.Select(target => new OverlayOption(solution, target)))
             .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase);
+
+    private bool CanOpenSolutionPanel
+        => !_createRequirementPanelOpen && !_createSolutionPanelOpen && !_savingSolution && !_savingRequirement && !HasActiveWorkflowRuns();
+
+    private bool CanOpenRequirementPanel
+        => SelectedSolutionState.CurrentTarget is not null
+           && !_createSolutionPanelOpen
+           && !_createRequirementPanelOpen
+           && !_savingSolution
+           && !_savingRequirement
+           && !HasActiveWorkflowRuns();
+
+    private string SelectedTargetLabel
+        => SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null
+            ? string.Empty
+            : $"{SelectedSolutionState.Current.Name} / {SelectedSolutionState.CurrentTarget.DisplayName}";
 
     protected override async Task OnInitializedAsync()
     {
@@ -1241,6 +1357,13 @@
 
     private void OpenCreateSolutionPanel()
     {
+        if (!CanOpenSolutionPanel)
+        {
+            return;
+        }
+
+        _createRequirementPanelOpen = false;
+        _createRequirementMessage = null;
         _createSolutionMessage = null;
         _createSolutionPanelOpen = true;
         StateHasChanged();
@@ -1248,7 +1371,36 @@
 
     private void CloseCreateSolutionPanel()
     {
+        if (_savingSolution)
+        {
+            return;
+        }
+
         _createSolutionPanelOpen = false;
+    }
+
+    private void OpenCreateRequirementPanel()
+    {
+        if (!CanOpenRequirementPanel)
+        {
+            return;
+        }
+
+        _createSolutionPanelOpen = false;
+        _createSolutionMessage = null;
+        _createRequirementMessage = null;
+        _createRequirementPanelOpen = true;
+        StateHasChanged();
+    }
+
+    private void CloseCreateRequirementPanel()
+    {
+        if (_savingRequirement)
+        {
+            return;
+        }
+
+        _createRequirementPanelOpen = false;
     }
 
     private async Task CreateSolutionAsync()
@@ -1314,6 +1466,60 @@
         finally
         {
             _savingSolution = false;
+        }
+    }
+
+    private async Task CreateRequirementAsync()
+    {
+        if (SelectedSolutionState.CurrentTarget is null)
+        {
+            return;
+        }
+
+        if (_createRequirementForm is not null)
+        {
+            await _createRequirementForm.Validate();
+            if (!_createRequirementForm.IsValid)
+            {
+                return;
+            }
+        }
+
+        _savingRequirement = true;
+        _createRequirementMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/requirements", new
+            {
+                TargetSolutionId = SelectedSolutionState.CurrentTarget.Id,
+                _requirementRequest.Title,
+                _requirementRequest.Description,
+                _requirementRequest.RequirementType,
+                _requirementRequest.Source,
+                _requirementRequest.Priority
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            }
+
+            _createRequirementMessageSeverity = Severity.Success;
+            _createRequirementMessage = "Requirement created.";
+            ResetRequirementForm();
+            _createRequirementPanelOpen = false;
+            await LoadCockpitAsync();
+        }
+        catch (Exception ex)
+        {
+            _createRequirementMessageSeverity = Severity.Error;
+            _createRequirementMessage = ex.Message;
+        }
+        finally
+        {
+            _savingRequirement = false;
         }
     }
 
@@ -1756,6 +1962,15 @@
         _solutionRequest.RemoteRepositoryUrl = string.Empty;
     }
 
+    private void ResetRequirementForm()
+    {
+        _requirementRequest.Title = string.Empty;
+        _requirementRequest.Description = string.Empty;
+        _requirementRequest.RequirementType = "functional";
+        _requirementRequest.Source = "user";
+        _requirementRequest.Priority = "medium";
+    }
+
     public void Dispose()
     {
         StopWorkflowPolling();
@@ -1826,6 +2041,15 @@
         public string TargetCode { get; set; } = DefaultTargetCode;
         public Guid? OverlayTargetId { get; set; }
         public string? RemoteRepositoryUrl { get; set; }
+    }
+
+    private sealed class CreateRequirementModel
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string RequirementType { get; set; } = "functional";
+        public string Source { get; set; } = "user";
+        public string Priority { get; set; } = "medium";
     }
 
     private sealed class OverlayOption(SolutionSummary solution, SolutionTargetSummary target)
