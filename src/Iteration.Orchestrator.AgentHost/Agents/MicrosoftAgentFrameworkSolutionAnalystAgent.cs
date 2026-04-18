@@ -26,10 +26,24 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         var instructions = BuildInstructions(agentDefinition);
         var prompt = BuildPrompt(request);
+        var requiredFrameworkPaths = new[]
+        {
+            "AI/framework/rules/sdlc/analyze.md",
+            "AI/framework/agents/solution-analyst/prompt.md"
+        }
+        .Concat(request.ProfileRuleFiles.Select(x => x.Path))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+        var requiredSolutionPaths = request.SolutionKnowledgeFiles
+            .Select(x => x.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         var allowedPaths = request.RepositoryFiles
             .Concat(request.RepositoryDocumentationFiles)
-            .Concat(request.SolutionKnowledgeFiles.Select(x => x.Path))
-            .Concat(request.ProfileRuleFiles.Select(x => x.Path))
+            .Concat(requiredSolutionPaths)
+            .Concat(requiredFrameworkPaths)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -49,7 +63,10 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
-                ct);
+                ct,
+                requiredFrameworkPaths,
+                requiredSolutionPaths,
+                requireRepositoryEvidence: true);
 
             var payload = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
@@ -80,17 +97,21 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         var sb = new StringBuilder();
         sb.AppendLine(agentDefinition.PromptText.Trim());
         sb.AppendLine();
-        sb.AppendLine("Output contract:");
+        sb.AppendLine("OUTPUT CONTRACT:");
         sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
         sb.AppendLine();
-        sb.AppendLine("Global rules:");
+        sb.AppendLine("TOOL USAGE RULES:");
         sb.AppendLine("- Return JSON tool calls only.");
-        sb.AppendLine("- First load your structured workflow input with get_workflow_input.");
-        sb.AppendLine("- Read repository or documentation files only when needed by returning ONLY: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
-        sb.AppendLine("- When the analysis result is ready, persist it by returning ONLY: {\"action\":\"save_workflow_output\",\"workflowRunId\":\"guid\",\"output\":{...}}.");
-        sb.AppendLine("- The output object must satisfy every required field in the schema.");
+        sb.AppendLine("- You MUST call get_workflow_input first.");
+        sb.AppendLine("- You MUST load required framework context before analysis.");
+        sb.AppendLine("- You MUST load required solution context before analysis.");
+        sb.AppendLine("- You MUST read repository evidence before saving output.");
+        sb.AppendLine("- When reading a file, return ONLY: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
+        sb.AppendLine("- When saving output, return ONLY: {\"action\":\"save_workflow_output\",\"workflowRunId\":\"guid\",\"output\":{...}}.");
+        sb.AppendLine("- The workflowRunId used in save_workflow_output MUST match the active workflow run.");
+        sb.AppendLine("- The output object MUST satisfy every required field in the schema.");
         sb.AppendLine("- Do not include markdown fences or commentary outside the JSON object.");
-        sb.AppendLine("- Keep the prompt behavioral only; the workflow input from the tool is the source of truth.");
+        sb.AppendLine("- Do not save output before required context-loading is complete.");
         return sb.ToString();
     }
 
@@ -100,22 +121,61 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("WORKFLOW RUN ID:");
         sb.AppendLine(request.WorkflowRunId.ToString());
         sb.AppendLine();
-        sb.AppendLine("WORKFLOW DISCIPLINE:");
-        sb.AppendLine("- This is an ANALYSIS workflow.");
-        sb.AppendLine("- Understand the requirement and the current solution state.");
-        sb.AppendLine("- Do NOT design the solution, create backlog slices, or describe implementation steps.");
+        sb.AppendLine("WORKFLOW TYPE:");
+        sb.AppendLine("ANALYSIS");
         sb.AppendLine();
-        sb.AppendLine("OPERATING MODE:");
-        sb.AppendLine("- Load the structured workflow input from the database with get_workflow_input.");
-        sb.AppendLine("- Use read_file only for evidence you actually need.");
-        sb.AppendLine("- Save only the final business output payload with save_workflow_output.");
+        sb.AppendLine("ROLE:");
+        sb.AppendLine("You are the Solution Analyst working inside a strict SDLC workflow.");
+        sb.AppendLine();
+        sb.AppendLine("MANDATORY EXECUTION SEQUENCE:");
+        sb.AppendLine("1. Call get_workflow_input using the workflowRunId above.");
+        sb.AppendLine("2. Read required framework context first.");
+        sb.AppendLine("3. Read required solution knowledge files.");
+        sb.AppendLine("4. Read relevant repository evidence files.");
+        sb.AppendLine("5. Only then perform the analysis.");
+        sb.AppendLine("6. Only then save final output with save_workflow_output.");
+        sb.AppendLine();
+        sb.AppendLine("REQUIRED FRAMEWORK CONTEXT:");
+        sb.AppendLine("- AI/framework/rules/sdlc/analyze.md");
+        sb.AppendLine("- AI/framework/agents/solution-analyst/prompt.md");
+        foreach (var file in request.ProfileRuleFiles)
+        {
+            sb.AppendLine($"- {file.Path}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("REQUIRED SOLUTION CONTEXT:");
+        foreach (var file in request.SolutionKnowledgeFiles)
+        {
+            sb.AppendLine($"- {file.Path}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("REPOSITORY EVIDENCE RULE:");
+        sb.AppendLine("- You MUST inspect relevant repository files before concluding.");
+        sb.AppendLine("- Do not rely only on workflow input or solution documentation.");
+        sb.AppendLine("- You MUST read at least one repository file before saving output.");
+        sb.AppendLine();
+        sb.AppendLine("ANALYSIS EXPECTATIONS:");
+        sb.AppendLine("- Identify impacted areas.");
+        sb.AppendLine("- Identify risks.");
+        sb.AppendLine("- Identify assumptions.");
+        sb.AppendLine("- Identify gaps and ambiguities.");
+        sb.AppendLine("- Generate open questions when information is missing.");
+        sb.AppendLine();
+        sb.AppendLine("FORBIDDEN BEHAVIOR:");
+        sb.AppendLine("- Do NOT design the solution.");
+        sb.AppendLine("- Do NOT create backlog items.");
+        sb.AppendLine("- Do NOT describe implementation steps.");
+        sb.AppendLine("- Do NOT skip required context loading.");
+        sb.AppendLine("- Do NOT save output before reading required files.");
+        sb.AppendLine("- Do NOT invent workflowRunId, file contents, or evidence.");
         sb.AppendLine();
         sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
-        sb.AppendLine("- Return top-level workflow output fields only, never nested under result or data.");
-        sb.AppendLine("- summary: concise analysis conclusion grounded in the requirement and evidence.");
-        sb.AppendLine("- artifacts: include the requested analysis artifacts, even if some paths are null until generated.");
-        sb.AppendLine("- recommendedNextWorkflowCodes: choose from the provided next workflow codes when appropriate.");
-        sb.AppendLine("- generatedOpenQuestions and generatedDecisions are optional but should be included when justified by the evidence.");
+        sb.AppendLine("- Return top-level workflow output fields only.");
+        sb.AppendLine("- summary is required.");
+        sb.AppendLine("- artifacts are required.");
+        sb.AppendLine("- recommendedNextWorkflowCodes are required.");
+        sb.AppendLine("- generatedOpenQuestions are required when ambiguity exists.");
+        sb.AppendLine("- Use the exact same workflowRunId when saving output.");
         return sb.ToString();
     }
 

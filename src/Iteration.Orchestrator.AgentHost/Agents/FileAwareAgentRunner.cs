@@ -22,16 +22,27 @@ internal static class FileAwareAgentRunner
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyCollection<string>? requiredFrameworkPaths = null,
+        IReadOnlyCollection<string>? requiredSolutionPaths = null,
+        bool requireRepositoryEvidence = false)
     {
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
         var allowedPathSet = allowedPaths
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
+            .Select(NormalizePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requiredSolutionPathSet = (requiredSolutionPaths ?? Array.Empty<string>())
+            .Select(NormalizePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var transcript = new StringBuilder();
         var currentPrompt = initialPrompt;
+        var workflowInputLoaded = false;
+        var readPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < MaxToolCalls; i++)
         {
@@ -51,6 +62,7 @@ internal static class FileAwareAgentRunner
                 {
                     var requestedWorkflowRunId = ParseWorkflowRunId(toolRequest.WorkflowRunId, workflowRunId, "get_workflow_input");
                     var inputPayload = await payloadStore.GetInputAsync(requestedWorkflowRunId, ct);
+                    workflowInputLoaded = true;
                     await logs.AppendLineAsync(workflowRunId, $"Tool call: get_workflow_input('{requestedWorkflowRunId}').", ct);
                     await logs.AppendBlockAsync(workflowRunId, "Workflow input payload", inputPayload.InputPayloadJson, ct);
 
@@ -84,6 +96,7 @@ internal static class FileAwareAgentRunner
                     }
 
                     var fileContent = ReadFile(repositoryRoot, normalizedPath);
+                    readPaths.Add(normalizedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Tool call: read_file('{normalizedPath}').", ct);
                     await logs.AppendBlockAsync(workflowRunId, $"File content: {normalizedPath}", fileContent, ct);
 
@@ -105,6 +118,13 @@ internal static class FileAwareAgentRunner
                         throw new InvalidOperationException("Agent requested save_workflow_output without an 'output' object.");
                     }
 
+                    var requestedWorkflowRunId = ParseWorkflowRunId(toolRequest.WorkflowRunId, workflowRunId, "save_workflow_output");
+                    if (requestedWorkflowRunId != workflowRunId)
+                    {
+                        throw new InvalidOperationException($"Agent attempted to save output for workflowRunId '{requestedWorkflowRunId}', but active run is '{workflowRunId}'.");
+                    }
+
+                    EnsureRequiredContextLoaded(workflowInputLoaded, readPaths, requiredFrameworkPathSet, requiredSolutionPathSet, requireRepositoryEvidence);
                     ValidateWorkflowOutputPayload(toolRequest.Output.Value);
 
                     var outputJson = JsonSerializer.Serialize(toolRequest.Output.Value, JsonOptions);
@@ -119,6 +139,49 @@ internal static class FileAwareAgentRunner
         }
 
         throw new InvalidOperationException("Agent did not produce a final response.");
+    }
+
+    private static void EnsureRequiredContextLoaded(
+        bool workflowInputLoaded,
+        IReadOnlySet<string> readPaths,
+        IReadOnlySet<string> requiredFrameworkPathSet,
+        IReadOnlySet<string> requiredSolutionPathSet,
+        bool requireRepositoryEvidence)
+    {
+        if (!workflowInputLoaded)
+        {
+            throw new InvalidOperationException("Agent attempted to save output before loading workflow input.");
+        }
+
+        var missingFrameworkFiles = requiredFrameworkPathSet
+            .Where(path => !readPaths.Contains(path))
+            .ToList();
+        if (missingFrameworkFiles.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Agent attempted to save output before loading required framework context. Missing: {string.Join(", ", missingFrameworkFiles)}");
+        }
+
+        var missingSolutionFiles = requiredSolutionPathSet
+            .Where(path => !readPaths.Contains(path))
+            .ToList();
+        if (missingSolutionFiles.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Agent attempted to save output before loading required solution context. Missing: {string.Join(", ", missingSolutionFiles)}");
+        }
+
+        if (requireRepositoryEvidence)
+        {
+            var repositoryEvidenceRead = readPaths.Any(path =>
+                !requiredFrameworkPathSet.Contains(path) &&
+                !requiredSolutionPathSet.Contains(path));
+
+            if (!repositoryEvidenceRead)
+            {
+                throw new InvalidOperationException("Agent attempted to save output before reading repository evidence files.");
+            }
+        }
     }
 
     private static void ValidateWorkflowOutputPayload(JsonElement output)
