@@ -122,7 +122,7 @@ public sealed class StartDesignSolutionRunHandler
         await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
         await _logs.AppendKeyValuesAsync(run.Id, "Input summary", new Dictionary<string, string?>
         {
-            ["Requirement"] = requirement.Title,
+            ["Requirement"] = WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
             ["Target"] = solution.Code,
             ["Framework docs available"] = repositoryDocumentationFiles.Count.ToString(),
             ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
@@ -137,9 +137,9 @@ public sealed class StartDesignSolutionRunHandler
             analysisReport.WorkflowRunId,
             workflow.Code,
             workflow.Name,
-            workflow.Purpose,
-            requirement.Title,
-            requirement.Description,
+            WorkflowInputTextNormalizer.NormalizeMultiline(workflow.Purpose),
+            WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
+            WorkflowInputTextNormalizer.NormalizeMultiline(requirement.Description),
             analysisReport.Summary,
             analysisReport.Status,
             analysisReport.ArtifactsJson,
@@ -272,21 +272,27 @@ public sealed class StartDesignSolutionRunHandler
 
     private static string BuildProfileSummary(ProfileDefinition profile)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine(profile.Name);
-        sb.AppendLine(profile.Description);
+        var parts = new List<string>();
+
+        var name = WorkflowInputTextNormalizer.NormalizeSingleLine(profile.Name);
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            parts.Add(name);
+        }
+
+        var description = WorkflowInputTextNormalizer.NormalizeMultiline(profile.Description);
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            parts.Add(description);
+        }
 
         if (profile.Rules.Count > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("Rules included:");
-            foreach (var rule in profile.Rules)
-            {
-                sb.AppendLine($"- {rule.Path}");
-            }
+            var rules = string.Join("\n", profile.Rules.Select(rule => $"- {rule.Path}"));
+            parts.Add($"Rules included:\n{rules}");
         }
 
-        return sb.ToString().Trim();
+        return string.Join("\n\n", parts);
     }
 
     private void PersistGeneratedOpenQuestions(

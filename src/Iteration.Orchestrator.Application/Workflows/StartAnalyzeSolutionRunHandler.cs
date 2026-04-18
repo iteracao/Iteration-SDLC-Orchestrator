@@ -101,7 +101,7 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
         var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
-        var hits = await _bridge.SearchFilesAsync(solution, requirement.Title, ct);
+        var hits = await _bridge.SearchFilesAsync(solution, WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title), ct);
 
         var repositoryEvidenceFiles = new List<WorkflowFileReference>();
         foreach (var hit in hits.Take(5))
@@ -114,7 +114,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
         await _logs.AppendKeyValuesAsync(run.Id, "Input summary", new Dictionary<string, string?>
         {
-            ["Requirement"] = requirement.Title,
+            ["Requirement"] = WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
             ["Target"] = solution.Code,
             ["Framework docs available"] = repositoryDocumentationFiles.Count.ToString(),
             ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
@@ -127,9 +127,9 @@ public sealed class StartAnalyzeSolutionRunHandler
             solution.Id,
             workflow.Code,
             workflow.Name,
-            workflow.Purpose,
-            requirement.Title,
-            requirement.Description,
+            WorkflowInputTextNormalizer.NormalizeMultiline(workflow.Purpose),
+            WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
+            WorkflowInputTextNormalizer.NormalizeMultiline(requirement.Description),
             BuildProfileSummary(profile),
             BuildProfileRuleFiles(profile),
             solutionKnowledgeDocuments,
@@ -262,21 +262,27 @@ public sealed class StartAnalyzeSolutionRunHandler
 
     private static string BuildProfileSummary(ProfileDefinition profile)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine(profile.Name);
-        sb.AppendLine(profile.Description);
+        var parts = new List<string>();
+
+        var name = WorkflowInputTextNormalizer.NormalizeSingleLine(profile.Name);
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            parts.Add(name);
+        }
+
+        var description = WorkflowInputTextNormalizer.NormalizeMultiline(profile.Description);
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            parts.Add(description);
+        }
 
         if (profile.Rules.Count > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("Rules included:");
-            foreach (var rule in profile.Rules)
-            {
-                sb.AppendLine($"- {rule.Path}");
-            }
+            var rules = string.Join("\n", profile.Rules.Select(rule => $"- {rule.Path}"));
+            parts.Add($"Rules included:\n{rules}");
         }
 
-        return sb.ToString().Trim();
+        return string.Join("\n\n", parts);
     }
 
     private Dictionary<string, Guid> PersistRequirements(
