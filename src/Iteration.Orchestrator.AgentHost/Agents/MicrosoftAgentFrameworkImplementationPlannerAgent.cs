@@ -1,8 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 namespace Iteration.Orchestrator.AgentHost.Agents;
 
@@ -11,18 +9,21 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
     private readonly string _endpoint;
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
-    private readonly IArtifactStore _artifacts;
+    private readonly IWorkflowPayloadStore _payloadStore;
 
-    public MicrosoftAgentFrameworkImplementationPlannerAgent(string endpoint, string model, IWorkflowRunLogStore logs, IArtifactStore artifacts)
+    public MicrosoftAgentFrameworkImplementationPlannerAgent(string endpoint, string model, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore)
     {
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
-        _artifacts = artifacts;
+        _payloadStore = payloadStore;
     }
 
     public async Task<SolutionPlanResult> PlanAsync(SolutionPlanRequest request, AgentDefinition agentDefinition, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(agentDefinition);
+
         var instructions = BuildInstructions(agentDefinition);
         var prompt = BuildPrompt(request);
         var allowedPaths = request.RepositoryFiles
@@ -31,15 +32,9 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
             .Concat(request.ProfileRules.Select(x => x.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
         await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
-        await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Prompt summary", new Dictionary<string, string?>
-        {
-            ["Model"] = _model,
-            ["Repository files available"] = request.RepositoryFiles.Count.ToString(),
-            ["Framework docs available"] = request.ProfileRules.Count.ToString(),
-            ["Solution docs available"] = request.SolutionKnowledgeDocuments.Count.ToString()
-        }, ct);
-        await _artifacts.SaveTextAsync(request.WorkflowRunId, "prompt.txt", prompt, ct);
+        await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
 
         try
         {
@@ -53,34 +48,29 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
                 allowedPaths,
                 request.WorkflowRunId,
                 _logs,
+                _payloadStore,
                 ct);
 
-            var envelope = ParseAndNormalize(rawText, request);
-            var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
+            var payload = ParseAndNormalize(rawText, request);
+            var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent response parsed successfully.", ct);
-            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-response.raw.txt", rawText, ct);
 
             return new SolutionPlanResult(
-            envelope.Result!.Summary,
-            envelope.Status,
-            JsonSerializer.Serialize(envelope.Result.Artifacts, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.GeneratedBacklogItems, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.GeneratedOpenQuestions, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.GeneratedDecisions, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.DocumentationUpdates, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.KnowledgeUpdates, JsonOptions),
-            JsonSerializer.Serialize(envelope.Result.RecommendedNextWorkflowCodes, JsonOptions),
-            normalizedJson);
+                payload.Summary,
+                payload.Status,
+                JsonSerializer.Serialize(payload.Artifacts, JsonOptions),
+                JsonSerializer.Serialize(payload.GeneratedBacklogItems, JsonOptions),
+                JsonSerializer.Serialize(payload.GeneratedOpenQuestions, JsonOptions),
+                JsonSerializer.Serialize(payload.GeneratedDecisions, JsonOptions),
+                JsonSerializer.Serialize(payload.DocumentationUpdates, JsonOptions),
+                JsonSerializer.Serialize(payload.KnowledgeUpdates, JsonOptions),
+                JsonSerializer.Serialize(payload.RecommendedNextWorkflowCodes, JsonOptions),
+                normalizedJson);
         }
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent execution failed.", CancellationToken.None);
-            await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Error", new Dictionary<string, string?>
-            {
-                ["Type"] = ex.GetType().Name,
-                ["Message"] = ex.Message
-            }, CancellationToken.None);
-            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-exception.txt", ex.ToString(), CancellationToken.None);
+            await _logs.AppendBlockAsync(request.WorkflowRunId, "Exception", ex.ToString(), CancellationToken.None);
             throw;
         }
     }
@@ -94,130 +84,110 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
         sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
         sb.AppendLine();
         sb.AppendLine("Global rules:");
-        sb.AppendLine("- Return JSON only.");
-        sb.AppendLine("- Do not include markdown fences or commentary outside the JSON object.");
-        sb.AppendLine("- Satisfy every required field in the schema.");
-        sb.AppendLine("- You may inspect files by returning ONLY a JSON object with this exact schema: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
-        sb.AppendLine("- Request files only from the advertised repository/documentation lists.");
-        sb.AppendLine("- Do not assume file contents without reading them first when they are needed.");
+        sb.AppendLine("- Return JSON tool calls only.");
+        sb.AppendLine("- First load your structured workflow input with get_workflow_input.");
+        sb.AppendLine("- Read repository or documentation files only when needed by returning ONLY: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
+        sb.AppendLine("- When the plan result is ready, persist it by returning ONLY: {\"action\":\"save_workflow_output\",\"workflowRunId\":\"guid\",\"output\":{...}}.");
+        sb.AppendLine("- The output object must satisfy every required field in the schema.");
         sb.AppendLine("- Always generate an ordered implementation plan with concrete backlog slices.");
         return sb.ToString();
     }
 
     private static string BuildPrompt(SolutionPlanRequest request)
     {
-        var likelyFiles = PromptFormatting.PickLikelyRelevantFiles(
-            request.RepositoryFiles,
-            request.SearchHits.Select(x => x.RelativePath),
-            "Workflows",
-            "Backlog",
-            "Pages/Backlog.razor");
-
-        return PromptFormatting.BuildPrompt(
-            request.WorkflowCode,
-            request.WorkflowName,
-            request.WorkflowPurpose ?? string.Empty,
-            [
-                "This is a PLANNING workflow.",
-                "Create an implementation plan from the approved design.",
-                "Do NOT implement code changes in this workflow."
-            ],
-            new Dictionary<string, string?>
-            {
-                ["Workflow run id"] = request.WorkflowRunId.ToString(),
-                ["Target solution id"] = request.TargetSolutionId.ToString(),
-                ["Requirement id"] = request.RequirementId.ToString(),
-                ["Design workflow run id"] = request.DesignWorkflowRunId.ToString(),
-                ["Requirement title"] = request.RequirementTitle,
-                ["Requirement description"] = request.RequirementDescription,
-                ["Design summary"] = request.DesignSummary,
-                ["Design status"] = request.DesignStatus
-            },
-            request.ProfileSummary ?? string.Empty,
-            request.ProfileRules,
-            request.SolutionKnowledgeDocuments,
-            request.RepositoryFiles,
-            likelyFiles,
-            request.ExecutionRules);
+        var sb = new StringBuilder();
+        sb.AppendLine("WORKFLOW RUN ID:");
+        sb.AppendLine(request.WorkflowRunId.ToString());
+        sb.AppendLine();
+        sb.AppendLine("WORKFLOW DISCIPLINE:");
+        sb.AppendLine("- This is a PLANNING workflow.");
+        sb.AppendLine("- Break the validated design into ordered, testable backlog slices.");
+        sb.AppendLine("- Do NOT redesign the solution or implement code.");
+        sb.AppendLine();
+        sb.AppendLine("OPERATING MODE:");
+        sb.AppendLine("- Load the structured workflow input from the database with get_workflow_input.");
+        sb.AppendLine("- Use read_file only for evidence you actually need.");
+        sb.AppendLine("- Save only the final business output payload with save_workflow_output.");
+        return sb.ToString();
     }
 
-    private static void AppendDocumentPaths(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)
-    {
-        if (documents.Count == 0)
-        {
-            sb.AppendLine("(none)");
-            return;
-        }
-
-        foreach (var document in documents)
-        {
-            sb.AppendLine($"- {document.Path}");
-        }
-    }
-
-    private static void AppendPathList(StringBuilder sb, IReadOnlyList<string> paths)
-    {
-        if (paths.Count == 0)
-        {
-            sb.AppendLine("(none)");
-            return;
-        }
-
-        foreach (var path in paths)
-        {
-            sb.AppendLine($"- {path}");
-        }
-    }
-
-    private static OutputEnvelope ParseAndNormalize(string raw, SolutionPlanRequest request)
+    private static WorkflowOutputPayload ParseAndNormalize(string raw, SolutionPlanRequest request)
     {
         var cleaned = ExtractJsonObject(raw);
-        var parsed = JsonSerializer.Deserialize<OutputEnvelope>(cleaned, JsonOptions)
+        var parsed = JsonSerializer.Deserialize<WorkflowOutputPayload>(cleaned, JsonOptions)
             ?? throw new InvalidOperationException($"Agent returned an empty or invalid JSON payload. Raw response: {raw}");
 
-        parsed.WorkflowCode = string.IsNullOrWhiteSpace(parsed.WorkflowCode) ? request.WorkflowCode : parsed.WorkflowCode.Trim();
-        parsed.TargetSolutionId = string.IsNullOrWhiteSpace(parsed.TargetSolutionId) ? request.TargetSolutionId.ToString() : parsed.TargetSolutionId.Trim();
-        parsed.WorkflowRunId = string.IsNullOrWhiteSpace(parsed.WorkflowRunId) ? request.WorkflowRunId.ToString() : parsed.WorkflowRunId.Trim();
-        parsed.CompletedAtUtc = NormalizeCompletedAtUtc(parsed.CompletedAtUtc);
-        parsed.Status = NormalizeStatus(parsed.Status, parsed.Result?.GeneratedOpenQuestions?.Count ?? 0);
-        parsed.Result ??= new ResultPayload();
-        parsed.Result.Summary = string.IsNullOrWhiteSpace(parsed.Result.Summary) ? $"Planning completed for '{request.RequirementTitle}'." : parsed.Result.Summary.Trim();
-        parsed.Result.Artifacts = NormalizeArtifacts(parsed.Result.Artifacts, request.ProducedArtifacts);
-        parsed.Result.GeneratedBacklogItems = NormalizeBacklogItems(parsed.Result.GeneratedBacklogItems);
-        parsed.Result.GeneratedOpenQuestions ??= [];
-        parsed.Result.GeneratedDecisions ??= [];
-        parsed.Result.DocumentationUpdates = NormalizeStringList(parsed.Result.DocumentationUpdates, request.KnowledgeUpdates);
-        parsed.Result.KnowledgeUpdates = NormalizeStringList(parsed.Result.KnowledgeUpdates, request.KnowledgeUpdates);
-        parsed.Result.RecommendedNextWorkflowCodes = NormalizeStringList(parsed.Result.RecommendedNextWorkflowCodes, request.NextWorkflowCodes.Count > 0 ? request.NextWorkflowCodes : [request.WorkflowCode]);
+        parsed.Status = NormalizeStatus(parsed.Status, parsed.GeneratedOpenQuestions?.Count ?? 0);
+        parsed.Summary = string.IsNullOrWhiteSpace(parsed.Summary)
+            ? $"Planning completed for '{request.RequirementTitle}'."
+            : parsed.Summary.Trim();
+        parsed.Artifacts = NormalizeArtifacts(parsed.Artifacts, request.ProducedArtifacts, "implementation-plan", "Implementation Plan");
+        parsed.GeneratedBacklogItems = NormalizeBacklogItems(parsed.GeneratedBacklogItems);
+        parsed.GeneratedOpenQuestions ??= [];
+        parsed.GeneratedDecisions ??= [];
+        parsed.DocumentationUpdates = NormalizeStringList(parsed.DocumentationUpdates, request.KnowledgeUpdates);
+        parsed.KnowledgeUpdates = NormalizeStringList(parsed.KnowledgeUpdates, request.KnowledgeUpdates);
+        parsed.RecommendedNextWorkflowCodes = NormalizeStringList(parsed.RecommendedNextWorkflowCodes, request.NextWorkflowCodes.Count > 0 ? request.NextWorkflowCodes : [request.WorkflowCode]);
         return parsed;
     }
 
     private static List<BacklogItemPayload> NormalizeBacklogItems(List<BacklogItemPayload>? items)
     {
-        var normalized = items?.Where(x => !string.IsNullOrWhiteSpace(x.Title)).Select((x, index) => new BacklogItemPayload
-        {
-            Order = x.Order.GetValueOrDefault(index + 1) <= 0 ? index + 1 : x.Order,
-            Title = x.Title!.Trim(),
-            Description = string.IsNullOrWhiteSpace(x.Description) ? x.Title!.Trim() : x.Description.Trim(),
-            WorkflowCode = string.IsNullOrWhiteSpace(x.WorkflowCode) ? "implement-solution-change" : x.WorkflowCode.Trim(),
-            Priority = string.IsNullOrWhiteSpace(x.Priority) ? "medium" : x.Priority.Trim().ToLowerInvariant()
-        }).OrderBy(x => x.Order).ToList() ?? [];
+        var normalized = items?
+            .Where(x => !string.IsNullOrWhiteSpace(x.Title))
+            .Select((x, index) => new BacklogItemPayload
+            {
+                Order = x.Order.GetValueOrDefault(index + 1) <= 0 ? index + 1 : x.Order,
+                Title = x.Title!.Trim(),
+                Description = string.IsNullOrWhiteSpace(x.Description) ? x.Title!.Trim() : x.Description.Trim(),
+                WorkflowCode = string.IsNullOrWhiteSpace(x.WorkflowCode) ? "implement-solution-change" : x.WorkflowCode.Trim(),
+                Priority = string.IsNullOrWhiteSpace(x.Priority) ? "Medium" : x.Priority.Trim()
+            })
+            .ToList() ?? [];
 
-        return normalized.Count > 0 ? normalized : [new BacklogItemPayload { Order = 1, Title = "Implement solution change", Description = "Implement the designed solution change as a first delivery slice.", WorkflowCode = "implement-solution-change", Priority = "medium" }];
+        return normalized.Count > 0
+            ? normalized
+            : [new BacklogItemPayload { Order = 1, Title = "Implement planned change", Description = "Implement the next validated change slice.", WorkflowCode = "implement-solution-change", Priority = "Medium" }];
     }
 
-    private static List<ArtifactPayload> NormalizeArtifacts(List<ArtifactPayload>? artifacts, IReadOnlyList<WorkflowArtifactDefinition> fallbackArtifacts)
-        => artifacts?.Where(x => !string.IsNullOrWhiteSpace(x.ArtifactType) && !string.IsNullOrWhiteSpace(x.Name)).Select(x => new ArtifactPayload { ArtifactType = x.ArtifactType.Trim(), Name = x.Name.Trim(), Path = string.IsNullOrWhiteSpace(x.Path) ? null : x.Path.Trim() }).ToList()
-           ?? (fallbackArtifacts.Count > 0 ? fallbackArtifacts.Select(x => new ArtifactPayload { ArtifactType = x.Type, Name = x.Name, Path = null }).ToList() : [new ArtifactPayload { ArtifactType = "implementation-plan", Name = "Implementation Plan" }]);
-
-    private static List<string> NormalizeStringList(List<string>? values, IReadOnlyList<string> fallbackValues)
+    private static List<ArtifactPayload> NormalizeArtifacts(List<ArtifactPayload>? artifacts, IReadOnlyList<WorkflowArtifactDefinition> fallbackArtifacts, string fallbackType, string fallbackName)
     {
-        var normalized = values?.Select(x => x?.Trim()).Where(x => !string.IsNullOrWhiteSpace(x)).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? [];
-        return normalized.Count > 0 ? normalized : fallbackValues.Select(x => x?.Trim()).Where(x => !string.IsNullOrWhiteSpace(x)).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var normalized = artifacts?
+            .Where(x => !string.IsNullOrWhiteSpace(x.ArtifactType) && !string.IsNullOrWhiteSpace(x.Name))
+            .Select(x => new ArtifactPayload { ArtifactType = x.ArtifactType.Trim(), Name = x.Name.Trim(), Path = string.IsNullOrWhiteSpace(x.Path) ? null : x.Path.Trim() })
+            .ToList() ?? [];
+
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        return fallbackArtifacts.Count > 0
+            ? fallbackArtifacts.Select(x => new ArtifactPayload { ArtifactType = x.Type, Name = x.Name, Path = null }).ToList()
+            : [new ArtifactPayload { ArtifactType = fallbackType, Name = fallbackName }];
     }
 
-    private static string NormalizeCompletedAtUtc(string? value)
-        => DateTimeOffset.TryParse(value, out var parsed) ? parsed.UtcDateTime.ToString("O") : DateTime.UtcNow.ToString("O");
+    private static List<string> NormalizeStringList(IEnumerable<string>? values, IEnumerable<string> fallbackValues)
+    {
+        var normalized = values?
+            .Select(x => x?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        return fallbackValues
+            .Select(x => x?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 
     private static string NormalizeStatus(string? status, int openQuestionCount)
         => status?.Trim().ToLowerInvariant() switch
@@ -231,27 +201,30 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
 
     private static string ExtractJsonObject(string raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return "{}";
-        var trimmed = raw.Trim();
-        var start = trimmed.IndexOf('{');
-        var end = trimmed.LastIndexOf('}');
-        return start >= 0 && end > start ? trimmed[start..(end + 1)] : trimmed;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new InvalidOperationException("Agent returned an empty response.");
+        }
+
+        var start = raw.IndexOf('{');
+        var end = raw.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            throw new InvalidOperationException($"Agent response did not contain a valid JSON object. Raw response: {raw}");
+        }
+
+        return raw[start..(end + 1)];
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true, WriteIndented = true };
-
-    private sealed class OutputEnvelope
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        public string WorkflowCode { get; set; } = string.Empty;
-        public string TargetSolutionId { get; set; } = string.Empty;
-        public string WorkflowRunId { get; set; } = string.Empty;
-        public string Status { get; set; } = "completed";
-        public string CompletedAtUtc { get; set; } = string.Empty;
-        public ResultPayload? Result { get; set; }
-    }
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
 
-    private sealed class ResultPayload
+    private sealed class WorkflowOutputPayload
     {
+        public string Status { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
         public List<ArtifactPayload>? Artifacts { get; set; }
         public List<BacklogItemPayload>? GeneratedBacklogItems { get; set; }

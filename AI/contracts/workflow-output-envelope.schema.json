@@ -1,26 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "ai/framework/contracts/workflow-output-envelope.schema.json",
-  "title": "WorkflowOutputEnvelope",
+  "title": "WorkflowOutputPayload",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "workflowCode",
-    "targetSolutionId",
-    "completedAtUtc",
     "status",
-    "result"
+    "summary",
+    "recommendedNextWorkflowCodes"
   ],
   "properties": {
-    "workflowCode": {
-      "type": "string"
-    },
-    "targetSolutionId": {
-      "type": "string"
-    },
-    "workflowRunId": {
-      "type": ["string", "null"]
-    },
     "status": {
       "type": "string",
       "enum": [
@@ -30,79 +19,128 @@
         "failed"
       ]
     },
-    "completedAtUtc": {
+    "summary": {
       "type": "string",
-      "format": "date-time"
+      "minLength": 1
     },
-    "result": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "summary",
-        "recommendedNextWorkflowCodes"
-      ],
-      "properties": {
-        "summary": {
-          "type": "string"
-        },
-        "artifacts": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "artifactType",
-              "name"
-            ],
-            "properties": {
-              "artifactType": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "path": {
-                "type": ["string", "null"]
-              }
-            }
-          }
-        },
-        "generatedRequirements": {
-          "type": "array",
-          "items": {
-            "$ref": "requirement.schema.json"
-          }
-        },
-        "generatedOpenQuestions": {
-          "type": "array",
-          "items": {
-            "$ref": "open-question.schema.json"
-          }
-        },
-        "generatedDecisions": {
-          "type": "array",
-          "items": {
-            "$ref": "decision.schema.json"
-          }
-        },
-        "documentationUpdates": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "knowledgeUpdates": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "recommendedNextWorkflowCodes": {
-          "type": "array",
-          "items": {
-            "type": "string"
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifactType",
+          "name"
+        ],
+        "properties": {
+          "artifactType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": ["string", "null"]
           }
         }
+      }
+    },
+    "generatedRequirements": {
+      "type": "array",
+      "items": {
+        "$ref": "requirement.schema.json"
+      }
+    },
+    "generatedBacklogItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "order",
+          "title",
+          "description",
+          "workflowCode",
+          "priority"
+        ],
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workflowCode": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "implementedChanges": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "filesTouched": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "testsExecuted": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "generatedOpenQuestions": {
+      "type": "array",
+      "items": {
+        "$ref": "open-question.schema.json"
+      }
+    },
+    "generatedDecisions": {
+      "type": "array",
+      "items": {
+        "$ref": "decision.schema.json"
+      }
+    },
+    "documentationUpdates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "knowledgeUpdates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "recommendedNextWorkflowCodes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
     }
   }

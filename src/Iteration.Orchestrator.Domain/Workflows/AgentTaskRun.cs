@@ -23,10 +23,15 @@ public sealed class AgentTaskRun
 
     public void Start() => Status = AgentTaskStatus.Running;
 
+    public void SetOutputPayload(string outputPayloadJson)
+    {
+        OutputPayloadJson = outputPayloadJson;
+    }
+
     public void Succeed(string outputPayloadJson)
     {
+        SetOutputPayload(outputPayloadJson);
         Status = AgentTaskStatus.Succeeded;
-        OutputPayloadJson = outputPayloadJson;
         CompletedUtc = DateTime.UtcNow;
     }
 
