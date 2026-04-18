@@ -171,7 +171,7 @@
     .requirement-pipeline-card {
         background: #ffffff;
         border: 1px solid #d8dee4;
-        border-left-width: 3px;
+        
         border-radius: 6px;
         padding: 16px;
         box-shadow: none;
@@ -360,14 +360,16 @@
         flex: 1 1 auto;
         min-height: 0;
         display: flex;
-        overflow: hidden;
+        flex-direction: column;
+        gap: 14px;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 
     .drawer-content-block {
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: visible;
         border: 1px solid #d8dee4;
         border-radius: 6px;
         padding: 14px;
@@ -414,7 +416,8 @@
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            Dense="true"
-                           FullWidth="true">
+                           FullWidth="true"
+                           Disabled="@IsTargetSelectionLocked">
                     @foreach (var option in _solutionTargetOptions)
                     {
                         <MudSelectItem T="Guid?" Value="@option.TargetId">@option.Label</MudSelectItem>
@@ -426,19 +429,19 @@
                 <MudIconButton Icon="@Icons.Material.Filled.Add"
                                 Size="Size.Small"
                                 Class="@($"toolbar-action-button toolbar-action-primary{(CanOpenSolutionPanel ? string.Empty : " toolbar-action-disabled")}")"
-                                Disabled="!CanOpenSolutionPanel"
+                                Disabled="!CanOpenSolutionPanel || IsTargetSelectionLocked"
                                 OnClick="OpenCreateSolutionPanel"
                                 aria-label="Create solution" />
             </MudTooltip>
 
             <MudMenu Dense="true"
-                     Disabled="SelectedSolutionState.Current is null || _documentsLoading">
+                     Disabled="SelectedSolutionState.Current is null || _documentsLoading || IsTargetSelectionLocked">
                 <ActivatorContent>
                     <MudTooltip Text="Documentation">
                         <MudIconButton Icon="@Icons.Material.Filled.Description"
                                        Size="Size.Small"
-                                       Class="@($"toolbar-action-button{(SelectedSolutionState.Current is null || _documentsLoading ? " toolbar-action-disabled" : string.Empty)}")"
-                                       Disabled="SelectedSolutionState.Current is null || _documentsLoading"
+                                       Class="@($"toolbar-action-button{(SelectedSolutionState.Current is null || _documentsLoading || IsTargetSelectionLocked ? " toolbar-action-disabled" : string.Empty)}")"
+                                       Disabled="SelectedSolutionState.Current is null || _documentsLoading || IsTargetSelectionLocked"
                                        aria-label="Documentation" />
                     </MudTooltip>
                 </ActivatorContent>
@@ -465,7 +468,7 @@
 
             <MudButton Variant="Variant.Outlined"
                        Class="toolbar-requirement-button"
-                       Disabled="!CanOpenRequirementPanel"
+                       Disabled="!CanOpenRequirementPanel || IsTargetSelectionLocked"
                        OnClick="OpenCreateRequirementPanel">
                 + requirement
             </MudButton>
@@ -886,8 +889,7 @@
         new(LaneKeys.Implementation, "Implementation", Icons.Material.Filled.Code),
         new(LaneKeys.Test, "Test", Icons.Material.Filled.FactCheck),
         new(LaneKeys.Review, "Review", Icons.Material.Filled.RateReview),
-        new(LaneKeys.Deliver, "Deliver", Icons.Material.Filled.LocalShipping),
-        new(LaneKeys.Documentation, "Documentation", Icons.Material.Filled.Description)
+        new(LaneKeys.Deliver, "Deliver", Icons.Material.Filled.LocalShipping)
     ];
 
     private const string DefaultProfileCode = "dotnet-web-enterprise";
@@ -951,6 +953,13 @@
            && !_savingSolution
            && !_savingRequirement
            && !HasActiveWorkflowRuns();
+
+    private bool IsTargetSelectionLocked
+        => _createSolutionPanelOpen
+           || _createRequirementPanelOpen
+           || _savingSolution
+           || _savingRequirement
+           || HasActiveWorkflowRuns();
 
     private string SelectedTargetLabel
         => SelectedSolutionState.Current is null || SelectedSolutionState.CurrentTarget is null
@@ -1212,21 +1221,6 @@
             }
         }
 
-        if (HasDocumentation(requirement))
-        {
-            cards[LaneKeys.Documentation] = new RequirementStageCard(
-                LaneKeys.Documentation,
-                "Documentation",
-                "SDLC documents",
-                "Solution SDLC documentation workspace is available for this requirement context.",
-                requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
-                _documents.Count == 0 ? "Empty" : "Available",
-                _documents.Count == 0 ? VisualStatePalette.Default : VisualStatePalette.Success,
-                requirement,
-                null,
-                null);
-        }
-
         var steps = _pipelineDefinitions
             .Select(definition => BuildPipelineStep(definition, cards, requirement, backlogItem))
             .ToList();
@@ -1299,7 +1293,6 @@
             LaneKeys.Test => "Validation is not waiting on this requirement right now.",
             LaneKeys.Review => "Review is not available in the current workflow slice.",
             LaneKeys.Deliver => "Delivery is not available in the current workflow slice.",
-            LaneKeys.Documentation => "Solution documentation is not available for this requirement yet.",
             _ => "This workflow step is not available."
         };
 
@@ -1898,6 +1891,7 @@
     {
         return status.Trim() switch
         {
+            var value when string.Equals(value, "Pending", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Analyzed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Designed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Planned", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
@@ -1907,6 +1901,7 @@
             var value when string.Equals(value, "Delivered", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "PendingCommit", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Canceled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
             var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
             _ => VisualStatePalette.Default
         };
@@ -1987,7 +1982,6 @@
         public const string Test = "test";
         public const string Review = "review";
         public const string Deliver = "deliver";
-        public const string Documentation = "documentation";
     }
 
     private sealed record PipelineDefinition(string Key, string Title, string Icon);
