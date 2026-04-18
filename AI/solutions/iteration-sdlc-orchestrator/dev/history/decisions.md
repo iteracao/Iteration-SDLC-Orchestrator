@@ -2,16 +2,25 @@
 
 ## Active Decisions
 
-- Requirements are the canonical intake object for solution needs.
-- Backlog items are downstream implementation work rather than original request intake.
-- Workflow execution runs in the background through a queue and hosted service instead of blocking HTTP requests.
-- SQLite is the current persistence store.
-- Microsoft Agent Framework + Ollama is the active local AI integration path.
-- The `AI/framework` folder is part of the source of truth for profiles, workflows, and agent behavior.
-- Managed solution knowledge is stored under `AI/solutions/<solutionCode>` in the target repository.
-- Per-run workflow logs are written to `workflowRunId.log` and exposed through the cockpit.
+- Runtime SDLC execution is target-scoped. Requirements, backlog items, workflow runs, open questions, and decisions all attach to `SolutionTarget`.
+- `Solution` remains the logical grouping and cockpit selector parent; `SolutionTarget` is the concrete repository/runtime target.
+- Requirements are the canonical intake object. Backlog is downstream planning output.
+- Workflow execution runs in the background through `IWorkflowExecutionQueue` and `WorkflowExecutionBackgroundService`, not inline in the API request path.
+- Setup is now a real persisted workflow run with `WorkflowRun`, `AgentTaskRun`, saved artifacts, and bootstrap output.
+- Workflow logs are append-only filesystem logs per run and are surfaced through the cockpit.
+- Stable framework docs, stable target docs, and runtime workflow artifacts are separate categories and should not be treated as the same thing.
+- The cockpit shell now keeps MudBlazor providers centralized in `App.razor` instead of duplicating providers across the shell/layout.
+
+## Transitional Decisions In Effect
+
+- Document browsing still uses solution-level endpoints and resolves the first target found for the solution. This is a temporary mismatch with the target-scoped runtime model.
+- Setup/update still operate like one-target-per-solution flows. This is reinforced by the EF unique index on `SolutionTarget.SolutionId`.
+- The current implementation workflow advances backlog/requirement status to awaiting validation even though the agent runtime is still read-only and does not modify repository files.
+- Prompt assembly is intentionally layered: framework prompt plus output schema plus runtime context plus hardcoded orchestration rules in C#.
+- Direct code and structure changes made outside the workflow pipeline are accepted reality and must be reflected in stable target docs manually.
 
 ## Superseded Decisions
 
-- Running long-lived workflow execution synchronously inside the API request path has been superseded by background execution.
-- Using backlog as the primary intake object has been superseded by requirement-first modeling.
+- Synchronous long-running workflow execution in the HTTP request path has been superseded by background execution.
+- Solution-only runtime scoping has been superseded by target-scoped runtime records.
+- Backlog-first intake as the primary change model has been superseded by requirement-first intake.

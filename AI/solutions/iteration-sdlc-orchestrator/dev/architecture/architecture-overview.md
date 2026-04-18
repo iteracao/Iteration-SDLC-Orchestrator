@@ -2,66 +2,102 @@
 
 ## Purpose
 
-This document summarizes the current technical architecture implemented in the Iteration SDLC Orchestrator repository.
+This document summarizes the architecture that is actually implemented in the repository today, including the current transitional seams.
 
 ## Main Components
 
-### Solution structure
+### Solution and target model
 
-The solution file is `Iteration.SDLC.Orchestrator.sln` and currently includes these main projects:
+- `Solution` is the logical definition shown in the cockpit selector and used for grouping
+- `SolutionTarget` is the runtime unit used by setup, requirements, backlog, questions, decisions, workflow runs, and reports
+- the target storage code is `<technical-solution-name>/<targetCode>` and is also the managed-doc root under `AI/solutions/...`
+- the EF model currently enforces one `SolutionTarget` per `Solution` with a unique index on `SolutionId`
 
-- `Iteration.Orchestrator.Api` - ASP.NET Core API, dependency registration, controllers, Swagger, EF Core startup, and background worker registration
-- `Iteration.Orchestrator.Cockpit` - Blazor Server operator UI using MudBlazor
-- `Iteration.Orchestrator.Application` - application commands, handlers, workflow start/execution logic, prompt building helpers, and abstractions
-- `Iteration.Orchestrator.Domain` - core domain entities for solutions, requirements, backlog, workflows, reports, questions, and decisions
-- `Iteration.Orchestrator.Infrastructure` - persistence, config catalog, Ollama service, artifact store, and file-system setup services
-- `Iteration.Orchestrator.AgentHost` - Microsoft Agent Framework based adapters for solution analyst/designer/planner/implementation agents
-- `Iteration.Orchestrator.SolutionBridge` - read-only access to repository tree, file search, file read, and solution snapshot data
+### API and background execution
 
-### Execution model
+- `Iteration.Orchestrator.Api` is the composition root and orchestration entry point
+- workflow start endpoints create `WorkflowRun` rows and queue them through `IWorkflowExecutionQueue`
+- `WorkflowExecutionBackgroundService` dequeues run ids and invokes `WorkflowRunExecutor`
+- `WorkflowRunExecutor` dispatches by workflow code to the analyze, design, plan, or implement handler
 
-The API is now the orchestration entry point, but long-running workflow execution is not performed inline in HTTP requests. Instead:
+### Persistence and runtime evidence
 
-- start handlers create workflow runs and queue them
-- `IWorkflowExecutionQueue` and `InMemoryWorkflowExecutionQueue` hold queued run ids
-- `WorkflowExecutionBackgroundService` dequeues and executes runs in the background
-- `WorkflowRunExecutor` dispatches the actual workflow execution path
-
-This is the correct architectural boundary for model latency and workflow reliability.
-
-### Persistence
-
-`AppDbContext` in Infrastructure persists the platform state with SQLite. The domain includes first-class entities for:
+SQLite via `AppDbContext` persists:
 
 - `Solution` and `SolutionTarget`
-- `Requirement`
-- `BacklogItem`
+- `Requirement` and `BacklogItem`
 - `WorkflowRun` and `AgentTaskRun`
 - `AnalysisReport`, `DesignReport`, `PlanReport`, `ImplementationReport`
-- `OpenQuestion`
-- `Decision`
+- `OpenQuestion` and `Decision`
 
-### AI integration
+Runtime evidence is split across three stores:
 
-The orchestrator uses:
+- database rows for workflow/report/domain state
+- `data/runs/<workflowRunId>/...` for saved input/output artifacts
+- `data/workflow-logs/<workflowRunId>.log` for append-only execution logs
 
-- Microsoft Agent Framework adapters in `Iteration.Orchestrator.AgentHost`
-- Ollama configuration from appsettings/config options
-- per-workflow agents such as solution analyst, designer, planner, and implementation agent
+### Cockpit architecture
 
-### Cockpit UI
+- the cockpit is a Blazor Server app using MudBlazor
+- `SelectedSolutionState` tracks both `Current` solution and `CurrentTarget`
+- the main cockpit page renders a stage-based pipeline with lanes for Requirement, Analysis, Design, Planning, Implementation, Test, Review, Deliver, and Documentation
+- only Requirement, Analysis, Design, Planning, Implementation, and a limited validation placeholder are backed by current runtime state
+- the drawer can show either a workflow snapshot, a workflow log, or a solution document
 
-The cockpit is a Blazor Server app with MudBlazor. Current pages include solution selection, cockpit workflow view, and requirements/backlog management. The UI now supports background workflow visibility and per-run workflow logs.
+The MudBlazor provider setup is currently centralized in `App.razor` with `MudThemeProvider`, `MudDialogProvider`, and `MudSnackbarProvider`. `MainLayout.razor` is now only a simple body container, so the earlier provider-duplication issue is no longer present in the current shell.
+
+### Documentation access
+
+- workflow handlers read solution knowledge from target-relative paths such as `AI/solutions/<target-storage-code>/context/overview.md`
+- document browsing in the cockpit still goes through `SolutionDocumentsController`, which resolves the first target for a solution instead of the selected target
+- that means stable docs are physically target-rooted, but the browsing endpoint still behaves like a solution-level shortcut
+
+### Setup architecture
+
+`SetupSolutionHandler` now performs real setup persistence before filesystem bootstrap:
+
+- validate and normalize request values
+- create or update `Solution`
+- create or update the single `SolutionTarget`
+- create `WorkflowRun` and `AgentTaskRun`
+- call `ISolutionSetupService`
+- persist setup artifacts
+
+`FileSystemSolutionSetupService` then:
+
+- optionally copies an overlay/source target into the destination repository
+- initializes Git when `.git` is missing
+- adds remote `origin` when missing
+- creates the `.sln` file when missing
+- creates baseline target-solution docs when missing
+
+### Agent execution architecture
+
+The current workflow agents run through Microsoft Agent Framework wrappers over Ollama.
+
+- framework prompt text and output schema are loaded from `AI/framework/agents/...`
+- workflow metadata and profile rules are loaded from `AI/framework/workflows/...` and `AI/framework/profiles/...`
+- each agent class adds hardcoded orchestration rules and a hardcoded prompt frame in C#
+- the runtime then supplies structured request context, repository file lists, repository documentation file lists, solution knowledge documents, snapshot data, search hits, and sample files
+
+`FileAwareAgentRunner` is the active execution loop:
+
+- only `read_file` tool requests are supported
+- file access is bounded to advertised relative paths
+- file reads are limited to 20,000 characters per file
+- the loop is capped at 12 tool calls
+
+This means the current workflow agents are evidence-gathering, read-only agents. They can inspect files and produce structured JSON, but they cannot modify repository files.
 
 ## Key Constraints
 
-- Solution bridge is read-only; it analyzes repository content but does not mutate source directly.
-- Workflow and profile definitions under `AI/framework` are part of the system behavior contract.
-- Managed knowledge lives in markdown files under the target repository, but bootstrap quality is currently limited by placeholder content.
-- Current live refresh uses polling; finer-grained delta updates are still a refinement area.
+- runtime scoping is target-based, but document browsing is still solution-based / first-target-resolved
+- the current setup/update flow is still effectively one-target-per-solution
+- planning and implementation handlers optionally read `design/latest-design.md` and `delivery/latest-plan.md`, but setup does not scaffold those files
+- test/review/deliver are represented in framework config and cockpit placeholders, not in the current application runtime
+- the implementation workflow name overstates current behavior: it records implementation intent/results but does not apply code changes to the target repository
 
 ## Notes
 
-- `Program.cs` in the API is currently the main composition root for controllers, EF Core, agents, queue, and hosted background worker.
-- The current architecture is a modular monolith, not a distributed system.
-- The repository already contains enough domain/application/infrastructure separation to support continued structured growth.
+- the architecture is a modular monolith, not a distributed workflow system
+- direct code changes have recently moved faster than the managed docs; this document is meant to track the codebase as it is now, not the ideal final pipeline

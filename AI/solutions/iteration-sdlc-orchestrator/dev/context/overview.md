@@ -2,36 +2,38 @@
 
 ## Purpose
 
-Iteration SDLC Orchestrator is a solution-centric SDLC orchestration platform. Users submit solution requirements, workflows run AI-assisted analysis and downstream phases inside fixed workflow boundaries, and the cockpit tracks requirements, workflow runs, reports, questions, decisions, backlog items, and generated knowledge.
+Iteration SDLC Orchestrator is a modular monolith that manages SDLC work around a target repository. It persists solutions, targets, requirements, backlog items, workflow runs, reports, questions, decisions, artifacts, and workflow logs, then exposes them through an API and a Blazor cockpit.
 
 ## Scope
 
-Current source code shows these active capabilities:
+Current code and files confirm these active capabilities:
 
-- set up a solution/target and seed an AI workspace under `AI/solutions/<solutionCode>`
-- manage solutions, targets, requirements, backlog items, open questions, decisions, and workflow runs through the API
-- run requirement-driven workflows such as `analyze-request`, `design-solution-change`, `plan-implementation`, and `implement-solution-change`
-- execute AI agents through Microsoft Agent Framework with Ollama-backed local models
-- view and operate the platform through a Blazor Server cockpit UI
-- persist orchestration state in SQLite using EF Core migrations
+- implemented: setup persists `Solution`, `SolutionTarget`, `WorkflowRun`, `AgentTaskRun`, and setup artifacts/logs
+- implemented: requirements, backlog, open questions, decisions, and workflow runs are loaded and filtered by `targetSolutionId`
+- implemented: requirement-driven workflows exist for `analyze-request`, `design-solution-change`, `plan-implementation`, and `implement-solution-change`
+- implemented: workflow execution is queued and completed in a background hosted service
+- implemented: workflow reports are persisted as `AnalysisReport`, `DesignReport`, `PlanReport`, and `ImplementationReport`
+- implemented: cockpit shows requirement cards, stage cards, run status, failure state, and per-run log inspection
+- partially implemented: setup creates the managed knowledge workspace under `AI/solutions/<target-storage-code>/`
+- partially implemented: solution knowledge is read by later workflows, but setup only seeds baseline files and does not bootstrap them from repository truth
+- planned: test, review, deliver, and solution-history update workflows exist in `AI/framework` but do not have application/runtime handlers yet
 
 ## Current State
 
-The repository is a working starter rather than an empty skeleton. The solution contains these main projects:
+The repository has moved from solution-only runtime scoping to target-scoped runtime scoping.
 
-- `Iteration.Orchestrator.Api` - ASP.NET Core Web API and composition root
-- `Iteration.Orchestrator.Cockpit` - Blazor Server/MudBlazor operator UI
-- `Iteration.Orchestrator.Application` - commands, handlers, workflow orchestration logic, and abstractions
-- `Iteration.Orchestrator.Domain` - core entities and workflow/report models
-- `Iteration.Orchestrator.Infrastructure` - EF Core, config, artifacts, Ollama service, and setup services
-- `Iteration.Orchestrator.AgentHost` - Microsoft Agent Framework adapters for analyst/designer/planner/implementation agents
-- `Iteration.Orchestrator.SolutionBridge` - read-only bridge over the target repository
+- `Solution` is the logical record: name, description, profile
+- `SolutionTarget` is the concrete runtime/repository record: target storage code, repository path, main solution file, overlay metadata
+- requirements, backlog items, open questions, decisions, and workflow runs now belong to a target via `TargetSolutionId`
+- cockpit selection state now tracks both the selected solution and the selected target
+- cockpit runtime loading uses target-scoped endpoints such as `api/solution-targets/{targetSolutionId}/requirements` and `api/workflow-runs?targetSolutionId=...`
 
-Workflow execution now runs in the background through a queue and hosted service instead of blocking HTTP requests. Workflow logs are written per run and exposed in the cockpit.
+Current behavior is still transitional in one important place: document browsing remains solution-based. The cockpit calls `api/solutions/{solutionId}/documents`, and the controller resolves the first target found for that solution. That means runtime state is target-scoped, but document browsing is still effectively solution-scoped / first-target-resolved.
 
 ## Notes
 
-- The `AI/framework` folder is part of the source of truth for workflow, profile, and agent behavior.
-- Solution-specific knowledge lives under `AI/solutions/<solutionCode>` inside the target repository.
-- The repository currently reflects a requirement-first orchestration model: requirements are canonical intake; backlog is downstream implementation work.
-- Existing solution knowledge templates are still mostly empty placeholders and need bootstrap from repository `.md` files and selected source files.
+- Stable framework guidance lives under `AI/framework`. That is where workflow definitions, agent prompts, output schemas, and profile rules are loaded from at runtime.
+- Stable target-solution knowledge lives under `AI/solutions/<target-storage-code>/` in the repository being orchestrated. For this repository, that workspace is `AI/solutions/iteration-sdlc-orchestrator/dev/`.
+- Workflow artifacts under `data/runs/<workflowRunId>/` and workflow logs under `data/workflow-logs/` are runtime evidence, not the stable target-solution documentation set.
+- Recent architectural changes were made directly in code and structure, not exclusively through workflow-generated documentation. The target docs therefore need to be maintained as a manual reality check.
+- The current implementation workflow produces persisted implementation reports, but the agent runtime is still read-only and does not mutate repository files yet. This is the most important implementation/runtime gap to keep in mind when reading the rest of the docs.

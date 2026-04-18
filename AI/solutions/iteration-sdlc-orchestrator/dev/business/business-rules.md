@@ -2,62 +2,84 @@
 
 ## Purpose
 
-This document captures the business and modeling rules currently implemented in the Iteration SDLC Orchestrator codebase.
+This document captures the business and modeling rules that are actually enforced, or clearly implied, by the current codebase.
 
 ## Canonical Rules
 
+### Solution and target are separate concepts
+
+- `Solution` is the logical definition and selector grouping
+- `SolutionTarget` is the concrete runtime/repository target
+- runtime work is attached to the target, not directly to the solution
+
+### Runtime scope is target-scoped
+
+The current model and cockpit treat these records as target-scoped:
+
+- requirements
+- backlog items
+- workflow runs
+- open questions
+- decisions
+
 ### Requirement is the primary intake object
 
-The repository documentation and code treat **Requirement** as the canonical user/stakeholder need. Requirements are created first and then moved through analysis, design, planning, and implementation-related workflows.
+Requirements are still the canonical intake for change work. The main workflow pipeline starts from a requirement and moves it through analysis, design, planning, and implementation states.
 
-### Backlog is downstream implementation work
+### Backlog is downstream planning output
 
-Backlog items are not the original intake object for solution change requests. They are intended to be generated downstream from planning and represent implementation slices or work units.
+Backlog items are intended to be generated from planning and then implemented in order. The implementation handler explicitly blocks later slices until earlier slices are validated or canceled.
 
 ### Workflow run is the execution record
 
-A **WorkflowRun** represents the execution of a workflow against a solution target, requirement, or backlog item. Workflow runs carry status, stage, timing, and failure information.
+Every workflow attempt creates a `WorkflowRun` with:
 
-### Requirement lifecycle is explicit
+- target association
+- optional requirement link
+- optional backlog-item link
+- stage, status, timestamps, requested-by, and failure reason
 
-The `Requirement` domain model contains status transitions such as:
+### Agent task run is the agent call record
 
-- `submitted`
-- `under-analysis` / `analyzed` / `analysis-failed`
-- `under-design` / `designed` / `design-failed`
-- `under-planning` / `planned` / `planning-failed`
-- implementation-related states downstream
+Each workflow execution currently creates one `AgentTaskRun` that stores:
 
-This indicates the platform expects each workflow phase to update requirement lifecycle state explicitly.
+- agent code
+- input payload JSON
+- output payload JSON on success
+- failure reason on failure
 
-### Reports are first-class workflow outputs
+### Reports are persisted workflow outputs
 
-Each major workflow phase has a dedicated report model in the domain:
+The current pipeline persists structured reports:
 
 - `AnalysisReport`
 - `DesignReport`
 - `PlanReport`
 - `ImplementationReport`
 
-These reports are linked to `WorkflowRunId` and persist structured workflow outputs.
+These reports are distinct from stable target-solution docs. They are runtime outputs tied to a workflow run.
 
-### Open questions and decisions are persistent SDLC objects
+### Stable docs, framework docs, and runtime artifacts are different things
 
-Analysis/design/planning can generate `OpenQuestion` and `Decision` records. These are stored in the database and are intended to become part of the cockpit review and solution knowledge history.
+- framework docs in `AI/framework` define generic workflows, prompts, schemas, and profile rules
+- target docs in `AI/solutions/<target-storage-code>/` describe the current solution and its local decisions
+- runtime artifacts in `data/runs/...` and `data/workflow-logs/...` capture execution evidence for a specific run
 
-### Solution knowledge is managed inside the target repository
+The current code already moves in this direction, but there is still overlap because workflow handlers read stable target docs such as `analysis/latest-analysis.md` as part of later phases.
 
-The setup process creates `AI/solutions/<solutionCode>` in the target repository and seeds markdown documents for context, business, architecture, history, and analysis. These files are intended to become managed solution knowledge.
+### Managed target docs live inside the target repository
+
+Setup creates the documentation workspace under `AI/solutions/<target-storage-code>/`, not under a solution-only path.
 
 ## Exceptions
 
-- The current setup workflow seeds documentation structure but does not yet perform a strong source-grounded bootstrap of those documents.
-- The current analyze workflow can complete successfully even when the seeded knowledge documents are still placeholders, which weakens analysis quality.
-- Existing repository documentation outside the SDLC-managed folder is not yet being fully used as bootstrap input, though it should be for existing solutions.
+- the cockpit document browser is still called with a solution id and resolves the first target for that solution
+- the current EF model and update flow still allow only one target per solution
+- the API still allows direct backlog creation even though the architectural direction is plan-generated backlog
+- the implementation workflow records implementation output and advances statuses, but the current agent runtime does not write repository files
 
 ## Open Clarifications
 
-- Which requirement statuses should be treated as final versus retryable across all workflows?
-- How should generated documentation updates be applied back into the managed knowledge base after each workflow?
-- Should backlog sequencing be purely ordered or fully dependency-driven from the beginning?
-- What is the exact governance rule for when a workflow may create new derived requirements versus only raising open questions?
+- when validation becomes first-class, should it be a single workflow or split across test/review phases
+- how should stable target docs be updated from report artifacts after each workflow
+- should direct backlog creation remain as an operator escape hatch once planning is the normal path everywhere
