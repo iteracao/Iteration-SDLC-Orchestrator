@@ -249,6 +249,28 @@ public sealed class WorkflowRunsController : ControllerBase
         });
     }
 
+
+    [HttpGet("{id:guid}/artifacts/{fileName}")]
+    public async Task<IActionResult> GetArtifact(
+        Guid id,
+        string fileName,
+        [FromServices] IArtifactStore artifacts,
+        CancellationToken ct)
+    {
+        var content = await artifacts.ReadTextAsync(id, fileName, ct);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return NotFound(new { message = "Workflow artifact not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName,
+            content
+        });
+    }
+
     [HttpPost("validate")]
     public async Task<IActionResult> Validate(
         [FromBody] ValidateWorkflowRunRequest request,
