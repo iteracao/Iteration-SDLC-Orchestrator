@@ -1636,34 +1636,92 @@
 
         var normalized = content.Trim();
 
-        if (normalized.Length >= 2 && normalized[0] == '"' && normalized[^1] == '"')
+        if (preferJson)
         {
-            try
+            var formattedJson = TryFormatJsonForDisplay(normalized);
+            if (!string.IsNullOrWhiteSpace(formattedJson))
             {
-                var decodedString = System.Text.Json.JsonSerializer.Deserialize<string>(normalized);
-                if (!string.IsNullOrWhiteSpace(decodedString))
-                {
-                    normalized = decodedString;
-                }
-            }
-            catch
-            {
+                return formattedJson;
             }
         }
 
-        if (preferJson)
+        var decodedText = TryDecodeJsonString(normalized);
+        if (!string.IsNullOrWhiteSpace(decodedText))
         {
-            try
-            {
-                using var document = System.Text.Json.JsonDocument.Parse(normalized);
-                return System.Text.Json.JsonSerializer.Serialize(document.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            }
-            catch
-            {
-            }
+            normalized = decodedText;
         }
 
         return normalized.Replace("\r\n", Environment.NewLine).Replace("\n", Environment.NewLine);
+    }
+
+    private static string? TryFormatJsonForDisplay(string raw)
+    {
+        const int maxDepth = 4;
+        var current = raw;
+
+        for (var depth = 0; depth < maxDepth; depth++)
+        {
+            try
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(current);
+                var root = document.RootElement;
+
+                if (root.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var nested = root.GetString();
+                    if (string.IsNullOrWhiteSpace(nested))
+                    {
+                        return string.Empty;
+                    }
+
+                    current = nested.Trim();
+                    continue;
+                }
+
+                return System.Text.Json.JsonSerializer.Serialize(
+                    root,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    });
+            }
+            catch
+            {
+                var decoded = TryDecodeJsonString(current);
+                if (string.IsNullOrWhiteSpace(decoded) || string.Equals(decoded, current, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                current = decoded.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryDecodeJsonString(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        try
+        {
+            var wrapped = raw;
+            if (!(wrapped.Length >= 2 && wrapped[0] == '"' && wrapped[^1] == '"'))
+            {
+                wrapped = System.Text.Json.JsonSerializer.Serialize(raw);
+            }
+
+            return System.Text.Json.JsonSerializer.Deserialize<string>(wrapped);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool LooksLikeJsonFile(string? fileName)
