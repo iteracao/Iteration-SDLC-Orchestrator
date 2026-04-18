@@ -17,8 +17,7 @@ public sealed record SolutionAnalysisRequest(
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    SolutionSnapshot Snapshot,
-    IReadOnlyList<FileSearchHit> SearchHits,
+    string RepositoryPath,
     IReadOnlyDictionary<string, string> SampleFiles);
 
 public sealed record SolutionAnalysisResult(
@@ -57,8 +56,7 @@ public sealed record SolutionDesignRequest(
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    SolutionSnapshot Snapshot,
-    IReadOnlyList<FileSearchHit> SearchHits,
+    string RepositoryPath,
     IReadOnlyDictionary<string, string> SampleFiles);
 
 public sealed record SolutionDesignResult(
@@ -97,8 +95,7 @@ public sealed record SolutionPlanRequest(
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    SolutionSnapshot Snapshot,
-    IReadOnlyList<FileSearchHit> SearchHits,
+    string RepositoryPath,
     IReadOnlyDictionary<string, string> SampleFiles);
 
 public sealed record SolutionPlanResult(
@@ -142,8 +139,7 @@ public sealed record SolutionImplementationRequest(
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    SolutionSnapshot Snapshot,
-    IReadOnlyList<FileSearchHit> SearchHits,
+    string RepositoryPath,
     IReadOnlyDictionary<string, string> SampleFiles);
 
 public sealed record SolutionImplementationResult(

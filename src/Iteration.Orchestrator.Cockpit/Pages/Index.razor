@@ -1656,7 +1656,7 @@
 
     private static string? TryFormatJsonForDisplay(string raw)
     {
-        const int maxDepth = 4;
+        const int maxDepth = 6;
         var current = raw;
 
         for (var depth = 0; depth < maxDepth; depth++)
@@ -1664,22 +1664,26 @@
             try
             {
                 using var document = System.Text.Json.JsonDocument.Parse(current);
-                var root = document.RootElement;
+                var normalized = NormalizeJsonElementForDisplay(document.RootElement, depth: 0, maxDepth: maxDepth);
 
-                if (root.ValueKind == System.Text.Json.JsonValueKind.String)
+                if (normalized is string nestedString)
                 {
-                    var nested = root.GetString();
-                    if (string.IsNullOrWhiteSpace(nested))
+                    if (string.IsNullOrWhiteSpace(nestedString))
                     {
                         return string.Empty;
                     }
 
-                    current = nested.Trim();
-                    continue;
+                    if (LooksLikeJsonText(nestedString))
+                    {
+                        current = nestedString.Trim();
+                        continue;
+                    }
+
+                    return NormalizeTextForDisplay(nestedString);
                 }
 
                 return System.Text.Json.JsonSerializer.Serialize(
-                    root,
+                    normalized,
                     new System.Text.Json.JsonSerializerOptions
                     {
                         WriteIndented = true,
@@ -1700,6 +1704,105 @@
 
         return null;
     }
+
+    private static object? NormalizeJsonElementForDisplay(System.Text.Json.JsonElement element, int depth, int maxDepth)
+    {
+        if (depth >= maxDepth)
+        {
+            return NormalizeTextForDisplay(element.GetRawText());
+        }
+
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.Object:
+            {
+                var dictionary = new Dictionary<string, object?>();
+                foreach (var property in element.EnumerateObject())
+                {
+                    dictionary[property.Name] = NormalizeJsonElementForDisplay(property.Value, depth + 1, maxDepth);
+                }
+
+                return dictionary;
+            }
+
+            case System.Text.Json.JsonValueKind.Array:
+            {
+                var items = new List<object?>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    items.Add(NormalizeJsonElementForDisplay(item, depth + 1, maxDepth));
+                }
+
+                return items;
+            }
+
+            case System.Text.Json.JsonValueKind.String:
+            {
+                var value = element.GetString() ?? string.Empty;
+                value = NormalizeTextForDisplay(value);
+
+                if (LooksLikeJsonText(value))
+                {
+                    try
+                    {
+                        using var nestedDocument = System.Text.Json.JsonDocument.Parse(value);
+                        return NormalizeJsonElementForDisplay(nestedDocument.RootElement, depth + 1, maxDepth);
+                    }
+                    catch
+                    {
+                        return value;
+                    }
+                }
+
+                return value;
+            }
+
+            case System.Text.Json.JsonValueKind.Number:
+                if (element.TryGetInt64(out var longValue))
+                {
+                    return longValue;
+                }
+
+                if (element.TryGetDecimal(out var decimalValue))
+                {
+                    return decimalValue;
+                }
+
+                return element.GetDouble();
+
+            case System.Text.Json.JsonValueKind.True:
+            case System.Text.Json.JsonValueKind.False:
+                return element.GetBoolean();
+
+            case System.Text.Json.JsonValueKind.Null:
+            case System.Text.Json.JsonValueKind.Undefined:
+                return null;
+
+            default:
+                return NormalizeTextForDisplay(element.GetRawText());
+        }
+    }
+
+    private static bool LooksLikeJsonText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        return (trimmed.StartsWith("{") && trimmed.EndsWith("}"))
+               || (trimmed.StartsWith("[") && trimmed.EndsWith("]"))
+               || (trimmed.StartsWith("\"") && trimmed.EndsWith("\""));
+    }
+
+    private static string NormalizeTextForDisplay(string value)
+        => value.Replace("\\r\\n", Environment.NewLine)
+                .Replace("\\n", Environment.NewLine)
+                .Replace("\\r", Environment.NewLine)
+                .Replace("\r\n", Environment.NewLine)
+                .Replace("\n", Environment.NewLine)
+                .Replace("\r", Environment.NewLine);
 
     private static string? TryDecodeJsonString(string raw)
     {

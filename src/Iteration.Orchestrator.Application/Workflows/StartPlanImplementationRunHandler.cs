@@ -107,7 +107,6 @@ public sealed class StartPlanImplementationRunHandler
         run.Start("implementation-planning");
         await _db.SaveChangesAsync(ct);
 
-        var snapshot = await _bridge.GetSolutionSnapshotAsync(solution, ct);
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
         var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
         var searchQuery = $"{requirement.Title} {requirement.Description}".Trim();
@@ -156,8 +155,7 @@ public sealed class StartPlanImplementationRunHandler
             workflow.NextWorkflows,
             repositoryFiles,
             repositoryDocumentationFiles,
-            snapshot,
-            hits,
+            solution.RepositoryPath,
             sampleFiles);
 
         var inputJson = JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });

@@ -44,7 +44,7 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
                 agentDefinition.Name,
                 instructions,
                 prompt,
-                request.Snapshot.RepositoryPath,
+                request.RepositoryPath,
                 allowedPaths,
                 request.WorkflowRunId,
                 _logs,
