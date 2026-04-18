@@ -39,6 +39,15 @@ public sealed class WorkflowLifecycleService
         }
     }
 
+    public async Task<bool> HasBlockingRunsAsync(Guid requirementId, CancellationToken ct)
+    {
+        return await _db.WorkflowRuns
+            .Where(x => x.RequirementId == requirementId)
+            .AnyAsync(x => x.Status == WorkflowRunStatus.Pending
+                || x.Status == WorkflowRunStatus.Running
+                || x.Status == WorkflowRunStatus.CompletedAwaitingValidation, ct);
+    }
+
     public async Task<WorkflowRun> GetLatestValidatedRunAsync(Guid requirementId, string workflowCode, CancellationToken ct)
     {
         return await _db.WorkflowRuns

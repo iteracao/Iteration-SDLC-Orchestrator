@@ -319,7 +319,7 @@
     }
 
     .mud-popover .mud-list-item.mud-selected-item:hover {
-        background-color: "rgba(0, 0, 0, 0.08) !important;
+        background-color: rgba(0, 0, 0, 0.08) !important;
     }
 
 </style>
@@ -635,6 +635,22 @@
                         Plan
                     </MudButton>
 
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Disabled="!CanCommitRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
+                               OnClick="() => CommitRequirementAsync(_activeCard.Requirement.Id)">
+                        Commit Requirement
+                    </MudButton>
+
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="Color.Error"
+                               Disabled="!CanCancelRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
+                               OnClick="() => CancelRequirementAsync(_activeCard.Requirement.Id)">
+                        Cancel Requirement
+                    </MudButton>
+
                     @if (_activeCard.BacklogItem is not null)
                     {
                         <MudButton Size="Size.Small"
@@ -739,6 +755,7 @@
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
     private Guid? _mutatingWorkflowRunId;
+    private Guid? _mutatingRequirementId;
     private bool _isRefreshingWorkflowState;
     private long _cockpitRefreshVersion;
     private string? _lastCockpitSnapshot;
@@ -1250,6 +1267,14 @@
         return $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
     }
 
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(await ReadApiErrorAsync(response));
+        }
+    }
+
     private async Task StartAnalyzeAsync(Guid requirementId)
     {
         _runningRequirementId = requirementId;
@@ -1408,6 +1433,15 @@
         => string.Equals(requirement.Status, "Designed", StringComparison.OrdinalIgnoreCase)
            && !HasBlockingRun(requirement.Id, null, "plan-implementation");
 
+    private bool CanCommitRequirement(RequirementRow requirement)
+        => string.Equals(requirement.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
+           && !HasAnyBlockingRun(requirement.Id);
+
+    private bool CanCancelRequirement(RequirementRow requirement)
+        => !string.Equals(requirement.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(requirement.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
+           && !HasAnyBlockingRun(requirement.Id);
+
     private bool CanImplement(BacklogRow backlogItem)
     {
         if (backlogItem.RequirementId.HasValue
@@ -1431,7 +1465,8 @@
             .Where(x => x.RequirementId == backlogItem.RequirementId && x.PlanningOrder < backlogItem.PlanningOrder)
             .ToList();
 
-        return previousItems.All(x => string.Equals(x.Status, "Validated", StringComparison.OrdinalIgnoreCase))
+        return previousItems.All(x => string.Equals(x.Status, "Validated", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(x.Status, "Canceled", StringComparison.OrdinalIgnoreCase))
             && !HasBlockingRun(backlogItem.RequirementId, backlogItem.Id, "implement-solution-change");
     }
 
@@ -1448,8 +1483,55 @@
             && string.Equals(x.WorkflowCode, workflowCode, StringComparison.OrdinalIgnoreCase)
             && x.Status is 1 or 2 or 6);
 
+    private bool HasAnyBlockingRun(Guid requirementId)
+        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
+
+    private async Task CommitRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _loadError = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsync($"api/requirements/{requirementId}/commit", null);
+            await EnsureSuccessAsync(response);
+            await LoadCockpitAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
+    }
+
+    private async Task CancelRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _loadError = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsync($"api/requirements/{requirementId}/cancel", null);
+            await EnsureSuccessAsync(response);
+            await LoadCockpitAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
+    }
 
     private async Task ValidateWorkflowRunAsync(Guid workflowRunId)
     {
@@ -1521,8 +1603,9 @@
     private static string HumanizeRequirementStatus(string status)
         => status.Trim() switch
         {
-            var value when string.Equals(value, "ValidatedCommitted", StringComparison.OrdinalIgnoreCase) => "Validated Committed",
-            var value when string.Equals(value, "CancelledRolledBack", StringComparison.OrdinalIgnoreCase) => "Cancelled Rolled Back",
+            var value when string.Equals(value, "PendingCommit", StringComparison.OrdinalIgnoreCase) => "Pending Commit",
+            var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => "Completed",
+            var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => "Cancelled",
             _ => string.Concat(status.Select((ch, index) => index > 0 && char.IsUpper(ch) ? $" {ch}" : ch.ToString())).Trim()
         };
 
@@ -1548,9 +1631,9 @@
             var value when string.Equals(value, "Tested", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Reviewed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Delivered", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Documented", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "ValidatedCommitted", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "CancelledRolledBack", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
+            var value when string.Equals(value, "PendingCommit", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
             _ => VisualStatePalette.Default
         };
     }

@@ -10,9 +10,9 @@ public static class RequirementLifecycleStatus
     public const string Tested = "Tested";
     public const string Reviewed = "Reviewed";
     public const string Delivered = "Delivered";
-    public const string Documented = "Documented";
-    public const string ValidatedCommitted = "ValidatedCommitted";
-    public const string CancelledRolledBack = "CancelledRolledBack";
+    public const string PendingCommit = "PendingCommit";
+    public const string Completed = "Completed";
+    public const string Cancelled = "Cancelled";
 
     public static string Normalize(string? value)
     {
@@ -37,8 +37,11 @@ public static class RequirementLifecycleStatus
             var current when current.Equals("under-implementation", StringComparison.OrdinalIgnoreCase) => Planned,
             var current when current.Equals("implementation-failed", StringComparison.OrdinalIgnoreCase) => Planned,
             var current when current.Equals("awaiting-implementation-validation", StringComparison.OrdinalIgnoreCase) => Implemented,
-            var current when current.Equals("canceled", StringComparison.OrdinalIgnoreCase) => CancelledRolledBack,
-            var current when current.Equals("cancelled", StringComparison.OrdinalIgnoreCase) => CancelledRolledBack,
+            var current when current.Equals("documented", StringComparison.OrdinalIgnoreCase) => PendingCommit,
+            var current when current.Equals("validatedcommitted", StringComparison.OrdinalIgnoreCase) => Completed,
+            var current when current.Equals("cancelledrolledback", StringComparison.OrdinalIgnoreCase) => Cancelled,
+            var current when current.Equals("canceled", StringComparison.OrdinalIgnoreCase) => Cancelled,
+            var current when current.Equals("cancelled", StringComparison.OrdinalIgnoreCase) => Cancelled,
             var current when current.Equals(Pending, StringComparison.OrdinalIgnoreCase) => Pending,
             var current when current.Equals(Analyzed, StringComparison.OrdinalIgnoreCase) => Analyzed,
             var current when current.Equals(Designed, StringComparison.OrdinalIgnoreCase) => Designed,
@@ -47,9 +50,9 @@ public static class RequirementLifecycleStatus
             var current when current.Equals(Tested, StringComparison.OrdinalIgnoreCase) => Tested,
             var current when current.Equals(Reviewed, StringComparison.OrdinalIgnoreCase) => Reviewed,
             var current when current.Equals(Delivered, StringComparison.OrdinalIgnoreCase) => Delivered,
-            var current when current.Equals(Documented, StringComparison.OrdinalIgnoreCase) => Documented,
-            var current when current.Equals(ValidatedCommitted, StringComparison.OrdinalIgnoreCase) => ValidatedCommitted,
-            var current when current.Equals(CancelledRolledBack, StringComparison.OrdinalIgnoreCase) => CancelledRolledBack,
+            var current when current.Equals(PendingCommit, StringComparison.OrdinalIgnoreCase) => PendingCommit,
+            var current when current.Equals(Completed, StringComparison.OrdinalIgnoreCase) => Completed,
+            var current when current.Equals(Cancelled, StringComparison.OrdinalIgnoreCase) => Cancelled,
             _ => Pending
         };
     }

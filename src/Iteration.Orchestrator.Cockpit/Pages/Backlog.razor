@@ -93,6 +93,12 @@ else
                                     <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Info" Disabled="_runningRequirementId == context.Id || !CanPlan(context)" OnClick="() => StartPlanAsync(context.Id)">
                                         Plan
                                     </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="_mutatingRequirementId == context.Id || !CanCommitRequirement(context)" OnClick="() => CommitRequirementAsync(context.Id)">
+                                        Commit
+                                    </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="_mutatingRequirementId == context.Id || !CanCancelRequirement(context)" OnClick="() => CancelRequirementAsync(context.Id)">
+                                        Cancel
+                                    </MudButton>
                                 </MudStack>
                             </MudTd>
                         </RowTemplate>
@@ -193,6 +199,7 @@ else
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
     private Guid? _mutatingWorkflowRunId;
+    private Guid? _mutatingRequirementId;
     private bool _refreshInProgress;
     private long _refreshVersion;
     private string? _lastSnapshot;
@@ -576,6 +583,15 @@ else
         => string.Equals(row.Status, "Designed", StringComparison.OrdinalIgnoreCase)
             && !HasBlockingRun(row.Id, null, "plan-implementation");
 
+    private bool CanCommitRequirement(RequirementRow row)
+        => string.Equals(row.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
+            && !HasAnyBlockingRun(row.Id);
+
+    private bool CanCancelRequirement(RequirementRow row)
+        => !string.Equals(row.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(row.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
+            && !HasAnyBlockingRun(row.Id);
+
     private bool CanImplement(BacklogRow row)
     {
         if (row.RequirementId.HasValue
@@ -612,8 +628,63 @@ else
             && string.Equals(x.WorkflowCode, workflowCode, StringComparison.OrdinalIgnoreCase)
             && x.Status is 1 or 2 or 6);
 
+    private bool HasAnyBlockingRun(Guid requirementId)
+        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
+
+    private async Task CommitRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsync($"api/requirements/{requirementId}/commit", null);
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Requirement committed.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
+    }
+
+    private async Task CancelRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsync($"api/requirements/{requirementId}/cancel", null);
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Requirement cancelled.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
+    }
 
     private async Task ValidateWorkflowRunAsync(Guid workflowRunId)
     {

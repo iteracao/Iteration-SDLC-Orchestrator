@@ -89,10 +89,22 @@ public sealed class Requirement
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkCancelledRolledBack(Guid workflowRunId)
+    public void MarkPendingCommit(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
-        Status = RequirementLifecycleStatus.CancelledRolledBack;
+        Status = RequirementLifecycleStatus.PendingCommit;
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void Commit()
+    {
+        Status = RequirementLifecycleStatus.Completed;
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void Cancel()
+    {
+        Status = RequirementLifecycleStatus.Cancelled;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 }

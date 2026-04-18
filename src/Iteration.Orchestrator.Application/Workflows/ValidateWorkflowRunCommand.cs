@@ -1,6 +1,5 @@
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Requirements;
-using Iteration.Orchestrator.Domain.Workflows;
 using Microsoft.EntityFrameworkCore;
 
 namespace Iteration.Orchestrator.Application.Workflows;
@@ -38,7 +37,14 @@ public sealed class ValidateWorkflowRunHandler
             var nextStatus = WorkflowLifecycleCatalog.GetValidatedRequirementStatus(run.WorkflowCode);
             if (!string.IsNullOrWhiteSpace(nextStatus))
             {
-                requirement.AdvanceLifecycle(run.Id, nextStatus);
+                if (string.Equals(nextStatus, RequirementLifecycleStatus.PendingCommit, StringComparison.OrdinalIgnoreCase))
+                {
+                    requirement.MarkPendingCommit(run.Id);
+                }
+                else
+                {
+                    requirement.AdvanceLifecycle(run.Id, nextStatus);
+                }
             }
         }
 

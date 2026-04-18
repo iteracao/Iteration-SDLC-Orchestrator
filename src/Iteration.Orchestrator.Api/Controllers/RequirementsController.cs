@@ -28,6 +28,40 @@ public sealed class RequirementsController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpPost("api/requirements/{requirementId:guid}/commit")]
+    public async Task<IActionResult> Commit(
+        Guid requirementId,
+        [FromServices] CommitRequirementHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(new CommitRequirementCommand(requirementId), ct);
+            return Ok(new { id = requirementId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("api/requirements/{requirementId:guid}/cancel")]
+    public async Task<IActionResult> Cancel(
+        Guid requirementId,
+        [FromServices] CancelRequirementHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(new CancelRequirementCommand(requirementId), ct);
+            return Ok(new { id = requirementId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("api/solution-targets/{targetSolutionId:guid}/requirements")]
     public async Task<IActionResult> ListByTargetSolution(
         Guid targetSolutionId,

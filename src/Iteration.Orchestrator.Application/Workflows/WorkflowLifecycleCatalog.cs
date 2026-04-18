@@ -32,7 +32,7 @@ public static class WorkflowLifecycleCatalog
             "test-solution-change" => RequirementLifecycleStatus.Tested,
             "review-implementation" => RequirementLifecycleStatus.Reviewed,
             "deliver-solution-change" => RequirementLifecycleStatus.Delivered,
-            "update-solution-history" => RequirementLifecycleStatus.Documented,
+            "update-solution-history" => RequirementLifecycleStatus.PendingCommit,
             _ => null
         };
 
