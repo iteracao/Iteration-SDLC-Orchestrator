@@ -11,12 +11,14 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     private readonly string _endpoint;
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly IArtifactStore _artifacts;
 
-    public MicrosoftAgentFrameworkSolutionAnalystAgent(string endpoint, string model, IWorkflowRunLogStore logs)
+    public MicrosoftAgentFrameworkSolutionAnalystAgent(string endpoint, string model, IWorkflowRunLogStore logs, IArtifactStore artifacts)
     {
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
+        _artifacts = artifacts;
     }
 
     public async Task<SolutionAnalysisResult> AnalyzeAsync(
@@ -37,7 +39,14 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .ToList();
 
         await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
-        await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
+        await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Prompt summary", new Dictionary<string, string?>
+        {
+            ["Model"] = _model,
+            ["Repository files available"] = request.RepositoryFiles.Count.ToString(),
+            ["Framework docs available"] = request.ProfileRules.Count.ToString(),
+            ["Solution docs available"] = request.SolutionKnowledgeDocuments.Count.ToString()
+        }, ct);
+        await _artifacts.SaveTextAsync(request.WorkflowRunId, "prompt.txt", prompt, ct);
 
         try
         {
@@ -56,6 +65,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             var envelope = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent response parsed successfully.", ct);
+            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-response.raw.txt", rawText, ct);
 
             return new SolutionAnalysisResult(
             envelope.Result!.Summary,
@@ -72,7 +82,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent execution failed.", CancellationToken.None);
-            await _logs.AppendBlockAsync(request.WorkflowRunId, "Exception", ex.ToString(), CancellationToken.None);
+            await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Error", new Dictionary<string, string?>
+            {
+                ["Type"] = ex.GetType().Name,
+                ["Message"] = ex.Message
+            }, CancellationToken.None);
+            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-exception.txt", ex.ToString(), CancellationToken.None);
             throw;
         }
     }
@@ -98,102 +113,36 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
     private static string BuildPrompt(SolutionAnalysisRequest request)
     {
-        var sb = new StringBuilder();
+        var likelyFiles = PromptFormatting.PickLikelyRelevantFiles(
+            request.RepositoryFiles,
+            request.SearchHits.Select(x => x.RelativePath),
+            "Pages/Index.razor",
+            "State/SelectedSolutionState.cs",
+            "Controllers/RequirementsController.cs",
+            "Controllers/WorkflowRunsController.cs");
 
-        sb.AppendLine("WORKFLOW RUN ID:");
-        sb.AppendLine(request.WorkflowRunId.ToString());
-        sb.AppendLine();
-
-        sb.AppendLine("TARGET SOLUTION ID:");
-        sb.AppendLine(request.TargetSolutionId.ToString());
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW:");
-        sb.AppendLine($"{request.WorkflowCode} - {request.WorkflowName}");
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW PURPOSE:");
-        sb.AppendLine(request.WorkflowPurpose ?? string.Empty);
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW DISCIPLINE:");
-        sb.AppendLine("- This is an ANALYSIS workflow.");
-        sb.AppendLine("- Understand the requirement and current implementation.");
-        sb.AppendLine("- Do NOT design the solution, create a backlog, or describe implementation steps.");
-        sb.AppendLine();
-
-        sb.AppendLine("REQUIREMENT TITLE:");
-        sb.AppendLine(request.RequirementTitle ?? string.Empty);
-        sb.AppendLine();
-
-        sb.AppendLine("REQUIREMENT DESCRIPTION:");
-        sb.AppendLine(request.RequirementDescription ?? string.Empty);
-        sb.AppendLine();
-
-        sb.AppendLine("PROFILE SUMMARY:");
-        sb.AppendLine(request.ProfileSummary ?? string.Empty);
-        sb.AppendLine();
-
-        sb.AppendLine("FRAMEWORK DOCUMENTS (READ BY PATH WHEN NEEDED):");
-        AppendDocumentPaths(sb, request.ProfileRules);
-        sb.AppendLine();
-
-        sb.AppendLine("SOLUTION DOCUMENTS (READ BY PATH WHEN NEEDED):");
-        AppendDocumentPaths(sb, request.SolutionKnowledgeDocuments);
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW PRODUCED ARTIFACTS:");
-        foreach (var artifact in request.ProducedArtifacts)
-        {
-            sb.AppendLine($"- {artifact.Type}: {artifact.Name}");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW KNOWLEDGE UPDATES:");
-        foreach (var update in request.KnowledgeUpdates)
-        {
-            sb.AppendLine($"- {update}");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW EXECUTION RULES:");
-        foreach (var rule in request.ExecutionRules)
-        {
-            sb.AppendLine($"- {rule}");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("WORKFLOW NEXT OPTIONS:");
-        foreach (var workflowCode in request.NextWorkflowCodes)
-        {
-            sb.AppendLine($"- {workflowCode}");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("INPUT USAGE RULES:");
-        sb.AppendLine("- Repository files under src/ and the repository root are the primary evidence of actual implementation.");
-        sb.AppendLine("- Solution documents under AI/solutions/... are curated knowledge and may be incomplete.");
-        sb.AppendLine("- Framework documents are rules and constraints, not facts about the current implementation.");
-        sb.AppendLine("- Start from high-level files, then drill into relevant files only.");
-        sb.AppendLine("- Do not read files blindly; request only the files needed to complete this workflow.");
-        sb.AppendLine();
-
-        sb.AppendLine("REPOSITORY FILES (READ BY PATH WHEN NEEDED):");
-        AppendPathList(sb, request.RepositoryFiles);
-        sb.AppendLine();
-
-        sb.AppendLine("REPOSITORY DOCUMENTATION FILES (READ BY PATH WHEN NEEDED):");
-        AppendPathList(sb, request.RepositoryDocumentationFiles);
-        sb.AppendLine();
-
-        sb.AppendLine("SOLUTION SNAPSHOT:");
-        sb.AppendLine(JsonSerializer.Serialize(request.Snapshot, JsonOptions));
-        sb.AppendLine();
-
-        sb.AppendLine("SEARCH HITS (HINTS ONLY):");
-        sb.AppendLine(JsonSerializer.Serialize(request.SearchHits, JsonOptions));
-
-        return sb.ToString();
+        return PromptFormatting.BuildPrompt(
+            request.WorkflowCode,
+            request.WorkflowName,
+            request.WorkflowPurpose ?? string.Empty,
+            [
+                "This is an ANALYSIS workflow.",
+                "Understand the requirement and current implementation.",
+                "Do NOT design the solution, create a backlog, or describe implementation steps."
+            ],
+            new Dictionary<string, string?>
+            {
+                ["Workflow run id"] = request.WorkflowRunId.ToString(),
+                ["Target solution id"] = request.TargetSolutionId.ToString(),
+                ["Requirement title"] = request.RequirementTitle,
+                ["Requirement description"] = request.RequirementDescription
+            },
+            request.ProfileSummary ?? string.Empty,
+            request.ProfileRules,
+            request.SolutionKnowledgeDocuments,
+            request.RepositoryFiles,
+            likelyFiles,
+            request.ExecutionRules);
     }
 
     private static void AppendDocumentPaths(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)

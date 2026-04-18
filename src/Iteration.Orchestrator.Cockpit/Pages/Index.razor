@@ -705,7 +705,7 @@
 </div>
 
 
-@if (_drawerOpen && (_activeDocument is not null || _activeWorkflowLog is not null || _activeCard is not null))
+@if (_drawerOpen && (_activeDocument is not null || _activeWorkflowLog is not null || _activeWorkflowArtifact is not null || _activeCard is not null))
 {
     <div class="overlay-backdrop" @onclick="CloseDrawer"></div>
     <div class="overlay-shell">
@@ -730,6 +730,22 @@
                         </MudPaper>
                     </div>
                 }
+                else if (_activeWorkflowArtifact is not null)
+                {
+                    <MudStack Class="overlay-header" Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.h6">Workflow artifact</MudText>
+                            <MudText Typo="Typo.caption">@_activeWorkflowArtifact.FileName</MudText>
+                        </MudStack>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
+                    </MudStack>
+
+                    <div class="overlay-body">
+                        <MudPaper Class="drawer-content-block" Elevation="0">
+                            <pre class="doc-pre">@_activeWorkflowArtifact.Content</pre>
+                        </MudPaper>
+                    </div>
+                }
                 else if (_activeWorkflowLog is not null)
                 {
                     <MudStack Class="overlay-header" Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
@@ -742,6 +758,15 @@
 
                     <div class="overlay-body">
                         <MudPaper Class="drawer-content-block" Elevation="0">
+                            @if (_activeWorkflowLog.ArtifactFiles.Count > 0)
+                            {
+                                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Class="mb-3">
+                                    @foreach (var artifactFile in _activeWorkflowLog.ArtifactFiles)
+                                    {
+                                        <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small" OnClick="() => OpenWorkflowArtifactAsync(_activeWorkflowLog.WorkflowRunId, artifactFile)">@artifactFile</MudChip>
+                                    }
+                                </MudStack>
+                            }
                             <pre class="doc-pre">@_activeWorkflowLog.Content</pre>
                         </MudPaper>
                     </div>
@@ -936,6 +961,7 @@
     private RequirementStageCard? _activeCard;
     private SolutionDocumentContent? _activeDocument;
     private WorkflowLogContent? _activeWorkflowLog;
+    private WorkflowArtifactContent? _activeWorkflowArtifact;
     private readonly SetupSolutionModel _solutionRequest = new();
     private readonly CreateRequirementModel _requirementRequest = new();
 
@@ -1312,6 +1338,7 @@
     {
         _activeDocument = null;
         _activeWorkflowLog = null;
+        _activeWorkflowArtifact = null;
         _activeCard = card;
         _drawerOpen = true;
     }
@@ -1328,6 +1355,7 @@
         _activeDocument = await client.GetFromJsonAsync<SolutionDocumentContent>($"api/solutions/{SelectedSolutionState.Current.SolutionId}/documents/content?path={path}");
         _activeCard = null;
         _activeWorkflowLog = null;
+        _activeWorkflowArtifact = null;
         _drawerOpen = true;
     }
 
@@ -1335,8 +1363,19 @@
     {
         var client = HttpClientFactory.CreateClient("api");
         _activeWorkflowLog = await client.GetFromJsonAsync<WorkflowLogContent>($"api/workflow-runs/{workflowRunId}/log");
+        _activeWorkflowArtifact = null;
         _activeCard = null;
         _activeDocument = null;
+        _drawerOpen = true;
+    }
+
+    private async Task OpenWorkflowArtifactAsync(Guid workflowRunId, string fileName)
+    {
+        var client = HttpClientFactory.CreateClient("api");
+        _activeWorkflowArtifact = await client.GetFromJsonAsync<WorkflowArtifactContent>($"api/workflow-runs/{workflowRunId}/artifacts/{Uri.EscapeDataString(fileName)}");
+        _activeCard = null;
+        _activeDocument = null;
+        _activeWorkflowLog = null;
         _drawerOpen = true;
     }
 
@@ -1346,6 +1385,7 @@
         _activeCard = null;
         _activeDocument = null;
         _activeWorkflowLog = null;
+        _activeWorkflowArtifact = null;
     }
 
     private void OpenCreateSolutionPanel()
@@ -2083,6 +2123,14 @@
     }
 
     private sealed class WorkflowLogContent
+    {
+        public Guid WorkflowRunId { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+        public List<string> ArtifactFiles { get; set; } = [];
+    }
+
+    private sealed class WorkflowArtifactContent
     {
         public Guid WorkflowRunId { get; set; }
         public string FileName { get; set; } = string.Empty;

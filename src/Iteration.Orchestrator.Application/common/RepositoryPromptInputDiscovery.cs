@@ -1,10 +1,21 @@
+using System.Diagnostics;
 using Iteration.Orchestrator.Domain.Solutions;
 
-namespace Iteration.Orchestrator.Application.Workflows;
+namespace Iteration.Orchestrator.Application.Common;
 
 internal static class RepositoryPromptInputDiscovery
 {
-    public static Task<IReadOnlyList<string>> LoadRepositoryFilesAsync(
+    private static readonly string[] AllowedRepositoryExtensions =
+    [
+        ".cs",
+        ".razor",
+        ".csproj",
+        ".sln",
+        ".props",
+        ".targets"
+    ];
+
+    public static async Task<IReadOnlyList<string>> LoadRepositoryFilesAsync(
         SolutionTarget target,
         CancellationToken ct)
     {
@@ -12,60 +23,92 @@ internal static class RepositoryPromptInputDiscovery
 
         if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
         {
-            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+            return Array.Empty<string>();
         }
 
-        var srcPath = Path.Combine(repositoryPath, "src");
+        var trackedFiles = await LoadGitTrackedFilesAsync(repositoryPath, ct);
 
-        if (!Directory.Exists(srcPath))
-        {
-            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        }
-
-        var files = Directory
-            .EnumerateFiles(srcPath, "*.*", SearchOption.AllDirectories)
-            .Where(path =>
-                path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            .Select(path => Path.GetRelativePath(repositoryPath, path).Replace('\\', '/'))
+        return trackedFiles
+            .Where(path => !path.StartsWith("AI/", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.StartsWith(".github/", StringComparison.OrdinalIgnoreCase))
+            .Where(path => AllowedRepositoryExtensions.Contains(
+                Path.GetExtension(path),
+                StringComparer.OrdinalIgnoreCase))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-
-        return Task.FromResult<IReadOnlyList<string>>(files);
     }
 
-    public static IReadOnlyList<string> GetRepositoryDocumentationFiles(string repositoryPath)
+    public static IReadOnlyList<string> GetFrameworkDocumentationFiles(string repositoryPath)
+        => GetMarkdownFilesUnder(repositoryPath, Path.Combine("AI", "framework"));
+
+    public static IReadOnlyList<string> GetSolutionDocumentationFiles(string repositoryPath, string targetCode)
+        => GetMarkdownFilesUnder(repositoryPath, Path.Combine("AI", "solutions", targetCode));
+
+    private static IReadOnlyList<string> GetMarkdownFilesUnder(string repositoryPath, string relativeRoot)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
         {
             return Array.Empty<string>();
         }
 
-        var aiSolutionsPath = Path.Combine(repositoryPath, "AI", "solutions");
+        var fullRoot = Path.Combine(repositoryPath, relativeRoot);
+        if (!Directory.Exists(fullRoot))
+        {
+            return Array.Empty<string>();
+        }
 
         return Directory
-            .EnumerateFiles(repositoryPath, "*.md", SearchOption.AllDirectories)
-            .Where(path => !IsUnder(path, aiSolutionsPath))
+            .EnumerateFiles(fullRoot, "*.md", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(repositoryPath, path).Replace('\\', '/'))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
 
-        static bool IsUnder(string filePath, string rootPath)
+    private static async Task<IReadOnlyList<string>> LoadGitTrackedFilesAsync(
+        string repositoryPath,
+        CancellationToken ct)
+    {
+        var startInfo = new ProcessStartInfo
         {
-            if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
+            FileName = "git",
+            Arguments = "ls-files",
+            WorkingDirectory = repositoryPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+            if (process is null)
             {
-                return false;
+                return Array.Empty<string>();
             }
 
-            var fullFile = Path.GetFullPath(filePath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var fullRoot = Path.GetFullPath(rootPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+            var errorTask = process.StandardError.ReadToEndAsync(ct);
 
-            return fullFile.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(fullFile, fullRoot, StringComparison.OrdinalIgnoreCase);
+            await process.WaitForExitAsync(ct);
+
+            var output = await outputTask;
+            _ = await errorTask;
+
+            if (process.ExitCode != 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            return output
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim().Replace('\\', '/'))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
         }
     }
 }

@@ -66,22 +66,26 @@ builder.Services.AddSingleton<ISolutionAnalystAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionAnalystAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
-        sp.GetRequiredService<IWorkflowRunLogStore>()));
+        sp.GetRequiredService<IWorkflowRunLogStore>(),
+        sp.GetRequiredService<IArtifactStore>()));
 builder.Services.AddSingleton<ISolutionDesignerAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionDesignerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
-        sp.GetRequiredService<IWorkflowRunLogStore>()));
+        sp.GetRequiredService<IWorkflowRunLogStore>(),
+        sp.GetRequiredService<IArtifactStore>()));
 builder.Services.AddSingleton<ISolutionPlannerAgent>(sp =>
     new MicrosoftAgentFrameworkImplementationPlannerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
-        sp.GetRequiredService<IWorkflowRunLogStore>()));
+        sp.GetRequiredService<IWorkflowRunLogStore>(),
+        sp.GetRequiredService<IArtifactStore>()));
 builder.Services.AddSingleton<ISolutionImplementationAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionImplementationAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
-        sp.GetRequiredService<IWorkflowRunLogStore>()));
+        sp.GetRequiredService<IWorkflowRunLogStore>(),
+        sp.GetRequiredService<IArtifactStore>()));
 
 builder.Services.AddSingleton<ISolutionSetupService, FileSystemSolutionSetupService>();
 

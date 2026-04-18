@@ -157,6 +157,7 @@ public sealed class WorkflowRunsController : ControllerBase
     public async Task<IActionResult> GetLog(
         Guid id,
         [FromServices] IWorkflowRunLogStore logs,
+        [FromServices] IArtifactStore artifacts,
         CancellationToken ct)
     {
         var content = await logs.ReadAsync(id, ct);
@@ -165,10 +166,34 @@ public sealed class WorkflowRunsController : ControllerBase
             return NotFound(new { message = "Workflow log not found." });
         }
 
+        var artifactFiles = await artifacts.ListFilesAsync(id, ct);
+
         return Ok(new
         {
             workflowRunId = id,
             fileName = $"{id}.log",
+            content,
+            artifactFiles
+        });
+    }
+
+    [HttpGet("{id:guid}/artifacts/{fileName}")]
+    public async Task<IActionResult> GetArtifact(
+        Guid id,
+        string fileName,
+        [FromServices] IArtifactStore artifacts,
+        CancellationToken ct)
+    {
+        var content = await artifacts.ReadTextAsync(id, fileName, ct);
+        if (content is null)
+        {
+            return NotFound(new { message = "Artifact not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName,
             content
         });
     }

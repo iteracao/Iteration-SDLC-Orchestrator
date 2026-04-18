@@ -19,15 +19,31 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         await AppendAsync(workflowRunId, line, ct);
     }
 
+    public async Task AppendSectionAsync(Guid workflowRunId, string title, CancellationToken ct)
+    {
+        var content = $"{Environment.NewLine}[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} =={Environment.NewLine}";
+        await AppendAsync(workflowRunId, content, ct);
+    }
+
+    public async Task AppendKeyValuesAsync(Guid workflowRunId, string title, IReadOnlyDictionary<string, string?> values, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine($"[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} ==");
+        foreach (var pair in values)
+        {
+            sb.AppendLine($"- {pair.Key}: {pair.Value ?? string.Empty}");
+        }
+
+        await AppendAsync(workflowRunId, sb.ToString(), ct);
+    }
+
     public async Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"[{DateTime.UtcNow:O}] {title}");
         sb.AppendLine();
-        sb.AppendLine($"--- {title.ToUpperInvariant()} START ---");
+        sb.AppendLine($"[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} ==");
         sb.AppendLine(content ?? string.Empty);
-        sb.AppendLine($"--- {title.ToUpperInvariant()} END ---");
-        sb.AppendLine();
         await AppendAsync(workflowRunId, sb.ToString(), ct);
     }
 

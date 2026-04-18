@@ -7,6 +7,7 @@ using Iteration.Orchestrator.Domain.Questions;
 using Iteration.Orchestrator.Domain.Reports;
 using Iteration.Orchestrator.Domain.Requirements;
 using Iteration.Orchestrator.Domain.Workflows;
+using Iteration.Orchestrator.Application.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace Iteration.Orchestrator.Application.Workflows;
@@ -149,7 +150,7 @@ public sealed class StartImplementSolutionChangeRunHandler
 
         var snapshot = await _bridge.GetSolutionSnapshotAsync(solution, ct);
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
-        var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetRepositoryDocumentationFiles(solution.RepositoryPath);
+        var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
         var searchQuery = $"{requirement.Title} {backlogItem.Title} {backlogItem.Description}".Trim();
         var hits = await _bridge.SearchFilesAsync(solution, searchQuery, ct);
 
@@ -160,6 +161,17 @@ public sealed class StartImplementSolutionChangeRunHandler
         }
 
         var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
+
+        await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
+        await _logs.AppendKeyValuesAsync(run.Id, "Input summary", new Dictionary<string, string?>
+        {
+            ["Requirement"] = requirement.Title,
+            ["Target"] = solution.Code,
+            ["Framework docs available"] = repositoryDocumentationFiles.Count.ToString(),
+            ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
+            ["Repository files available"] = repositoryFiles.Count.ToString(),
+            ["Search hits"] = hits.Count.ToString()
+        }, ct);
 
         var request = new SolutionImplementationRequest(
             run.Id,
@@ -193,8 +205,9 @@ public sealed class StartImplementSolutionChangeRunHandler
             hits,
             sampleFiles);
 
-        var inputJson = JsonSerializer.Serialize(request);
-        await _logs.AppendBlockAsync(run.Id, "Workflow input", inputJson, ct);
+        var inputJson = JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });
+        await _logs.AppendLineAsync(run.Id, "Workflow request prepared.", ct);
+        await _artifacts.SaveTextAsync(run.Id, "workflow-input.json", inputJson, ct);
         var taskRun = new AgentTaskRun(run.Id, agentDef.Code, inputJson);
         taskRun.Start();
         _db.AgentTaskRuns.Add(taskRun);
@@ -202,6 +215,7 @@ public sealed class StartImplementSolutionChangeRunHandler
 
         try
         {
+            await _logs.AppendSectionAsync(run.Id, "Model call", ct);
             await _logs.AppendLineAsync(run.Id, "Calling workflow agent.", ct);
             var result = await _agent.ImplementAsync(request, agentDef, ct);
 
@@ -239,8 +253,14 @@ public sealed class StartImplementSolutionChangeRunHandler
         }
         catch (Exception ex)
         {
+            await _logs.AppendSectionAsync(run.Id, "Error", CancellationToken.None);
             await _logs.AppendLineAsync(run.Id, "Workflow execution failed.", CancellationToken.None);
-            await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
+            await _logs.AppendKeyValuesAsync(run.Id, "Error", new Dictionary<string, string?>
+            {
+                ["Type"] = ex.GetType().Name,
+                ["Message"] = ex.Message
+            }, CancellationToken.None);
+            await _artifacts.SaveTextAsync(run.Id, "workflow-exception.txt", ex.ToString(), CancellationToken.None);
             taskRun.Fail(ex.Message);
             run.Fail("implementation", ex.Message);
             backlogItem.MarkImplementationError();

@@ -11,12 +11,14 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
     private readonly string _endpoint;
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly IArtifactStore _artifacts;
 
-    public MicrosoftAgentFrameworkImplementationPlannerAgent(string endpoint, string model, IWorkflowRunLogStore logs)
+    public MicrosoftAgentFrameworkImplementationPlannerAgent(string endpoint, string model, IWorkflowRunLogStore logs, IArtifactStore artifacts)
     {
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
+        _artifacts = artifacts;
     }
 
     public async Task<SolutionPlanResult> PlanAsync(SolutionPlanRequest request, AgentDefinition agentDefinition, CancellationToken ct)
@@ -30,7 +32,14 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
-        await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
+        await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Prompt summary", new Dictionary<string, string?>
+        {
+            ["Model"] = _model,
+            ["Repository files available"] = request.RepositoryFiles.Count.ToString(),
+            ["Framework docs available"] = request.ProfileRules.Count.ToString(),
+            ["Solution docs available"] = request.SolutionKnowledgeDocuments.Count.ToString()
+        }, ct);
+        await _artifacts.SaveTextAsync(request.WorkflowRunId, "prompt.txt", prompt, ct);
 
         try
         {
@@ -49,6 +58,7 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
             var envelope = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(envelope, JsonOptions);
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent response parsed successfully.", ct);
+            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-response.raw.txt", rawText, ct);
 
             return new SolutionPlanResult(
             envelope.Result!.Summary,
@@ -65,7 +75,12 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(request.WorkflowRunId, "Agent execution failed.", CancellationToken.None);
-            await _logs.AppendBlockAsync(request.WorkflowRunId, "Exception", ex.ToString(), CancellationToken.None);
+            await _logs.AppendKeyValuesAsync(request.WorkflowRunId, "Error", new Dictionary<string, string?>
+            {
+                ["Type"] = ex.GetType().Name,
+                ["Message"] = ex.Message
+            }, CancellationToken.None);
+            await _artifacts.SaveTextAsync(request.WorkflowRunId, "agent-exception.txt", ex.ToString(), CancellationToken.None);
             throw;
         }
     }
@@ -91,82 +106,39 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
 
     private static string BuildPrompt(SolutionPlanRequest request)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("WORKFLOW RUN ID:");
-        sb.AppendLine(request.WorkflowRunId.ToString());
-        sb.AppendLine();
-        sb.AppendLine("TARGET SOLUTION ID:");
-        sb.AppendLine(request.TargetSolutionId.ToString());
-        sb.AppendLine();
-        sb.AppendLine("REQUIREMENT ID:");
-        sb.AppendLine(request.RequirementId.ToString());
-        sb.AppendLine();
-        sb.AppendLine("DESIGN WORKFLOW RUN ID:");
-        sb.AppendLine(request.DesignWorkflowRunId.ToString());
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW:");
-        sb.AppendLine($"{request.WorkflowCode} - {request.WorkflowName}");
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW PURPOSE:");
-        sb.AppendLine(request.WorkflowPurpose ?? string.Empty);
-        sb.AppendLine();
+        var likelyFiles = PromptFormatting.PickLikelyRelevantFiles(
+            request.RepositoryFiles,
+            request.SearchHits.Select(x => x.RelativePath),
+            "Workflows",
+            "Backlog",
+            "Pages/Backlog.razor");
 
-        sb.AppendLine("WORKFLOW DISCIPLINE:");
-        sb.AppendLine("- This is a PLANNING workflow.");
-        sb.AppendLine("- Break the design into ordered, testable backlog slices.");
-        sb.AppendLine("- Do NOT redesign the solution or implement code.");
-        sb.AppendLine();
-        sb.AppendLine("REQUIREMENT TITLE:");
-        sb.AppendLine(request.RequirementTitle ?? string.Empty);
-        sb.AppendLine();
-        sb.AppendLine("REQUIREMENT DESCRIPTION:");
-        sb.AppendLine(request.RequirementDescription ?? string.Empty);
-        sb.AppendLine();
-        sb.AppendLine("DESIGN SUMMARY:");
-        sb.AppendLine(request.DesignSummary ?? string.Empty);
-        sb.AppendLine();
-        sb.AppendLine("DESIGN STATUS:");
-        sb.AppendLine(request.DesignStatus ?? string.Empty);
-        sb.AppendLine();
-        sb.AppendLine("DESIGN ARTIFACTS:");
-        sb.AppendLine(request.DesignArtifactsJson ?? "[]");
-        sb.AppendLine();
-        sb.AppendLine("DESIGN OPEN QUESTIONS:");
-        sb.AppendLine(request.DesignOpenQuestionsJson ?? "[]");
-        sb.AppendLine();
-        sb.AppendLine("DESIGN DECISIONS:");
-        sb.AppendLine(request.DesignDecisionsJson ?? "[]");
-        sb.AppendLine();
-        sb.AppendLine("PROFILE SUMMARY:");
-        sb.AppendLine(request.ProfileSummary ?? string.Empty);
-        sb.AppendLine();
-        sb.AppendLine("FRAMEWORK DOCUMENTS (READ BY PATH WHEN NEEDED):");
-        AppendDocumentPaths(sb, request.ProfileRules);
-        sb.AppendLine();
-        sb.AppendLine("SOLUTION DOCUMENTS (READ BY PATH WHEN NEEDED):");
-        AppendDocumentPaths(sb, request.SolutionKnowledgeDocuments);
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW PRODUCED ARTIFACTS:");
-        foreach (var artifact in request.ProducedArtifacts) sb.AppendLine($"- {artifact.Type}: {artifact.Name}");
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW KNOWLEDGE UPDATES:");
-        foreach (var update in request.KnowledgeUpdates) sb.AppendLine($"- {update}");
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW EXECUTION RULES:");
-        foreach (var rule in request.ExecutionRules) sb.AppendLine($"- {rule}");
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW NEXT OPTIONS:");
-        foreach (var workflowCode in request.NextWorkflowCodes) sb.AppendLine($"- {workflowCode}");
-        sb.AppendLine();
-        sb.AppendLine("SOLUTION SNAPSHOT:");
-        sb.AppendLine(JsonSerializer.Serialize(request.Snapshot, JsonOptions));
-        sb.AppendLine();
-        sb.AppendLine("SEARCH HITS:");
-        sb.AppendLine(JsonSerializer.Serialize(request.SearchHits, JsonOptions));
-        sb.AppendLine();
-        sb.AppendLine("SAMPLE FILES:");
-        sb.AppendLine(JsonSerializer.Serialize(request.SampleFiles, JsonOptions));
-        return sb.ToString();
+        return PromptFormatting.BuildPrompt(
+            request.WorkflowCode,
+            request.WorkflowName,
+            request.WorkflowPurpose ?? string.Empty,
+            [
+                "This is a PLANNING workflow.",
+                "Create an implementation plan from the approved design.",
+                "Do NOT implement code changes in this workflow."
+            ],
+            new Dictionary<string, string?>
+            {
+                ["Workflow run id"] = request.WorkflowRunId.ToString(),
+                ["Target solution id"] = request.TargetSolutionId.ToString(),
+                ["Requirement id"] = request.RequirementId.ToString(),
+                ["Design workflow run id"] = request.DesignWorkflowRunId.ToString(),
+                ["Requirement title"] = request.RequirementTitle,
+                ["Requirement description"] = request.RequirementDescription,
+                ["Design summary"] = request.DesignSummary,
+                ["Design status"] = request.DesignStatus
+            },
+            request.ProfileSummary ?? string.Empty,
+            request.ProfileRules,
+            request.SolutionKnowledgeDocuments,
+            request.RepositoryFiles,
+            likelyFiles,
+            request.ExecutionRules);
     }
 
     private static void AppendDocumentPaths(StringBuilder sb, IReadOnlyList<TextDocumentInput> documents)
