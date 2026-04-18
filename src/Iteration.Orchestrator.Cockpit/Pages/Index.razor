@@ -1797,12 +1797,9 @@
     }
 
     private static string NormalizeTextForDisplay(string value)
-        => value.Replace("\\r\\n", Environment.NewLine)
-                .Replace("\\n", Environment.NewLine)
-                .Replace("\\r", Environment.NewLine)
-                .Replace("\r\n", Environment.NewLine)
-                .Replace("\n", Environment.NewLine)
-                .Replace("\r", Environment.NewLine);
+    => value.Replace("\r\n", Environment.NewLine)
+            .Replace("\n", Environment.NewLine)
+            .Replace("\r", Environment.NewLine);
 
     private static string? TryDecodeJsonString(string raw)
     {
