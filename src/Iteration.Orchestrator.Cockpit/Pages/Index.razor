@@ -8,6 +8,9 @@
 <PageTitle>Cockpit</PageTitle>
 
 <style>
+    html {
+        overflow-y: auto;
+    }
     .cockpit-shell {
         max-width: 1280px;
         margin: 0 auto;
@@ -290,10 +293,47 @@
         font-size: 0.875rem;
     }
 
+    .overlay-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.38);
+        z-index: 1300;
+    }
+
+    .overlay-shell {
+        position: fixed;
+        inset: 0;
+        z-index: 1301;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        box-sizing: border-box;
+        pointer-events: none;
+    }
+
+    .overlay-panel {
+        width: min(1100px, calc(100vw - 48px));
+        max-width: 1100px;
+        height: min(90vh, calc(100vh - 48px));
+        max-height: calc(100vh - 48px);
+        display: flex;
+        flex-direction: column;
+        border-radius: 12px;
+        overflow: hidden;
+        pointer-events: auto;
+        background: #ffffff;
+    }
+
     .drawer-section {
         display: flex;
         flex-direction: column;
         gap: 14px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        box-sizing: border-box;
     }
 
     .drawer-content-block {
@@ -335,7 +375,8 @@
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            Dense="true"
-                           FullWidth="true">
+                           FullWidth="true"
+                           Disabled="@(_createSolutionPanelOpen || _savingSolution)">
                     @foreach (var option in _solutionTargetOptions)
                     {
                         <MudSelectItem T="Guid?" Value="@option.TargetId">@option.Label</MudSelectItem>
@@ -347,6 +388,7 @@
                     <MudIconButton Icon="@Icons.Material.Filled.Add"
                                     Size="Size.Small"
                                     Class="toolbar-action-button toolbar-action-primary"
+                                    Disabled="@(_createSolutionPanelOpen || _savingSolution || HasActiveWorkflowRuns())"
                                     OnClick="OpenCreateSolutionPanel"
                                     aria-label="Create solution" />
                 </MudTooltip>
@@ -440,8 +482,8 @@
             </MudForm>
 
             <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="create-panel-actions">
-                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="CloseCreateSolutionPanel">Cancel</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_savingSolution" OnClick="CreateSolutionAsync">
+                <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="_savingSolution" OnClick="CloseCreateSolutionPanel">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@(_savingSolution || HasActiveWorkflowRuns())" OnClick="CreateSolutionAsync">
                     Create solution
                 </MudButton>
             </MudStack>
@@ -462,6 +504,9 @@
         <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">
             @_loadError
         </MudAlert>
+    }
+    else if (_createSolutionPanelOpen)
+    {
     }
     else if (SelectedSolutionState.Current is null)
     {
@@ -548,171 +593,173 @@
     }
 </div>
 
-<MudDrawer @bind-Open="_drawerOpen"
-           Anchor="Anchor.End"
-           Variant="DrawerVariant.Temporary"
-           Elevation="1"
-           Width="520px">
-    <MudStack Class="pa-4 drawer-section">
-        @if (_activeDocument is not null)
-        {
-            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
-                <MudStack Spacing="0">
-                    <MudText Typo="Typo.h6">@_activeDocument.Name</MudText>
-                    <MudText Typo="Typo.caption">@_activeDocument.RelativePath</MudText>
+@if (_drawerOpen && (_activeDocument is not null || _activeWorkflowLog is not null || _activeCard is not null))
+{
+    <div class="overlay-backdrop" @onclick="CloseDrawer"></div>
+    <div class="overlay-shell">
+        <MudPaper Class="overlay-panel" Elevation="6">
+            <MudStack Class="pa-4 drawer-section">
+            @if (_activeDocument is not null)
+            {
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.h6">@_activeDocument.Name</MudText>
+                        <MudText Typo="Typo.caption">@_activeDocument.RelativePath</MudText>
+                    </MudStack>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
                 </MudStack>
-                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
-            </MudStack>
 
-            <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.caption" Class="mb-2">
-                    Last updated @(_activeDocument.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
-                </MudText>
-                <pre class="doc-pre">@_activeDocument.Content</pre>
-            </MudPaper>
-        }
-        else if (_activeWorkflowLog is not null)
-        {
-            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
-                <MudStack Spacing="0">
-                    <MudText Typo="Typo.h6">Workflow log</MudText>
-                    <MudText Typo="Typo.caption">@_activeWorkflowLog.FileName</MudText>
+                <MudPaper Class="drawer-content-block" Elevation="0">
+                    <MudText Typo="Typo.caption" Class="mb-2">
+                        Last updated @(_activeDocument.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+                    </MudText>
+                    <pre class="doc-pre">@_activeDocument.Content</pre>
+                </MudPaper>
+            }
+            else if (_activeWorkflowLog is not null)
+            {
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.h6">Workflow log</MudText>
+                        <MudText Typo="Typo.caption">@_activeWorkflowLog.FileName</MudText>
+                    </MudStack>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
                 </MudStack>
-                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
-            </MudStack>
 
-            <MudPaper Class="drawer-content-block" Elevation="0">
-                <pre class="doc-pre">@_activeWorkflowLog.Content</pre>
-            </MudPaper>
-        }
-        else if (_activeCard is not null)
-        {
-            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
-                <MudStack Spacing="0">
-                    <MudText Typo="Typo.h6">@_activeCard.Title</MudText>
-                    <MudText Typo="Typo.caption">@_activeCard.LaneTitle</MudText>
+                <MudPaper Class="drawer-content-block" Elevation="0">
+                    <pre class="doc-pre">@_activeWorkflowLog.Content</pre>
+                </MudPaper>
+            }
+            else if (_activeCard is not null)
+            {
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.h6">@_activeCard.Title</MudText>
+                        <MudText Typo="Typo.caption">@_activeCard.LaneTitle</MudText>
+                    </MudStack>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
                 </MudStack>
-                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
-            </MudStack>
 
-            <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.caption" Class="mb-1">
-                    Created @(_activeCard.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
-                </MudText>
-                <MudChip T="string"
-                         Variant="Variant.Outlined"
-                         Size="Size.Small"
-                         Style="@($"border-color:{_activeCard.State.Color}; color:{_activeCard.State.Color};")">
-                    @_activeCard.StatusLabel
-                </MudChip>
-                <MudText Typo="Typo.body2" Class="mt-3">@_activeCard.Description</MudText>
-            </MudPaper>
+                <MudPaper Class="drawer-content-block" Elevation="0">
+                    <MudText Typo="Typo.caption" Class="mb-1">
+                        Created @(_activeCard.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+                    </MudText>
+                    <MudChip T="string"
+                             Variant="Variant.Outlined"
+                             Size="Size.Small"
+                             Style="@($"border-color:{_activeCard.State.Color}; color:{_activeCard.State.Color};")">
+                        @_activeCard.StatusLabel
+                    </MudChip>
+                    <MudText Typo="Typo.body2" Class="mt-3">@_activeCard.Description</MudText>
+                </MudPaper>
 
-            <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.subtitle2" Class="mb-2">Actions</MudText>
-                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
-                    <MudButton Size="Size.Small"
-                               Variant="Variant.Filled"
-                               Color="Color.Primary"
-                               Disabled="!CanAnalyze(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
-                               OnClick="() => StartAnalyzeAsync(_activeCard.Requirement.Id)">
-                        Analyze
-                    </MudButton>
+                <MudPaper Class="drawer-content-block" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Actions</MudText>
+                    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="!CanAnalyze(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
+                                   OnClick="() => StartAnalyzeAsync(_activeCard.Requirement.Id)">
+                            Analyze
+                        </MudButton>
 
-                    <MudButton Size="Size.Small"
-                               Variant="Variant.Outlined"
-                               Color="Color.Secondary"
-                               Disabled="!CanDesign(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
-                               OnClick="() => StartDesignAsync(_activeCard.Requirement.Id)">
-                        Design
-                    </MudButton>
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Outlined"
+                                   Color="Color.Secondary"
+                                   Disabled="!CanDesign(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
+                                   OnClick="() => StartDesignAsync(_activeCard.Requirement.Id)">
+                            Design
+                        </MudButton>
 
-                    <MudButton Size="Size.Small"
-                               Variant="Variant.Text"
-                               Color="Color.Info"
-                               Disabled="!CanPlan(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
-                               OnClick="() => StartPlanAsync(_activeCard.Requirement.Id)">
-                        Plan
-                    </MudButton>
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Text"
+                                   Color="Color.Info"
+                                   Disabled="!CanPlan(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
+                                   OnClick="() => StartPlanAsync(_activeCard.Requirement.Id)">
+                            Plan
+                        </MudButton>
 
-                    <MudButton Size="Size.Small"
-                               Variant="Variant.Filled"
-                               Color="Color.Success"
-                               Disabled="!CanCommitRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
-                               OnClick="() => CommitRequirementAsync(_activeCard.Requirement.Id)">
-                        Commit Requirement
-                    </MudButton>
-
-                    <MudButton Size="Size.Small"
-                               Variant="Variant.Outlined"
-                               Color="Color.Error"
-                               Disabled="!CanCancelRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
-                               OnClick="() => CancelRequirementAsync(_activeCard.Requirement.Id)">
-                        Cancel Requirement
-                    </MudButton>
-
-                    @if (_activeCard.BacklogItem is not null)
-                    {
                         <MudButton Size="Size.Small"
                                    Variant="Variant.Filled"
                                    Color="Color.Success"
-                                   Disabled="!CanImplement(_activeCard.BacklogItem) || _runningBacklogItemId == _activeCard.BacklogItem.Id"
-                                   OnClick="() => StartImplementationAsync(_activeCard.BacklogItem.Id)">
-                            Implement
-                        </MudButton>
-                    }
-
-                    @if (_activeCard.WorkflowRun is not null)
-                    {
-                        <MudButton Size="Size.Small"
-                                   Variant="Variant.Filled"
-                                   Color="Color.Warning"
-                                   Disabled="!CanValidate(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
-                                   OnClick="() => ValidateWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
-                            Validate
+                                   Disabled="!CanCommitRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
+                                   OnClick="() => CommitRequirementAsync(_activeCard.Requirement.Id)">
+                            Commit Requirement
                         </MudButton>
 
                         <MudButton Size="Size.Small"
                                    Variant="Variant.Outlined"
                                    Color="Color.Error"
-                                   Disabled="!CanCancel(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
-                                   OnClick="() => CancelWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
-                            Cancel
+                                   Disabled="!CanCancelRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
+                                   OnClick="() => CancelRequirementAsync(_activeCard.Requirement.Id)">
+                            Cancel Requirement
+                        </MudButton>
+
+                        @if (_activeCard.BacklogItem is not null)
+                        {
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Success"
+                                       Disabled="!CanImplement(_activeCard.BacklogItem) || _runningBacklogItemId == _activeCard.BacklogItem.Id"
+                                       OnClick="() => StartImplementationAsync(_activeCard.BacklogItem.Id)">
+                                Implement
+                            </MudButton>
+                        }
+
+                        @if (_activeCard.WorkflowRun is not null)
+                        {
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Warning"
+                                       Disabled="!CanValidate(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                       OnClick="() => ValidateWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
+                                Validate
+                            </MudButton>
+
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Outlined"
+                                       Color="Color.Error"
+                                       Disabled="!CanCancel(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                       OnClick="() => CancelWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
+                                Cancel
+                            </MudButton>
+                        }
+                    </MudStack>
+                </MudPaper>
+
+                <MudPaper Class="drawer-content-block" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Workflow snapshot</MudText>
+                    <MudText Typo="Typo.body2">Requirement status: @_activeCard.Requirement.Status</MudText>
+                    <MudText Typo="Typo.body2">Priority: @_activeCard.Requirement.Priority</MudText>
+
+                    @if (_activeCard.WorkflowRun is not null)
+                    {
+                        <MudText Typo="Typo.body2">Workflow: @_activeCard.WorkflowRun.WorkflowCode</MudText>
+                        <MudText Typo="Typo.body2">Run stage: @_activeCard.WorkflowRun.CurrentStage</MudText>
+                        <MudText Typo="Typo.body2">Run status: @HumanizeWorkflowStatus(_activeCard.WorkflowRun.Status)</MudText>
+
+                        @if (!string.IsNullOrWhiteSpace(_activeCard.WorkflowRun.FailureReason))
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_activeCard.WorkflowRun.FailureReason</MudAlert>
+                        }
+
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
+                            View log
                         </MudButton>
                     }
-                </MudStack>
-            </MudPaper>
 
-            <MudPaper Class="drawer-content-block" Elevation="0">
-                <MudText Typo="Typo.subtitle2" Class="mb-2">Workflow snapshot</MudText>
-                <MudText Typo="Typo.body2">Requirement status: @_activeCard.Requirement.Status</MudText>
-                <MudText Typo="Typo.body2">Priority: @_activeCard.Requirement.Priority</MudText>
-
-                @if (_activeCard.WorkflowRun is not null)
-                {
-                    <MudText Typo="Typo.body2">Workflow: @_activeCard.WorkflowRun.WorkflowCode</MudText>
-                    <MudText Typo="Typo.body2">Run stage: @_activeCard.WorkflowRun.CurrentStage</MudText>
-                    <MudText Typo="Typo.body2">Run status: @HumanizeWorkflowStatus(_activeCard.WorkflowRun.Status)</MudText>
-
-                    @if (!string.IsNullOrWhiteSpace(_activeCard.WorkflowRun.FailureReason))
+                    @if (_activeCard.BacklogItem is not null)
                     {
-                        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_activeCard.WorkflowRun.FailureReason</MudAlert>
+                        <MudText Typo="Typo.body2">Backlog order: @_activeCard.BacklogItem.PlanningOrder</MudText>
+                        <MudText Typo="Typo.body2">Backlog status: @_activeCard.BacklogItem.Status</MudText>
                     }
-
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
-                        View log
-                    </MudButton>
+                </MudPaper>
                 }
-
-                @if (_activeCard.BacklogItem is not null)
-                {
-                    <MudText Typo="Typo.body2">Backlog order: @_activeCard.BacklogItem.PlanningOrder</MudText>
-                    <MudText Typo="Typo.body2">Backlog status: @_activeCard.BacklogItem.Status</MudText>
-                }
-            </MudPaper>
-        }
-    </MudStack>
-</MudDrawer>
+            </MudStack>
+        </MudPaper>
+    </div>
+}
 
 @code {
     private static readonly IReadOnlyList<PipelineDefinition> _pipelineDefinitions =
@@ -1173,6 +1220,11 @@
 
     private void OpenCreateSolutionPanel()
     {
+        if (_savingSolution || HasActiveWorkflowRuns())
+        {
+            return;
+        }
+
         _createSolutionMessage = null;
         _createSolutionPanelOpen = true;
         StateHasChanged();
@@ -1180,11 +1232,21 @@
 
     private void CloseCreateSolutionPanel()
     {
+        if (_savingSolution)
+        {
+            return;
+        }
+
         _createSolutionPanelOpen = false;
     }
 
     private async Task CreateSolutionAsync()
     {
+        if (_savingSolution || HasActiveWorkflowRuns())
+        {
+            return;
+        }
+
         if (_createSolutionForm is not null)
         {
             await _createSolutionForm.Validate();
