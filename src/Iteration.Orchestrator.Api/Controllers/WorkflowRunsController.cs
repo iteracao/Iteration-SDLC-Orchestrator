@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Api.Contracts;
 using Iteration.Orchestrator.Application.Solutions;
@@ -153,6 +154,81 @@ public sealed class WorkflowRunsController : ControllerBase
         }
     }
 
+
+    [HttpGet("{id:guid}/prompt")]
+    public async Task<IActionResult> GetPrompt(
+        Guid id,
+        [FromServices] IWorkflowRunLogStore logs,
+        CancellationToken ct)
+    {
+        var logContent = await logs.ReadAsync(id, ct);
+        if (string.IsNullOrWhiteSpace(logContent))
+        {
+            return NotFound(new { message = "Workflow prompt not found." });
+        }
+
+        var promptContent = ExtractLogSection(logContent, "Prompt");
+        if (string.IsNullOrWhiteSpace(promptContent))
+        {
+            return NotFound(new { message = "Workflow prompt not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName = $"{id}-prompt.txt",
+            content = promptContent
+        });
+    }
+
+    [HttpGet("{id:guid}/input")]
+    public async Task<IActionResult> GetInput(
+        Guid id,
+        [FromServices] IWorkflowPayloadStore payloadStore,
+        CancellationToken ct)
+    {
+        try
+        {
+            var payload = await payloadStore.GetInputAsync(id, ct);
+            return Ok(new
+            {
+                workflowRunId = id,
+                fileName = $"{id}-input.json",
+                content = payload.InputPayloadJson
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id:guid}/output")]
+    public async Task<IActionResult> GetOutput(
+        Guid id,
+        [FromServices] AppDbContext db,
+        CancellationToken ct)
+    {
+        var taskRun = await db.AgentTaskRuns
+            .AsNoTracking()
+            .Where(x => x.WorkflowRunId == id)
+            .OrderByDescending(x => x.StartedUtc)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (taskRun is null || string.IsNullOrWhiteSpace(taskRun.OutputPayloadJson))
+        {
+            return NotFound(new { message = "Workflow output payload not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName = $"{id}-output.json",
+            content = taskRun.OutputPayloadJson
+        });
+    }
+
     [HttpGet("{id:guid}/log")]
     public async Task<IActionResult> GetLog(
         Guid id,
@@ -273,5 +349,20 @@ public sealed class WorkflowRunsController : ControllerBase
                 ?? designReport as object
                 ?? analysisReport as object
         });
+    }
+
+    private static string? ExtractLogSection(string logContent, string sectionTitle)
+    {
+        if (string.IsNullOrWhiteSpace(logContent) || string.IsNullOrWhiteSpace(sectionTitle))
+        {
+            return null;
+        }
+
+        var normalizedLog = logContent.Replace("\r\n", "\n");
+        var pattern = $@"^\[[^\n]+\]\s==\s{Regex.Escape(sectionTitle.ToUpperInvariant())}\s==\s*\n(?<content>[\s\S]*?)(?=^\[[^\n]+\]\s==\s[A-Z0-9 _\-]+\s==\s*\n|\z)";
+        var match = Regex.Match(normalizedLog, pattern, RegexOptions.Multiline);
+        return match.Success
+            ? match.Groups["content"].Value.Trim()
+            : null;
     }
 }
