@@ -1638,11 +1638,7 @@
 
         if (preferJson)
         {
-            var formattedJson = TryFormatJsonForDisplay(normalized);
-            if (!string.IsNullOrWhiteSpace(formattedJson))
-            {
-                return formattedJson;
-            }
+            return NormalizeJsonViewerText(normalized);
         }
 
         var decodedText = TryDecodeJsonString(normalized);
@@ -1651,155 +1647,44 @@
             normalized = decodedText;
         }
 
-        return normalized.Replace("\r\n", Environment.NewLine).Replace("\n", Environment.NewLine);
+        return NormalizePlainViewerText(normalized);
     }
 
-    private static string? TryFormatJsonForDisplay(string raw)
+    private static string NormalizeJsonViewerText(string value)
     {
-        const int maxDepth = 6;
-        var current = raw;
+        if (string.IsNullOrEmpty(value))
+            return value;
 
-        for (var depth = 0; depth < maxDepth; depth++)
-        {
-            try
-            {
-                using var document = System.Text.Json.JsonDocument.Parse(current);
-                var normalized = NormalizeJsonElementForDisplay(document.RootElement, depth: 0, maxDepth: maxDepth);
+        const string escapedR = "__ESCAPED_BACKSLASH_R__";
+        const string escapedN = "__ESCAPED_BACKSLASH_N__";
 
-                if (normalized is string nestedString)
-                {
-                    if (string.IsNullOrWhiteSpace(nestedString))
-                    {
-                        return string.Empty;
-                    }
-
-                    if (LooksLikeJsonText(nestedString))
-                    {
-                        current = nestedString.Trim();
-                        continue;
-                    }
-
-                    return NormalizeTextForDisplay(nestedString);
-                }
-
-                return System.Text.Json.JsonSerializer.Serialize(
-                    normalized,
-                    new System.Text.Json.JsonSerializerOptions
-                    {
-                        WriteIndented = true,
-                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                    });
-            }
-            catch
-            {
-                var decoded = TryDecodeJsonString(current);
-                if (string.IsNullOrWhiteSpace(decoded) || string.Equals(decoded, current, StringComparison.Ordinal))
-                {
-                    return null;
-                }
-
-                current = decoded.Trim();
-            }
-        }
-
-        return null;
+        return value
+         .Replace("\\r", escapedR)
+         .Replace("\\n", escapedN)
+         .Replace("\r\n", Environment.NewLine)
+         .Replace("\r", Environment.NewLine)
+         .Replace("\n", Environment.NewLine)
+         .Replace(escapedR, "\\r")
+         .Replace(escapedN, "\\n");
     }
 
-    private static object? NormalizeJsonElementForDisplay(System.Text.Json.JsonElement element, int depth, int maxDepth)
+    private static string NormalizePlainViewerText(string value)
     {
-        if (depth >= maxDepth)
-        {
-            return NormalizeTextForDisplay(element.GetRawText());
-        }
+        if (string.IsNullOrEmpty(value))
+            return value;
 
-        switch (element.ValueKind)
-        {
-            case System.Text.Json.JsonValueKind.Object:
-            {
-                var dictionary = new Dictionary<string, object?>();
-                foreach (var property in element.EnumerateObject())
-                {
-                    dictionary[property.Name] = NormalizeJsonElementForDisplay(property.Value, depth + 1, maxDepth);
-                }
+        const string escapedR = "__ESCAPED_BACKSLASH_R__";
+        const string escapedN = "__ESCAPED_BACKSLASH_N__";
 
-                return dictionary;
-            }
-
-            case System.Text.Json.JsonValueKind.Array:
-            {
-                var items = new List<object?>();
-                foreach (var item in element.EnumerateArray())
-                {
-                    items.Add(NormalizeJsonElementForDisplay(item, depth + 1, maxDepth));
-                }
-
-                return items;
-            }
-
-            case System.Text.Json.JsonValueKind.String:
-            {
-                var value = element.GetString() ?? string.Empty;
-                value = NormalizeTextForDisplay(value);
-
-                if (LooksLikeJsonText(value))
-                {
-                    try
-                    {
-                        using var nestedDocument = System.Text.Json.JsonDocument.Parse(value);
-                        return NormalizeJsonElementForDisplay(nestedDocument.RootElement, depth + 1, maxDepth);
-                    }
-                    catch
-                    {
-                        return value;
-                    }
-                }
-
-                return value;
-            }
-
-            case System.Text.Json.JsonValueKind.Number:
-                if (element.TryGetInt64(out var longValue))
-                {
-                    return longValue;
-                }
-
-                if (element.TryGetDecimal(out var decimalValue))
-                {
-                    return decimalValue;
-                }
-
-                return element.GetDouble();
-
-            case System.Text.Json.JsonValueKind.True:
-            case System.Text.Json.JsonValueKind.False:
-                return element.GetBoolean();
-
-            case System.Text.Json.JsonValueKind.Null:
-            case System.Text.Json.JsonValueKind.Undefined:
-                return null;
-
-            default:
-                return NormalizeTextForDisplay(element.GetRawText());
-        }
+        return value
+        .Replace("\\r", escapedR)
+        .Replace("\\n", escapedN)
+        .Replace("\r\n", Environment.NewLine)
+        .Replace("\r", Environment.NewLine)
+        .Replace("\n", Environment.NewLine)
+        .Replace(escapedR, "\\r")
+        .Replace(escapedN, "\\n");
     }
-
-    private static bool LooksLikeJsonText(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        return (trimmed.StartsWith("{") && trimmed.EndsWith("}"))
-               || (trimmed.StartsWith("[") && trimmed.EndsWith("]"))
-               || (trimmed.StartsWith("\"") && trimmed.EndsWith("\""));
-    }
-
-    private static string NormalizeTextForDisplay(string value)
-    => value.Replace("\r\n", Environment.NewLine)
-            .Replace("\n", Environment.NewLine)
-            .Replace("\r", Environment.NewLine);
 
     private static string? TryDecodeJsonString(string raw)
     {
