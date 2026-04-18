@@ -27,13 +27,13 @@ Trigger and actual inputs:
 
 What the current code does:
 
+- runs as a deterministic system workflow; it does not invoke an AI agent
 - validates repository path access, main solution file format, target code normalization, and GitHub URL shape
 - looks up GitHub metadata, including default branch and private/public access
-- creates or updates `Solution`
-- creates or updates the single `SolutionTarget`
-- creates a real `WorkflowRun` and `AgentTaskRun`
 - calls `FileSystemSolutionSetupService`
-- saves `setup-solution.input.json` and `solution-setup-result.json` artifacts
+- prepares setup artifacts
+- commits `Solution`, `SolutionTarget`, `WorkflowRun`, and `AgentTaskRun` only after preparation succeeds
+- returns `NextWorkflowCode = "update-target-documentation"` as the handoff hint for the next workflow
 
 Filesystem/bootstrap behavior:
 
@@ -46,18 +46,34 @@ Filesystem/bootstrap behavior:
 
 Persisted outputs and state changes:
 
-- `WorkflowRun` and `AgentTaskRun`
+- deterministic `WorkflowRun` and succeeded `AgentTaskRun`
 - setup artifacts under `data/runs/<workflowRunId>/`
 - baseline docs under `AI/solutions/<target-storage-code>/`
 - updated `Solution` and `SolutionTarget`
 
+Workflow state result:
+
+- setup is completed and validated in one deterministic pass because it is a system workflow, not a human-reviewed requirement workflow
+
+Corrected execution order:
+
+- phase 1: validate inputs, resolve metadata, run filesystem/bootstrap preparation, and save setup artifacts
+- phase 2: persist `Solution`, `SolutionTarget`, `WorkflowRun`, and `AgentTaskRun` inside one explicit DB transaction
+
+Failure behavior:
+
+- if validation, metadata lookup, bootstrap, or artifact writing fails, no DB state is committed
+- if DB persistence fails after preparation, the DB transaction is rolled back and setup artifacts for the run are cleaned up
+- repository/bootstrap changes are intentionally not rolled back automatically; setup is expected to be safe to rerun against the prepared repository
+
 Important current limitations:
 
-- the handler requires `RepositoryPath` to already exist, even though the workflow YAML and setup service still describe repo creation when missing
-- the handler currently requires `RemoteRepositoryUrl`, even though the workflow YAML marks it optional
 - update/setup still resolves only one target per solution
 - setup does not bootstrap docs from repository truth; it only seeds missing templates
 - setup does not scaffold `design/latest-design.md` or `delivery/latest-plan.md`
+- setup does not generate solution knowledge or perform lifecycle normalization
+- real documentation understanding/update is intentionally deferred to the next workflow, `update-target-documentation`
+- `update-target-documentation` is a prepared handoff target, not an already implemented setup sub-step
 
 ### 2. Analyze Request
 
@@ -92,9 +108,10 @@ Persisted outputs:
 
 Requirement state changes:
 
-- start: `under-analysis`
-- success: `analyzed`
-- failure: `analysis-failed`
+- run start: requirement stays `Pending`
+- run success: workflow run becomes `CompletedAwaitingValidation`
+- validation: requirement becomes `Analyzed`
+- run failure: workflow run becomes `Error`; requirement stays `Pending`
 
 Current notes:
 
@@ -134,9 +151,10 @@ Persisted outputs:
 
 Requirement state changes:
 
-- start: `under-design`
-- success: `designed`
-- failure: `design-failed`
+- run start: requirement stays `Analyzed`
+- run success: workflow run becomes `CompletedAwaitingValidation`
+- validation: requirement becomes `Designed`
+- run failure: workflow run becomes `Error`; requirement stays `Analyzed`
 
 Current notes:
 
@@ -176,9 +194,10 @@ Persisted outputs:
 
 Requirement state changes:
 
-- start: `under-planning`
-- success: `planned`
-- failure: `planning-failed`
+- run start: requirement stays `Designed`
+- run success: workflow run becomes `CompletedAwaitingValidation`
+- validation: requirement becomes `Planned`
+- run failure: workflow run becomes `Error`; requirement stays `Designed`
 
 Current notes:
 
@@ -223,16 +242,32 @@ Persisted outputs:
 
 Backlog and requirement state changes:
 
-- requirement start: `under-implementation`
+- requirement start: requirement stays `Planned`
 - backlog success: `AwaitingValidation`
-- requirement success: `awaiting-implementation-validation`
+- workflow success: run becomes `CompletedAwaitingValidation`
+- validation: backlog becomes `Validated`, requirement becomes `Implemented`
 - backlog failure: `ImplementationError`
-- requirement failure: `implementation-failed`
+- workflow failure: run becomes `Error`; requirement stays `Planned`
 
 Important current gap:
 
 - the current implementation agent is read-only and cannot edit repository files
 - the workflow therefore records an implementation result and advances statuses, but it does not actually apply code changes to the target repository yet
+
+## Shared Lifecycle Rules
+
+- Workflow run states are normalized to `Pending`, `Running`, `CompletedAwaitingValidation`, `CompletedValidated`, `Error`, and `Cancelled`.
+- Requirement lifecycle states are normalized to `Pending`, `Analyzed`, `Designed`, `Planned`, `Implemented`, `Tested`, `Reviewed`, `Delivered`, `Documented`, `ValidatedCommitted`, and `CancelledRolledBack`.
+- Requirement progression happens only when the corresponding workflow run is explicitly validated.
+- There is no retry action. A later attempt must be a new workflow run.
+- A stage stays blocked while the latest run for that stage is `Pending`, `Running`, or `CompletedAwaitingValidation`.
+- Generic validation and cancellation API actions exist for workflow runs even though validation is not yet a dedicated executor-backed workflow stage.
+
+## Cockpit Refresh
+
+- The cockpit refreshes immediately after run, validate, and cancel actions.
+- Polling remains active while the selected target has runs in `Pending`, `Running`, or `CompletedAwaitingValidation`.
+- Polling is snapshot-based for requirement, backlog, and workflow-run status fields, so unchanged polls do not trigger UI updates.
 
 ## Intended Later Stages
 

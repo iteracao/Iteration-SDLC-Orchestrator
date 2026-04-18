@@ -614,7 +614,7 @@
                     <MudButton Size="Size.Small"
                                Variant="Variant.Filled"
                                Color="Color.Primary"
-                               Disabled="!CanAnalyze(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               Disabled="!CanAnalyze(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
                                OnClick="() => StartAnalyzeAsync(_activeCard.Requirement.Id)">
                         Analyze
                     </MudButton>
@@ -622,7 +622,7 @@
                     <MudButton Size="Size.Small"
                                Variant="Variant.Outlined"
                                Color="Color.Secondary"
-                               Disabled="!CanDesign(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               Disabled="!CanDesign(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
                                OnClick="() => StartDesignAsync(_activeCard.Requirement.Id)">
                         Design
                     </MudButton>
@@ -630,7 +630,7 @@
                     <MudButton Size="Size.Small"
                                Variant="Variant.Text"
                                Color="Color.Info"
-                               Disabled="!CanPlan(_activeCard.Requirement.Status) || _runningRequirementId == _activeCard.Requirement.Id"
+                               Disabled="!CanPlan(_activeCard.Requirement) || _runningRequirementId == _activeCard.Requirement.Id"
                                OnClick="() => StartPlanAsync(_activeCard.Requirement.Id)">
                         Plan
                     </MudButton>
@@ -645,6 +645,25 @@
                             Implement
                         </MudButton>
                     }
+
+                    @if (_activeCard.WorkflowRun is not null)
+                    {
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Warning"
+                                   Disabled="!CanValidate(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                   OnClick="() => ValidateWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
+                            Validate
+                        </MudButton>
+
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Outlined"
+                                   Color="Color.Error"
+                                   Disabled="!CanCancel(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                   OnClick="() => CancelWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
+                            Cancel
+                        </MudButton>
+                    }
                 </MudStack>
             </MudPaper>
 
@@ -657,7 +676,7 @@
                 {
                     <MudText Typo="Typo.body2">Workflow: @_activeCard.WorkflowRun.WorkflowCode</MudText>
                     <MudText Typo="Typo.body2">Run stage: @_activeCard.WorkflowRun.CurrentStage</MudText>
-                    <MudText Typo="Typo.body2">Run status: @_activeCard.WorkflowRun.Status</MudText>
+                    <MudText Typo="Typo.body2">Run status: @HumanizeWorkflowStatus(_activeCard.WorkflowRun.Status)</MudText>
 
                     @if (!string.IsNullOrWhiteSpace(_activeCard.WorkflowRun.FailureReason))
                     {
@@ -719,7 +738,10 @@
     private bool _savingSolution;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
+    private Guid? _mutatingWorkflowRunId;
     private bool _isRefreshingWorkflowState;
+    private long _cockpitRefreshVersion;
+    private string? _lastCockpitSnapshot;
     private CancellationTokenSource? _workflowPollingCts;
     private Task? _workflowPollingTask;
     private string? _loadError;
@@ -751,6 +773,7 @@
     private async void HandleSolutionChanged()
     {
         _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id;
+        StopWorkflowPolling();
         await InvokeAsync(async () =>
         {
             await LoadDocumentsAsync();
@@ -765,12 +788,12 @@
         _solutions.AddRange(await client.GetFromJsonAsync<List<SolutionSummary>>("api/solutions") ?? []);
     }
 
-    private async Task EnsureSelectedSolutionAsync()
+    private Task EnsureSelectedSolutionAsync()
     {
         if (SelectedSolutionState.Current is not null)
         {
             _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id;
-            return;
+            return Task.CompletedTask;
         }
 
         var first = _solutions.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
@@ -778,40 +801,65 @@
         {
             _selectedTargetId = first.Targets.Count == 1 ? first.Targets[0].Id : first.Targets.FirstOrDefault()?.Id;
             SelectedSolutionState.SetCurrent(first, _selectedTargetId);
-            await LoadDocumentsAsync();
         }
+
+        return Task.CompletedTask;
     }
 
-    private async Task OnSolutionSelectionChangedAsync(Guid? targetId)
+    private Task OnSolutionSelectionChangedAsync(Guid? targetId)
     {
         _selectedTargetId = targetId;
         var selected = _solutions.FirstOrDefault(x => x.Targets.Any(t => t.Id == targetId));
         SelectedSolutionState.SetCurrent(selected, targetId);
-        await LoadDocumentsAsync();
-        await LoadCockpitAsync();
+        return Task.CompletedTask;
     }
 
-    private async Task LoadCockpitAsync()
+    private async Task LoadCockpitAsync(bool showLoading = true)
     {
         if (_isRefreshingWorkflowState)
         {
             return;
         }
 
+        var refreshVersion = Interlocked.Increment(ref _cockpitRefreshVersion);
         _isRefreshingWorkflowState = true;
-        _requirements.Clear();
-        _backlog.Clear();
-        _runs.Clear();
+        var shouldRender = false;
+        var previousLoadError = _loadError;
         _loadError = null;
 
         if (SelectedSolutionState.Current is null)
         {
-            StateHasChanged();
+            if (_requirements.Count > 0 || _backlog.Count > 0 || _runs.Count > 0 || _lastCockpitSnapshot is not null)
+            {
+                _requirements.Clear();
+                _backlog.Clear();
+                _runs.Clear();
+                _lastCockpitSnapshot = null;
+                shouldRender = true;
+            }
+
+            _loading = false;
+            EnsureWorkflowPollingState();
+
+            if (shouldRender || !string.Equals(previousLoadError, _loadError, StringComparison.Ordinal))
+            {
+                StateHasChanged();
+            }
+
+            _isRefreshingWorkflowState = false;
             return;
         }
 
-        _loading = true;
-        StateHasChanged();
+        if (showLoading && !_loading)
+        {
+            _loading = true;
+            shouldRender = true;
+        }
+
+        if (shouldRender)
+        {
+            StateHasChanged();
+        }
 
         try
         {
@@ -822,20 +870,53 @@
                 return;
             }
 
-            _requirements.AddRange(await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId.Value}/requirements") ?? []);
-            _backlog.AddRange(await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?targetSolutionId={targetSolutionId.Value}") ?? []);
-            _runs.AddRange(await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?targetSolutionId={targetSolutionId.Value}") ?? []);
+            var requirements = await client.GetFromJsonAsync<List<RequirementRow>>($"api/solution-targets/{targetSolutionId.Value}/requirements") ?? [];
+            var backlog = await client.GetFromJsonAsync<List<BacklogRow>>($"api/backlog-items?targetSolutionId={targetSolutionId.Value}") ?? [];
+            var runs = await client.GetFromJsonAsync<List<WorkflowRunRow>>($"api/workflow-runs?targetSolutionId={targetSolutionId.Value}") ?? [];
+
+            if (refreshVersion != _cockpitRefreshVersion || SelectedSolutionState.CurrentTarget?.Id != targetSolutionId.Value)
+            {
+                return;
+            }
+
+            var snapshot = BuildCockpitSnapshot(targetSolutionId.Value, requirements, backlog, runs);
+            if (!string.Equals(snapshot, _lastCockpitSnapshot, StringComparison.Ordinal))
+            {
+                _requirements.Clear();
+                _requirements.AddRange(requirements);
+                _backlog.Clear();
+                _backlog.AddRange(backlog);
+                _runs.Clear();
+                _runs.AddRange(runs);
+                _lastCockpitSnapshot = snapshot;
+                shouldRender = true;
+            }
+
+            if (!string.Equals(previousLoadError, _loadError, StringComparison.Ordinal))
+            {
+                shouldRender = true;
+            }
         }
         catch (Exception ex)
         {
             _loadError = ex.Message;
+            shouldRender = !string.Equals(previousLoadError, _loadError, StringComparison.Ordinal);
         }
         finally
         {
-            _loading = false;
+            if (_loading)
+            {
+                _loading = false;
+                shouldRender = true;
+            }
+
             _isRefreshingWorkflowState = false;
             EnsureWorkflowPollingState();
-            StateHasChanged();
+
+            if (shouldRender)
+            {
+                StateHasChanged();
+            }
         }
     }
 
@@ -1247,7 +1328,7 @@
     }
 
     private bool HasActiveWorkflowRuns()
-        => _runs.Any(x => x.Status is 1 or 2);
+        => _runs.Any(x => x.Status is 1 or 2 or 6);
 
     private void StartWorkflowPolling()
     {
@@ -1285,7 +1366,7 @@
 
                 await InvokeAsync(async () =>
                 {
-                    await LoadCockpitAsync();
+                    await LoadCockpitAsync(showLoading: false);
                 });
             }
         }
@@ -1294,20 +1375,47 @@
         }
     }
 
-    private static bool CanAnalyze(string status)
-        => string.Equals(status, "submitted", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(status, "analysis-failed", StringComparison.OrdinalIgnoreCase);
+    private static string BuildCockpitSnapshot(
+        Guid targetSolutionId,
+        IReadOnlyList<RequirementRow> requirements,
+        IReadOnlyList<BacklogRow> backlog,
+        IReadOnlyList<WorkflowRunRow> runs)
+    {
+        var requirementPart = string.Join("|", requirements
+            .OrderBy(x => x.Id)
+            .Select(x => $"{x.Id}:{x.Status}"));
 
-    private static bool CanDesign(string status)
-        => string.Equals(status, "analyzed", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(status, "design-failed", StringComparison.OrdinalIgnoreCase);
+        var backlogPart = string.Join("|", backlog
+            .OrderBy(x => x.Id)
+            .Select(x => $"{x.Id}:{x.RequirementId}:{x.Status}"));
 
-    private static bool CanPlan(string status)
-        => string.Equals(status, "designed", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(status, "planning-failed", StringComparison.OrdinalIgnoreCase);
+        var runPart = string.Join("|", runs
+            .OrderBy(x => x.Id)
+            .Select(x => $"{x.Id}:{x.RequirementId}:{x.BacklogItemId}:{x.WorkflowCode}:{x.Status}"));
+
+        return $"{targetSolutionId}||{requirementPart}||{backlogPart}||{runPart}";
+    }
+
+    private bool CanAnalyze(RequirementRow requirement)
+        => string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+           && !HasBlockingRun(requirement.Id, null, "analyze-request");
+
+    private bool CanDesign(RequirementRow requirement)
+        => string.Equals(requirement.Status, "Analyzed", StringComparison.OrdinalIgnoreCase)
+           && !HasBlockingRun(requirement.Id, null, "design-solution-change");
+
+    private bool CanPlan(RequirementRow requirement)
+        => string.Equals(requirement.Status, "Designed", StringComparison.OrdinalIgnoreCase)
+           && !HasBlockingRun(requirement.Id, null, "plan-implementation");
 
     private bool CanImplement(BacklogRow backlogItem)
     {
+        if (backlogItem.RequirementId.HasValue
+            && !string.Equals(GetRequirementStatus(backlogItem.RequirementId), "Planned", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (!string.Equals(backlogItem.Status, "NotImplemented", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(backlogItem.Status, "ImplementationError", StringComparison.OrdinalIgnoreCase))
         {
@@ -1323,7 +1431,79 @@
             .Where(x => x.RequirementId == backlogItem.RequirementId && x.PlanningOrder < backlogItem.PlanningOrder)
             .ToList();
 
-        return previousItems.All(x => string.Equals(x.Status, "Validated", StringComparison.OrdinalIgnoreCase));
+        return previousItems.All(x => string.Equals(x.Status, "Validated", StringComparison.OrdinalIgnoreCase))
+            && !HasBlockingRun(backlogItem.RequirementId, backlogItem.Id, "implement-solution-change");
+    }
+
+    private static bool CanValidate(WorkflowRunRow run)
+        => run.Status == 6;
+
+    private static bool CanCancel(WorkflowRunRow run)
+        => run.Status is 1 or 4 or 6;
+
+    private bool HasBlockingRun(Guid? requirementId, Guid? backlogItemId, string workflowCode)
+        => _runs.Any(x =>
+            x.RequirementId == requirementId
+            && x.BacklogItemId == backlogItemId
+            && string.Equals(x.WorkflowCode, workflowCode, StringComparison.OrdinalIgnoreCase)
+            && x.Status is 1 or 2 or 6);
+
+    private string GetRequirementStatus(Guid? requirementId)
+        => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
+
+    private async Task ValidateWorkflowRunAsync(Guid workflowRunId)
+    {
+        _mutatingWorkflowRunId = workflowRunId;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/validate", new { WorkflowRunId = workflowRunId });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = await ReadApiErrorAsync(response);
+                StateHasChanged();
+                return;
+            }
+
+            _loadError = null;
+            await LoadCockpitAsync();
+        }
+        finally
+        {
+            _mutatingWorkflowRunId = null;
+        }
+    }
+
+    private async Task CancelWorkflowRunAsync(Guid workflowRunId)
+    {
+        _mutatingWorkflowRunId = workflowRunId;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/cancel", new
+            {
+                WorkflowRunId = workflowRunId,
+                TerminateRequirementLifecycle = false,
+                Reason = "Cancelled from cockpit"
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = await ReadApiErrorAsync(response);
+                StateHasChanged();
+                return;
+            }
+
+            _loadError = null;
+            await LoadCockpitAsync();
+        }
+        finally
+        {
+            _mutatingWorkflowRunId = null;
+        }
     }
 
     private static string HumanizeWorkflowStatus(int status)
@@ -1331,46 +1511,48 @@
         {
             1 => "Pending",
             2 => "Running",
-            3 => "Done",
+            3 => "Validated",
             4 => "Error",
+            5 => "Cancelled",
+            6 => "Awaiting Validation",
             _ => "Unknown"
         };
 
     private static string HumanizeRequirementStatus(string status)
-        => status.Replace("-", " ").Trim() switch
+        => status.Trim() switch
         {
-            var value when string.Equals(value, "submitted", StringComparison.OrdinalIgnoreCase) => "Pending",
-            var value when string.Equals(value, "under analysis", StringComparison.OrdinalIgnoreCase) => "Running",
-            var value when string.Equals(value, "under design", StringComparison.OrdinalIgnoreCase) => "Running",
-            var value when string.Equals(value, "under planning", StringComparison.OrdinalIgnoreCase) => "Running",
-            var value when string.Equals(value, "under implementation", StringComparison.OrdinalIgnoreCase) => "Running",
-            var value when string.Equals(value, "awaiting implementation validation", StringComparison.OrdinalIgnoreCase) => "Awaiting",
-            var value when value.EndsWith("failed", StringComparison.OrdinalIgnoreCase) => "Error",
-            var value when string.Equals(value, "canceled", StringComparison.OrdinalIgnoreCase) => "Canceled",
-            var value => System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(value)
+            var value when string.Equals(value, "ValidatedCommitted", StringComparison.OrdinalIgnoreCase) => "Validated Committed",
+            var value when string.Equals(value, "CancelledRolledBack", StringComparison.OrdinalIgnoreCase) => "Cancelled Rolled Back",
+            _ => string.Concat(status.Select((ch, index) => index > 0 && char.IsUpper(ch) ? $" {ch}" : ch.ToString())).Trim()
         };
 
     private static string HumanizeBacklogStatus(string status)
         => status switch
         {
             "NotImplemented" => "Pending",
-            "AwaitingValidation" => "Awaiting",
+            "AwaitingValidation" => "Awaiting Validation",
             "ImplementationError" => "Error",
-            "Validated" => "Done",
-            "Canceled" => "Canceled",
+            "Validated" => "Validated",
+            "Canceled" => "Cancelled",
             _ => status
         };
 
     private static VisualState GetRequirementVisualState(string status)
     {
-        var normalized = status.Replace("-", " ").Trim().ToLowerInvariant();
-
-        if (normalized.Contains("failed") || normalized.Contains("canceled")) return VisualStatePalette.Error;
-        if (normalized.Contains("awaiting")) return VisualStatePalette.Waiting;
-        if (normalized.Contains("under")) return VisualStatePalette.Running;
-        if (normalized.Contains("planned") || normalized.Contains("designed") || normalized.Contains("analyzed")) return VisualStatePalette.Success;
-
-        return VisualStatePalette.Default;
+        return status.Trim() switch
+        {
+            var value when string.Equals(value, "Analyzed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Designed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Planned", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Implemented", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Tested", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Reviewed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Delivered", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "Documented", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "ValidatedCommitted", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, "CancelledRolledBack", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
+            _ => VisualStatePalette.Default
+        };
     }
 
     private static VisualState GetBacklogVisualState(string status)
@@ -1389,6 +1571,8 @@
             2 => VisualStatePalette.Running,
             3 => VisualStatePalette.Success,
             4 => VisualStatePalette.Error,
+            5 => VisualStatePalette.Error,
+            6 => VisualStatePalette.Waiting,
             _ => VisualStatePalette.Default
         };
 

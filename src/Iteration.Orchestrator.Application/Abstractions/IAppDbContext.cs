@@ -6,6 +6,7 @@ using Iteration.Orchestrator.Domain.Reports;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Iteration.Orchestrator.Application.Abstractions;
 
@@ -24,5 +25,6 @@ public interface IAppDbContext
     DbSet<Decision> Decisions { get; }
     DbSet<Requirement> Requirements { get; }
 
+    Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

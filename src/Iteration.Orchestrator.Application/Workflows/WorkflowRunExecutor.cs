@@ -69,36 +69,14 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
 
     private async Task MarkFailedAsync(Domain.Workflows.WorkflowRun run, string reason, CancellationToken ct)
     {
-        if (run.Status == Domain.Workflows.WorkflowRunStatus.Succeeded || run.Status == Domain.Workflows.WorkflowRunStatus.Failed)
+        if (run.Status != Domain.Workflows.WorkflowRunStatus.Pending
+            && run.Status != Domain.Workflows.WorkflowRunStatus.Running)
         {
             return;
         }
 
         run.Fail(run.CurrentStage, reason);
         await _logs.AppendLineAsync(run.Id, $"Workflow marked as failed. Reason: {reason}", CancellationToken.None);
-
-        if (run.RequirementId.HasValue)
-        {
-            var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == run.RequirementId.Value, ct);
-            if (requirement is not null)
-            {
-                switch (run.WorkflowCode)
-                {
-                    case "analyze-request":
-                        requirement.MarkAnalysisFailed(run.Id);
-                        break;
-                    case "design-solution-change":
-                        requirement.MarkDesignFailed(run.Id);
-                        break;
-                    case "plan-implementation":
-                        requirement.MarkPlanningFailed(run.Id);
-                        break;
-                    case "implement-solution-change":
-                        requirement.MarkImplementationFailed(run.Id);
-                        break;
-                }
-            }
-        }
 
         if (run.BacklogItemId.HasValue && string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase))
         {

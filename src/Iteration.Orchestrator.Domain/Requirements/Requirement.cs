@@ -11,7 +11,7 @@ public sealed class Requirement
     public string Description { get; private set; } = string.Empty;
     public string RequirementType { get; private set; } = "functional";
     public string Source { get; private set; } = "user";
-    public string Status { get; private set; } = "submitted";
+    public string Status { get; private set; } = RequirementLifecycleStatus.Pending;
     public string Priority { get; private set; } = "medium";
     public string AcceptanceCriteriaJson { get; private set; } = "[]";
     public string ConstraintsJson { get; private set; } = "[]";
@@ -44,7 +44,7 @@ public sealed class Requirement
         Description = description.Trim();
         RequirementType = string.IsNullOrWhiteSpace(requirementType) ? "functional" : requirementType.Trim();
         Source = string.IsNullOrWhiteSpace(source) ? "user" : source.Trim();
-        Status = string.IsNullOrWhiteSpace(status) ? "submitted" : status.Trim();
+        Status = RequirementLifecycleStatus.Normalize(status);
         Priority = string.IsNullOrWhiteSpace(priority) ? "medium" : priority.Trim().ToLowerInvariant();
         AcceptanceCriteriaJson = string.IsNullOrWhiteSpace(acceptanceCriteriaJson) ? "[]" : acceptanceCriteriaJson;
         ConstraintsJson = string.IsNullOrWhiteSpace(constraintsJson) ? "[]" : constraintsJson;
@@ -69,101 +69,30 @@ public sealed class Requirement
         Description = description.Trim();
         RequirementType = string.IsNullOrWhiteSpace(requirementType) ? RequirementType : requirementType.Trim();
         Source = string.IsNullOrWhiteSpace(source) ? Source : source.Trim();
-        Status = string.IsNullOrWhiteSpace(status) ? Status : status.Trim();
+        Status = string.IsNullOrWhiteSpace(status) ? Status : RequirementLifecycleStatus.Normalize(status);
         Priority = string.IsNullOrWhiteSpace(priority) ? Priority : priority.Trim().ToLowerInvariant();
         AcceptanceCriteriaJson = string.IsNullOrWhiteSpace(acceptanceCriteriaJson) ? "[]" : acceptanceCriteriaJson;
         ConstraintsJson = string.IsNullOrWhiteSpace(constraintsJson) ? "[]" : constraintsJson;
         UpdatedAtUtc = updatedAtUtc;
     }
 
-    public void MarkUnderAnalysis(Guid workflowRunId)
+    public void AttachWorkflowRun(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
-        Status = "under-analysis";
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkAnalyzed(Guid workflowRunId)
+    public void AdvanceLifecycle(Guid workflowRunId, string status)
     {
         WorkflowRunId = workflowRunId;
-        Status = "analyzed";
+        Status = RequirementLifecycleStatus.Normalize(status);
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkAnalysisFailed(Guid workflowRunId)
+    public void MarkCancelledRolledBack(Guid workflowRunId)
     {
         WorkflowRunId = workflowRunId;
-        Status = "analysis-failed";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkUnderDesign(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "under-design";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkDesigned(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "designed";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkDesignFailed(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "design-failed";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkUnderPlanning(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "under-planning";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkPlanned(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "planned";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkPlanningFailed(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "planning-failed";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkImplementing(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "under-implementation";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkAwaitingImplementationValidation(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "awaiting-implementation-validation";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkImplementationFailed(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "implementation-failed";
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
-
-    public void MarkCanceled(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = "canceled";
+        Status = RequirementLifecycleStatus.CancelledRolledBack;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 }

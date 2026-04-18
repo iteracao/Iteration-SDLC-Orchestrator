@@ -20,6 +20,7 @@ public sealed class StartImplementSolutionChangeRunHandler
     private readonly IArtifactStore _artifacts;
     private readonly IWorkflowExecutionQueue _queue;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly WorkflowLifecycleService _workflowLifecycle;
 
     public StartImplementSolutionChangeRunHandler(
         IAppDbContext db,
@@ -28,7 +29,8 @@ public sealed class StartImplementSolutionChangeRunHandler
         ISolutionImplementationAgent agent,
         IArtifactStore artifacts,
         IWorkflowExecutionQueue queue,
-        IWorkflowRunLogStore logs)
+        IWorkflowRunLogStore logs,
+        WorkflowLifecycleService workflowLifecycle)
     {
         _db = db;
         _config = config;
@@ -37,6 +39,7 @@ public sealed class StartImplementSolutionChangeRunHandler
         _artifacts = artifacts;
         _queue = queue;
         _logs = logs;
+        _workflowLifecycle = workflowLifecycle;
     }
 
     public async Task<Guid> HandleAsync(StartImplementSolutionChangeRunCommand command, CancellationToken ct)
@@ -62,6 +65,13 @@ public sealed class StartImplementSolutionChangeRunHandler
         var requirement = await _db.Requirements.FindAsync([backlogItem.RequirementId.Value], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
+        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Planned, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Requirement must be in 'Planned' status before implementation can start.");
+        }
+
+        await _workflowLifecycle.EnsureNoBlockingRunAsync(requirement.Id, "implement-solution-change", backlogItem.Id, ct);
+
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
@@ -77,9 +87,17 @@ public sealed class StartImplementSolutionChangeRunHandler
             throw new InvalidOperationException("A previous backlog item must be validated before this implementation can start.");
         }
 
+        var planRun = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == backlogItem.PlanWorkflowRunId.Value, ct)
+            ?? throw new InvalidOperationException("Planning workflow run not found for backlog item.");
+
+        if (planRun.Status != WorkflowRunStatus.CompletedValidated)
+        {
+            throw new InvalidOperationException("Planning workflow must be validated before implementation can start.");
+        }
+
         var workflow = await _config.GetWorkflowAsync("implement-solution-change", ct);
         var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.MarkImplementing(run.Id);
+        requirement.AttachWorkflowRun(run.Id);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -212,8 +230,7 @@ public sealed class StartImplementSolutionChangeRunHandler
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, requirement.Id, backlogItem.Id, run.Id);
 
             backlogItem.MarkAwaitingValidation();
-            requirement.MarkAwaitingImplementationValidation(run.Id);
-            run.Succeed("implementation-completed-awaiting-validation");
+            run.CompleteAwaitingValidation("implementation-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 
@@ -227,7 +244,6 @@ public sealed class StartImplementSolutionChangeRunHandler
             taskRun.Fail(ex.Message);
             run.Fail("implementation", ex.Message);
             backlogItem.MarkImplementationError();
-            requirement.MarkImplementationFailed(run.Id);
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
@@ -314,7 +330,7 @@ public sealed class StartImplementSolutionChangeRunHandler
                 description,
                 FirstNonEmpty(item.RequirementType, "functional"),
                 FirstNonEmpty(item.Source, "implementation"),
-                FirstNonEmpty(item.Status, "submitted"),
+                RequirementLifecycleStatus.Normalize(item.Status),
                 FirstNonEmpty(item.Priority, "medium"),
                 item.AcceptanceCriteriaJson ?? "[]",
                 item.ConstraintsJson ?? "[]",

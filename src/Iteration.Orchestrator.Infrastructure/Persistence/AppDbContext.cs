@@ -27,6 +27,9 @@ public sealed class AppDbContext : DbContext, IAppDbContext
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
+    public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+        => Database.BeginTransactionAsync(cancellationToken);
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Solution>(e =>

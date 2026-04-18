@@ -39,6 +39,7 @@ public sealed class WorkflowRunsController : ControllerBase
             {
                 id = result.WorkflowRunId,
                 result.SolutionId,
+                result.NextWorkflowCode,
                 result.KnowledgeRoot,
                 result.TargetStorageCode,
                 result.TargetCode,
@@ -170,6 +171,46 @@ public sealed class WorkflowRunsController : ControllerBase
             fileName = $"{id}.log",
             content
         });
+    }
+
+    [HttpPost("validate")]
+    public async Task<IActionResult> Validate(
+        [FromBody] ValidateWorkflowRunRequest request,
+        [FromServices] ValidateWorkflowRunHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(new ValidateWorkflowRunCommand(request.WorkflowRunId), ct);
+            return Ok(new { id = request.WorkflowRunId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("cancel")]
+    public async Task<IActionResult> Cancel(
+        [FromBody] CancelWorkflowRunRequest request,
+        [FromServices] CancelWorkflowRunHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(
+                new CancelWorkflowRunCommand(
+                    request.WorkflowRunId,
+                    request.TerminateRequirementLifecycle,
+                    request.Reason),
+                ct);
+
+            return Ok(new { id = request.WorkflowRunId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet]

@@ -57,6 +57,12 @@ public sealed class BacklogItem
         UpdatedUtc = DateTime.UtcNow;
     }
 
+    public void ResetToNotImplemented()
+    {
+        Status = BacklogItemStatus.NotImplemented;
+        UpdatedUtc = DateTime.UtcNow;
+    }
+
     public void MarkImplementationError()
     {
         Status = BacklogItemStatus.ImplementationError;

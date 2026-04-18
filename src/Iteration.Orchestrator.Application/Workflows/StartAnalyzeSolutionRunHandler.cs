@@ -19,6 +19,7 @@ public sealed class StartAnalyzeSolutionRunHandler
     private readonly IArtifactStore _artifacts;
     private readonly IWorkflowExecutionQueue _queue;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly WorkflowLifecycleService _workflowLifecycle;
 
     public StartAnalyzeSolutionRunHandler(
         IAppDbContext db,
@@ -27,7 +28,8 @@ public sealed class StartAnalyzeSolutionRunHandler
         ISolutionAnalystAgent agent,
         IArtifactStore artifacts,
         IWorkflowExecutionQueue queue,
-        IWorkflowRunLogStore logs)
+        IWorkflowRunLogStore logs,
+        WorkflowLifecycleService workflowLifecycle)
     {
         _db = db;
         _config = config;
@@ -36,6 +38,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         _artifacts = artifacts;
         _queue = queue;
         _logs = logs;
+        _workflowLifecycle = workflowLifecycle;
     }
 
     public async Task<Guid> HandleAsync(StartAnalyzeSolutionRunCommand command, CancellationToken ct)
@@ -46,10 +49,17 @@ public sealed class StartAnalyzeSolutionRunHandler
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
+        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Requirement must be in 'Pending' status before analysis can start.");
+        }
+
+        await _workflowLifecycle.EnsureNoBlockingRunAsync(requirement.Id, "analyze-request", null, ct);
+
         var workflow = await _config.GetWorkflowAsync("analyze-request", ct);
 
         var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.MarkUnderAnalysis(run.Id);
+        requirement.AttachWorkflowRun(run.Id);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -154,8 +164,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             PersistGeneratedOpenQuestions(result, requirement.TargetSolutionId, run.Id, requirementMap);
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, run.Id, requirementMap);
 
-            run.Succeed("analysis-completed");
-            requirement.MarkAnalyzed(run.Id);
+            run.CompleteAwaitingValidation("analysis-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 
@@ -169,7 +178,6 @@ public sealed class StartAnalyzeSolutionRunHandler
             await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
             taskRun.Fail(ex.Message);
             run.Fail("request-analysis", ex.Message);
-            requirement.MarkAnalysisFailed(run.Id);
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
@@ -254,7 +262,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             primaryRequirement.Description,
             primaryRequirement.RequirementType,
             primaryRequirement.Source,
-            "analyzed",
+            primaryRequirement.Status,
             primaryRequirement.Priority,
             primaryRequirement.AcceptanceCriteriaJson,
             primaryRequirement.ConstraintsJson,
@@ -273,7 +281,7 @@ public sealed class StartAnalyzeSolutionRunHandler
                 FirstNonEmpty(item.Description, primaryRequirement.Description),
                 item.RequirementType ?? "functional",
                 item.Source ?? "analysis",
-                item.Status ?? "submitted",
+                RequirementLifecycleStatus.Normalize(item.Status),
                 item.Priority ?? primaryRequirement.Priority,
                 SerializeStringList(item.AcceptanceCriteria),
                 SerializeStringList(item.Constraints),

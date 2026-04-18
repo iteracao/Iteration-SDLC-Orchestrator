@@ -38,6 +38,9 @@ builder.Services.AddScoped<StartAnalyzeSolutionRunHandler>();
 builder.Services.AddScoped<StartDesignSolutionRunHandler>();
 builder.Services.AddScoped<StartPlanImplementationRunHandler>();
 builder.Services.AddScoped<StartImplementSolutionChangeRunHandler>();
+builder.Services.AddScoped<ValidateWorkflowRunHandler>();
+builder.Services.AddScoped<CancelWorkflowRunHandler>();
+builder.Services.AddScoped<WorkflowLifecycleService>();
 builder.Services.AddScoped<IWorkflowRunExecutor, WorkflowRunExecutor>();
 
 builder.Services.AddSingleton<IWorkflowExecutionQueue, InMemoryWorkflowExecutionQueue>();

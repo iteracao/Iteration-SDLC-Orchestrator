@@ -18,4 +18,17 @@ public sealed class FileSystemArtifactStore : IArtifactStore
         var path = Path.Combine(dir, fileName);
         await File.WriteAllTextAsync(path, content, ct);
     }
+
+    public Task DeleteRunAsync(Guid runId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var dir = Path.Combine(_rootPath, "runs", runId.ToString("N"));
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+
+        return Task.CompletedTask;
+    }
 }

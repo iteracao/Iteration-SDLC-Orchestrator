@@ -3,10 +3,11 @@ name: Setup Solution
 phase: setup
 
 purpose: >
-  Initialize or validate a solution workspace, local repository folder,
-  SDLC knowledge structure, and optional remote Git repository.
+  Deterministically validate and prepare a target repository workspace,
+  minimal SDLC structure, and persisted setup tracking for the next
+  documentation update workflow.
 
-primaryAgent: solution-onboarding
+primaryAgent: setup-solution-system
 
 requiredInputs:
   - name: solutionCode
@@ -20,7 +21,7 @@ requiredInputs:
     required: true
   - name: remoteRepositoryUrl
     type: string
-    required: false
+    required: true
   - name: profileCode
     type: string
     required: true
@@ -45,12 +46,16 @@ knowledgeUpdates:
   - analysis/latest-analysis.md
 
 executionRules:
-  - Create repository root if it does not exist.
+  - Execute deterministically as a system workflow; do not call an AI agent.
+  - Repository root must already exist and be accessible.
   - Initialize Git if .git does not exist.
-  - Configure remote origin if remoteRepositoryUrl is provided.
+  - Validate the GitHub repository URL and resolve repository metadata before persistence.
+  - Configure remote origin when remoteRepositoryUrl is provided and origin is not already configured.
   - Create /AI/solutions/<solutionCode>/ knowledge workspace if missing.
   - Seed required documentation files with fixed baseline structure if missing.
   - Do not overwrite existing documents blindly; preserve existing content.
+  - Commit database state only after repository/bootstrap preparation succeeds.
+  - Defer repository understanding and real documentation updates to the next workflow.
 
 nextWorkflows:
-  - analyze-request
+  - update-target-documentation

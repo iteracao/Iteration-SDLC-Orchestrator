@@ -38,7 +38,7 @@ public sealed class CreateRequirementHandler
             command.Description,
             string.IsNullOrWhiteSpace(command.RequirementType) ? "functional" : command.RequirementType,
             string.IsNullOrWhiteSpace(command.Source) ? "user" : command.Source,
-            "submitted",
+            RequirementLifecycleStatus.Pending,
             string.IsNullOrWhiteSpace(command.Priority) ? "medium" : command.Priority,
             "[]",
             "[]",

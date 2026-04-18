@@ -20,11 +20,9 @@ public sealed class FileSystemSolutionSetupService : ISolutionSetupService
 
     public async Task<SolutionSetupResult> SetupAsync(SolutionSetupRequest request, CancellationToken ct)
     {
-        var repositoryCreated = false;
         if (!Directory.Exists(request.RepositoryRoot))
         {
-            Directory.CreateDirectory(request.RepositoryRoot);
-            repositoryCreated = true;
+            throw new InvalidOperationException("Repository root was not found.");
         }
 
         var copiedEntries = await CopyOverlaySourceAsync(request, ct);
@@ -60,7 +58,7 @@ public sealed class FileSystemSolutionSetupService : ISolutionSetupService
 
         return new SolutionSetupResult(
             knowledgeRoot,
-            repositoryCreated,
+            false,
             gitInitialized,
             remoteConfigured,
             solutionFileCreated,

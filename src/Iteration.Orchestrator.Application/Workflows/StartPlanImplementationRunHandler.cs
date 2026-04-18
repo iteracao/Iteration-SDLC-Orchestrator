@@ -5,6 +5,7 @@ using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Domain.Common;
 using Iteration.Orchestrator.Domain.Decisions;
 using Iteration.Orchestrator.Domain.Questions;
+using Iteration.Orchestrator.Domain.Requirements;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,7 @@ public sealed class StartPlanImplementationRunHandler
     private readonly IArtifactStore _artifacts;
     private readonly IWorkflowExecutionQueue _queue;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly WorkflowLifecycleService _workflowLifecycle;
 
     public StartPlanImplementationRunHandler(
         IAppDbContext db,
@@ -28,7 +30,8 @@ public sealed class StartPlanImplementationRunHandler
         ISolutionPlannerAgent agent,
         IArtifactStore artifacts,
         IWorkflowExecutionQueue queue,
-        IWorkflowRunLogStore logs)
+        IWorkflowRunLogStore logs,
+        WorkflowLifecycleService workflowLifecycle)
     {
         _db = db;
         _config = config;
@@ -37,6 +40,7 @@ public sealed class StartPlanImplementationRunHandler
         _artifacts = artifacts;
         _queue = queue;
         _logs = logs;
+        _workflowLifecycle = workflowLifecycle;
     }
 
     public async Task<Guid> HandleAsync(StartPlanImplementationRunCommand command, CancellationToken ct)
@@ -44,17 +48,19 @@ public sealed class StartPlanImplementationRunHandler
         var requirement = await _db.Requirements.FindAsync([command.RequirementId], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, "designed", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Designed, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Requirement must be in 'designed' status before planning can start.");
+            throw new InvalidOperationException("Requirement must be in 'Designed' status before planning can start.");
         }
 
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
+        await _workflowLifecycle.EnsureNoBlockingRunAsync(requirement.Id, "plan-implementation", null, ct);
+
         var workflow = await _config.GetWorkflowAsync("plan-implementation", ct);
         var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.MarkUnderPlanning(run.Id);
+        requirement.AttachWorkflowRun(run.Id);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -79,8 +85,10 @@ public sealed class StartPlanImplementationRunHandler
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
+        var designRun = await _workflowLifecycle.GetLatestValidatedRunAsync(requirement.Id, "design-solution-change", ct);
+
         var designReport = await _db.DesignReports
-            .Where(x => x.WorkflowRunId == requirement.WorkflowRunId)
+            .Where(x => x.WorkflowRunId == designRun.Id)
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync(ct);
 
@@ -173,8 +181,7 @@ public sealed class StartPlanImplementationRunHandler
             PersistGeneratedOpenQuestions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
 
-            run.Succeed("implementation-planning-completed");
-            requirement.MarkPlanned(run.Id);
+            run.CompleteAwaitingValidation("implementation-planning-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 
@@ -187,7 +194,6 @@ public sealed class StartPlanImplementationRunHandler
             await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
             taskRun.Fail(ex.Message);
             run.Fail("implementation-planning", ex.Message);
-            requirement.MarkPlanningFailed(run.Id);
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }

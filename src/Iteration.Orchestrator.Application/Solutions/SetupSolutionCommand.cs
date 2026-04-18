@@ -22,6 +22,7 @@ public sealed record SetupSolutionCommand(
 public sealed record SetupSolutionExecutionResult(
     Guid WorkflowRunId,
     Guid SolutionId,
+    string NextWorkflowCode,
     string KnowledgeRoot,
     string TargetStorageCode,
     string TargetCode,
@@ -39,6 +40,8 @@ public sealed record SetupSolutionExecutionResult(
 public sealed class SetupSolutionHandler
 {
     private static readonly Regex MainSolutionFileRegex = new(@"^[A-Za-z0-9.]+\.sln$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private const string DeterministicSetupTaskCode = "setup-solution-system";
+    private const string NextWorkflowCode = "update-target-documentation";
     private readonly IAppDbContext _db;
     private readonly IConfigCatalog _config;
     private readonly ISolutionSetupService _solutionSetupService;
@@ -62,7 +65,6 @@ public sealed class SetupSolutionHandler
     public async Task<SetupSolutionExecutionResult> HandleAsync(SetupSolutionCommand command, CancellationToken ct)
     {
         var workflow = await _config.GetWorkflowAsync("setup-solution", ct);
-        var agent = await _config.GetAgentAsync(workflow.PrimaryAgent, ct);
 
         var profileCode = string.IsNullOrWhiteSpace(command.ProfileCode)
             ? "dotnet-web-enterprise"
@@ -95,23 +97,12 @@ public sealed class SetupSolutionHandler
             throw new InvalidOperationException("Solution name must be unique. Choose a different name.");
         }
 
-        if (solutionRecord is null)
-        {
-            solutionRecord = new Solution(command.Name, command.Description, profileCode);
-            _db.Solutions.Add(solutionRecord);
-            await _db.SaveChangesAsync(ct);
-        }
-        else
-        {
-            solutionRecord.Update(command.Name, command.Description);
-        }
-
         var targetStorageCode = BuildTargetStorageCode(command.Name, mainSolutionFile, targetCode);
 
         var existingByCode = await _db.SolutionTargets
             .FirstOrDefaultAsync(x => x.Code == targetStorageCode, ct);
 
-        if (existingByCode is not null && existingByCode.SolutionId != solutionRecord.Id)
+        if (existingByCode is not null && (!command.SolutionId.HasValue || existingByCode.SolutionId != command.SolutionId.Value))
         {
             throw new InvalidOperationException($"Target code '{targetCode}' is already in use for another solution workspace.");
         }
@@ -138,47 +129,209 @@ public sealed class SetupSolutionHandler
         var overlaySolutionName = overlayTarget?.SolutionName ?? string.Empty;
         var overlayTargetCode = overlayTarget is null ? string.Empty : ExtractDisplayTargetCode(overlayTarget.StorageCode);
 
-        var existing = await _db.SolutionTargets
-            .FirstOrDefaultAsync(x => x.SolutionId == solutionRecord.Id, ct);
+        var existingTarget = solutionRecord is null
+            ? null
+            : await _db.SolutionTargets.FirstOrDefaultAsync(x => x.SolutionId == solutionRecord.Id, ct);
+        var setupResult = await _solutionSetupService.SetupAsync(
+            new SolutionSetupRequest(
+                targetStorageCode,
+                command.Name,
+                repositoryPath,
+                mainSolutionFile,
+                profileCode,
+                overlaySolutionName,
+                overlayTargetCode,
+                overlayTarget?.RepositoryPath,
+                remoteRepositoryUrl),
+            ct);
 
-        var solutionTarget = existing ?? new SolutionTarget(
-            solutionRecord.Id,
-            targetStorageCode,
-            overlaySolutionName,
-            repositoryPath,
-            mainSolutionFile,
-            profileCode,
-            overlayTargetCode);
-
-        solutionTarget.Update(
-            targetStorageCode,
-            overlaySolutionName,
-            repositoryPath,
-            mainSolutionFile,
-            profileCode,
-            overlayTargetCode);
-
-        if (existing is null)
+        var solutionToPersist = solutionRecord ?? new Solution(command.Name, command.Description, profileCode);
+        if (solutionRecord is not null)
         {
-            _db.SolutionTargets.Add(solutionTarget);
+            solutionToPersist.Update(command.Name, command.Description);
         }
 
-        await _db.SaveChangesAsync(ct);
+        var targetToPersist = existingTarget ?? new SolutionTarget(
+            solutionToPersist.Id,
+            targetStorageCode,
+            overlaySolutionName,
+            repositoryPath,
+            mainSolutionFile,
+            profileCode,
+            overlayTargetCode);
 
-        var run = new WorkflowRun(null, null, solutionTarget.Id, workflow.Code, command.RequestedBy);
+        targetToPersist.Update(
+            targetStorageCode,
+            overlaySolutionName,
+            repositoryPath,
+            mainSolutionFile,
+            profileCode,
+            overlayTargetCode);
+
+        var run = new WorkflowRun(null, null, targetToPersist.Id, workflow.Code, command.RequestedBy);
+
+        var inputPayload = BuildInputPayload(
+            workflow,
+            command,
+            solutionToPersist.Id,
+            profileCode,
+            targetCode,
+            targetStorageCode,
+            repositoryPath,
+            mainSolutionFile,
+            overlayTarget,
+            overlaySolutionName,
+            overlayTargetCode,
+            remoteRepositoryUrl,
+            repositoryMetadata);
+
+        var outputPayload = BuildOutputPayload(
+            workflow,
+            solutionToPersist.Id,
+            profileCode,
+            targetCode,
+            targetStorageCode,
+            overlaySolutionName,
+            overlayTargetCode,
+            setupResult);
+
+        var taskRun = new AgentTaskRun(run.Id, ResolveTaskCode(workflow), inputPayload);
+        taskRun.Start();
+        taskRun.Succeed(outputPayload);
         run.Start("solution-setup");
-        _db.WorkflowRuns.Add(run);
-        await _db.SaveChangesAsync(ct);
+        run.CompleteAwaitingValidation("setup-completed-awaiting-validation");
+        run.Validate("setup-completed-validated");
 
-        var inputPayload = JsonSerializer.Serialize(new
+        await SaveArtifactsAsync(run.Id, inputPayload, outputPayload, ct);
+
+        try
+        {
+            await PersistSetupStateAsync(
+                solutionRecord,
+                solutionToPersist,
+                existingTarget,
+                targetToPersist,
+                run,
+                taskRun,
+                ct);
+        }
+        catch
+        {
+            await CleanupArtifactsAsync(run.Id);
+            throw;
+        }
+
+        return new SetupSolutionExecutionResult(
+            run.Id,
+            solutionToPersist.Id,
+            NextWorkflowCode,
+            setupResult.KnowledgeRoot,
+            targetStorageCode,
+            targetCode,
+            profileCode,
+            overlaySolutionName,
+            overlayTargetCode,
+            setupResult.RepositoryCreated,
+            setupResult.GitInitialized,
+            setupResult.RemoteConfigured,
+            setupResult.SolutionFileCreated,
+            setupResult.CreatedDocuments,
+            setupResult.ExistingDocuments,
+            setupResult.CopiedEntries);
+    }
+
+    private async Task PersistSetupStateAsync(
+        Solution? existingSolution,
+        Solution solutionToPersist,
+        SolutionTarget? existingTarget,
+        SolutionTarget targetToPersist,
+        WorkflowRun run,
+        AgentTaskRun taskRun,
+        CancellationToken ct)
+    {
+        await using var transaction = await _db.BeginTransactionAsync(ct);
+
+        try
+        {
+            if (existingSolution is null)
+            {
+                _db.Solutions.Add(solutionToPersist);
+            }
+
+            if (existingTarget is null)
+            {
+                _db.SolutionTargets.Add(targetToPersist);
+            }
+
+            _db.WorkflowRuns.Add(run);
+            _db.AgentTaskRuns.Add(taskRun);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            await transaction.RollbackAsync(ct);
+            throw TranslatePersistenceException(ex);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    private async Task SaveArtifactsAsync(Guid workflowRunId, string inputPayload, string outputPayload, CancellationToken ct)
+    {
+        try
+        {
+            await _artifacts.SaveTextAsync(workflowRunId, "setup-solution.input.json", inputPayload, ct);
+            await _artifacts.SaveTextAsync(workflowRunId, "solution-setup-result.json", outputPayload, ct);
+        }
+        catch
+        {
+            await CleanupArtifactsAsync(workflowRunId);
+            throw;
+        }
+    }
+
+    private async Task CleanupArtifactsAsync(Guid workflowRunId)
+    {
+        try
+        {
+            await _artifacts.DeleteRunAsync(workflowRunId, CancellationToken.None);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string BuildInputPayload(
+        WorkflowDefinition workflow,
+        SetupSolutionCommand command,
+        Guid solutionId,
+        string profileCode,
+        string targetCode,
+        string targetStorageCode,
+        string repositoryPath,
+        string mainSolutionFile,
+        OverlayTargetLookup? overlayTarget,
+        string overlaySolutionName,
+        string overlayTargetCode,
+        string remoteRepositoryUrl,
+        GitHubRepositoryMetadata repositoryMetadata)
+        => JsonSerializer.Serialize(new
         {
             workflow = workflow.Code,
             workflowName = workflow.Name,
             workflowPurpose = workflow.Purpose,
+            executionMode = "deterministic-system",
             requestedBy = command.RequestedBy,
+            nextWorkflowCode = NextWorkflowCode,
+            documentationUpdateDeferred = true,
             solution = new
             {
-                solutionRecord.Id,
+                solutionId,
                 command.Name,
                 command.Description,
                 ProfileCode = profileCode,
@@ -196,80 +349,63 @@ public sealed class SetupSolutionHandler
             }
         });
 
-        var taskRun = new AgentTaskRun(run.Id, agent.Code, inputPayload);
-        taskRun.Start();
-        _db.AgentTaskRuns.Add(taskRun);
-        await _db.SaveChangesAsync(ct);
-
-        try
+    private static string BuildOutputPayload(
+        WorkflowDefinition workflow,
+        Guid solutionId,
+        string profileCode,
+        string targetCode,
+        string targetStorageCode,
+        string overlaySolutionName,
+        string overlayTargetCode,
+        SolutionSetupResult setupResult)
+        => JsonSerializer.Serialize(new
         {
-            var setupResult = await _solutionSetupService.SetupAsync(
-                new SolutionSetupRequest(
-                    targetStorageCode,
-                    command.Name,
-                    repositoryPath,
-                    mainSolutionFile,
-                    profileCode,
-                    overlaySolutionName,
-                    overlayTargetCode,
-                    overlayTarget?.RepositoryPath,
-                    remoteRepositoryUrl),
-                ct);
+            workflow = workflow.Code,
+            workflowName = workflow.Name,
+            executionMode = "deterministic-system",
+            taskCode = ResolveTaskCode(workflow),
+            solutionId,
+            targetStorageCode,
+            targetCode,
+            profileCode,
+            overlaySolutionName,
+            overlayTargetCode,
+            nextWorkflowCode = NextWorkflowCode,
+            documentationUpdateDeferred = true,
+            setupResult.KnowledgeRoot,
+            setupResult.RepositoryCreated,
+            setupResult.GitInitialized,
+            setupResult.RemoteConfigured,
+            setupResult.SolutionFileCreated,
+            setupResult.CopiedEntries,
+            setupResult.CreatedDocuments,
+            setupResult.ExistingDocuments
+        });
 
-            var outputPayload = JsonSerializer.Serialize(new
-            {
-                workflow = workflow.Code,
-                workflowName = workflow.Name,
-                agent = agent.Code,
-                solutionId = solutionRecord.Id,
-                targetStorageCode,
-                targetCode,
-                profileCode,
-                overlaySolutionName,
-                overlayTargetCode,
-                setupResult.KnowledgeRoot,
-                setupResult.RepositoryCreated,
-                setupResult.GitInitialized,
-                setupResult.RemoteConfigured,
-                setupResult.SolutionFileCreated,
-                setupResult.CopiedEntries,
-                setupResult.CreatedDocuments,
-                setupResult.ExistingDocuments
-            });
+    private static string ResolveTaskCode(WorkflowDefinition workflow)
+        => string.IsNullOrWhiteSpace(workflow.PrimaryAgent)
+            ? DeterministicSetupTaskCode
+            : workflow.PrimaryAgent.Trim();
 
-            taskRun.Succeed(outputPayload);
-            run.Succeed("setup-completed");
-            await _db.SaveChangesAsync(ct);
-
-            await _artifacts.SaveTextAsync(run.Id, "setup-solution.input.json", inputPayload, ct);
-            await _artifacts.SaveTextAsync(run.Id, "solution-setup-result.json", outputPayload, ct);
-
-            return new SetupSolutionExecutionResult(
-                run.Id,
-                solutionRecord.Id,
-                setupResult.KnowledgeRoot,
-                targetStorageCode,
-                targetCode,
-                profileCode,
-                overlaySolutionName,
-                overlayTargetCode,
-                setupResult.RepositoryCreated,
-                setupResult.GitInitialized,
-                setupResult.RemoteConfigured,
-                setupResult.SolutionFileCreated,
-                setupResult.CreatedDocuments,
-                setupResult.ExistingDocuments,
-                setupResult.CopiedEntries);
-        }
-        catch (Exception ex)
+    private static Exception TranslatePersistenceException(DbUpdateException ex)
+    {
+        if (ex.InnerException?.Message.Contains("IX_Solutions_Name", StringComparison.OrdinalIgnoreCase) == true)
         {
-            taskRun.Fail(ex.Message);
-            run.Fail("solution-setup", ex.Message);
-            await _db.SaveChangesAsync(ct);
-            throw;
+            return new InvalidOperationException("Solution name must be unique. Choose a different name.", ex);
         }
+
+        if (ex.InnerException?.Message.Contains("IX_SolutionTargets_Code", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return new InvalidOperationException("Target storage code is already in use for another solution workspace.", ex);
+        }
+
+        if (ex.InnerException?.Message.Contains("IX_SolutionTargets_SolutionId", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return new InvalidOperationException("Only one target per solution is currently supported by setup.", ex);
+        }
+
+        return ex;
     }
-
 
     private static string ValidateRepositoryPath(string value)
     {

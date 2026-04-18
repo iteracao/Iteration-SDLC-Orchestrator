@@ -325,7 +325,7 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
         public string Description { get; set; } = string.Empty;
         public string RequirementType { get; set; } = "functional";
         public string Source { get; set; } = "implementation";
-        public string Status { get; set; } = "submitted";
+        public string Status { get; set; } = "Pending";
         public string Priority { get; set; } = "medium";
         public string AcceptanceCriteriaJson { get; set; } = "[]";
         public string ConstraintsJson { get; set; } = "[]";
