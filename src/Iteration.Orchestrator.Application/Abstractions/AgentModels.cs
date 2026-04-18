@@ -11,7 +11,6 @@ public sealed record SolutionAnalysisRequest(
     string ProfileSummary,
     IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
     IReadOnlyList<WorkflowFileReference> SolutionKnowledgeFiles,
-    IReadOnlyList<WorkflowFileReference> RepositoryEvidenceFiles,
     IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,

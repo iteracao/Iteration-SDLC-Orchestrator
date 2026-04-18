@@ -101,14 +101,6 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
         var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
-        var hits = await _bridge.SearchFilesAsync(solution, WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title), ct);
-
-        var repositoryEvidenceFiles = new List<WorkflowFileReference>();
-        foreach (var hit in hits.Take(5))
-        {
-            repositoryEvidenceFiles.Add(new WorkflowFileReference(hit.RelativePath, InferFileKind(hit.RelativePath), "Repository evidence hit", "repository-search"));
-        }
-
         var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
 
         await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
@@ -118,8 +110,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             ["Target"] = solution.Code,
             ["Framework docs available"] = repositoryDocumentationFiles.Count.ToString(),
             ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
-            ["Repository files available"] = repositoryFiles.Count.ToString(),
-            ["Search hits"] = hits.Count.ToString()
+            ["Repository files available"] = repositoryFiles.Count.ToString()
         }, ct);
 
         var request = new SolutionAnalysisRequest(
@@ -133,7 +124,6 @@ public sealed class StartAnalyzeSolutionRunHandler
             BuildProfileSummary(profile),
             BuildProfileRuleFiles(profile),
             solutionKnowledgeDocuments,
-            repositoryEvidenceFiles,
             workflow.ProducedArtifacts,
             workflow.KnowledgeUpdates,
             workflow.ExecutionRules,

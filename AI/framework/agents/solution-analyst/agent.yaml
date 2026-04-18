@@ -1,11 +1,11 @@
-code: solution-architect
-name: Solution Architect
-description: Turns an analyzed requirement into a grounded proposed solution design.
+code: solution-analyst
+name: Solution Analyst
+description: Analyzes a requirement against current solution knowledge, repository evidence, and SDLC rules.
 
 allowedTools:
-  - solution.snapshot
-  - solution.search
-  - solution.readFile
+  - get_workflow_input
+  - read_file
+  - save_workflow_output
 
 outputSchema: ../../../contracts/workflow-output-envelope.schema.json
 promptFile: prompt.md

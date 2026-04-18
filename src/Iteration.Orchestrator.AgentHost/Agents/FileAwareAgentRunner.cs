@@ -100,15 +100,16 @@ internal static class FileAwareAgentRunner
                 }
                 case "save_workflow_output":
                 {
-                    var requestedWorkflowRunId = ParseWorkflowRunId(toolRequest.WorkflowRunId, workflowRunId, "save_workflow_output");
                     if (toolRequest.Output is null || toolRequest.Output.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
                     {
                         throw new InvalidOperationException("Agent requested save_workflow_output without an 'output' object.");
                     }
 
+                    ValidateWorkflowOutputPayload(toolRequest.Output.Value);
+
                     var outputJson = JsonSerializer.Serialize(toolRequest.Output.Value, JsonOptions);
-                    await payloadStore.SaveOutputAsync(requestedWorkflowRunId, outputJson, ct);
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call: save_workflow_output('{requestedWorkflowRunId}').", ct);
+                    await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call: save_workflow_output('{workflowRunId}').", ct);
                     await logs.AppendBlockAsync(workflowRunId, "Saved workflow output payload", outputJson, ct);
                     return outputJson;
                 }
@@ -118,6 +119,40 @@ internal static class FileAwareAgentRunner
         }
 
         throw new InvalidOperationException("Agent did not produce a final response.");
+    }
+
+    private static void ValidateWorkflowOutputPayload(JsonElement output)
+    {
+        if (output.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Workflow output must be a JSON object.");
+        }
+
+        if (!output.TryGetProperty("status", out var status) ||
+            status.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(status.GetString()))
+        {
+            throw new InvalidOperationException("Workflow output is missing required field 'status'.");
+        }
+
+        if (!output.TryGetProperty("summary", out var summary) ||
+            summary.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(summary.GetString()))
+        {
+            throw new InvalidOperationException("Workflow output is missing required field 'summary'.");
+        }
+
+        if (!output.TryGetProperty("artifacts", out var artifacts) ||
+            artifacts.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Workflow output is missing required field 'artifacts'.");
+        }
+
+        if (!output.TryGetProperty("recommendedNextWorkflowCodes", out var nextWorkflowCodes) ||
+            nextWorkflowCodes.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Workflow output is missing required field 'recommendedNextWorkflowCodes'.");
+        }
     }
 
     private static Guid ParseWorkflowRunId(string? value, Guid fallbackWorkflowRunId, string action)

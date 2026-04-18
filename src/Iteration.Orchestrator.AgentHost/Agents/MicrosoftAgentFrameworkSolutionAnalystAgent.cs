@@ -30,7 +30,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Concat(request.RepositoryDocumentationFiles)
             .Concat(request.SolutionKnowledgeFiles.Select(x => x.Path))
             .Concat(request.ProfileRuleFiles.Select(x => x.Path))
-            .Concat(request.RepositoryEvidenceFiles.Select(x => x.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -110,6 +109,13 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Load the structured workflow input from the database with get_workflow_input.");
         sb.AppendLine("- Use read_file only for evidence you actually need.");
         sb.AppendLine("- Save only the final business output payload with save_workflow_output.");
+        sb.AppendLine();
+        sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
+        sb.AppendLine("- Return top-level workflow output fields only, never nested under result or data.");
+        sb.AppendLine("- summary: concise analysis conclusion grounded in the requirement and evidence.");
+        sb.AppendLine("- artifacts: include the requested analysis artifacts, even if some paths are null until generated.");
+        sb.AppendLine("- recommendedNextWorkflowCodes: choose from the provided next workflow codes when appropriate.");
+        sb.AppendLine("- generatedOpenQuestions and generatedDecisions are optional but should be included when justified by the evidence.");
         return sb.ToString();
     }
 
