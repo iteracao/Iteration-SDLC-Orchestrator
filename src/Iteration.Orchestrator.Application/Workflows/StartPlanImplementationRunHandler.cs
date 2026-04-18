@@ -112,10 +112,10 @@ public sealed class StartPlanImplementationRunHandler
         var searchQuery = $"{requirement.Title} {requirement.Description}".Trim();
         var hits = await _bridge.SearchFilesAsync(solution, searchQuery, ct);
 
-        var sampleFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var repositoryEvidenceFiles = new List<WorkflowFileReference>();
         foreach (var hit in hits.Take(5))
         {
-            sampleFiles[hit.RelativePath] = await _bridge.ReadFileAsync(solution, hit.RelativePath, ct);
+            repositoryEvidenceFiles.Add(new WorkflowFileReference(hit.RelativePath, InferFileKind(hit.RelativePath), "Repository evidence hit", "repository-search"));
         }
 
         var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
@@ -147,16 +147,16 @@ public sealed class StartPlanImplementationRunHandler
             designReport.GeneratedOpenQuestionsJson,
             designReport.GeneratedDecisionsJson,
             BuildProfileSummary(profile),
-            profile.Rules,
+            BuildProfileRuleFiles(profile),
             solutionKnowledgeDocuments,
+            repositoryEvidenceFiles,
             workflow.ProducedArtifacts,
             workflow.KnowledgeUpdates,
             workflow.ExecutionRules,
             workflow.NextWorkflows,
             repositoryFiles,
             repositoryDocumentationFiles,
-            solution.RepositoryPath,
-            sampleFiles);
+            solution.RepositoryPath);
 
         var inputJson = JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });
         await _logs.AppendLineAsync(run.Id, "Workflow request prepared.", ct);
@@ -217,7 +217,7 @@ public sealed class StartPlanImplementationRunHandler
         }
     }
 
-    private async Task<IReadOnlyList<TextDocumentInput>> LoadSolutionKnowledgeDocumentsAsync(
+    private Task<IReadOnlyList<WorkflowFileReference>> LoadSolutionKnowledgeDocumentsAsync(
         SolutionTarget solution,
         CancellationToken ct)
     {
@@ -235,7 +235,7 @@ public sealed class StartPlanImplementationRunHandler
             $"AI/solutions/{solution.Code}/design/latest-design.md"
         };
 
-        var docs = new List<TextDocumentInput>();
+        var docs = new List<WorkflowFileReference>();
         foreach (var relativePath in relativePaths)
         {
             var fullPath = Path.Combine(solution.RepositoryPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -244,17 +244,32 @@ public sealed class StartPlanImplementationRunHandler
                 continue;
             }
 
-            try
-            {
-                var content = await _bridge.ReadFileAsync(solution, relativePath, ct);
-                docs.Add(new TextDocumentInput(relativePath, content));
-            }
-            catch
-            {
-            }
+            docs.Add(new WorkflowFileReference(relativePath, "markdown", "Solution knowledge document", "solution-knowledge"));
         }
 
-        return docs;
+        return Task.FromResult<IReadOnlyList<WorkflowFileReference>>(docs);
+    }
+
+    private static IReadOnlyList<WorkflowFileReference> BuildProfileRuleFiles(ProfileDefinition profile)
+    {
+        return profile.Rules
+            .Select(rule => new WorkflowFileReference(rule.Path, "markdown", "Profile rule", "profile"))
+            .ToArray();
+    }
+
+    private static string InferFileKind(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.ToLowerInvariant() switch
+        {
+            ".md" => "markdown",
+            ".json" => "json",
+            ".cs" => "source",
+            ".csproj" => "project",
+            ".sln" => "solution",
+            ".yml" or ".yaml" => "yaml",
+            _ => "file"
+        };
     }
 
     private static string BuildProfileSummary(ProfileDefinition profile)

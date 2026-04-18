@@ -9,16 +9,16 @@ public sealed record SolutionAnalysisRequest(
     string RequirementTitle,
     string RequirementDescription,
     string ProfileSummary,
-    IReadOnlyList<TextDocumentInput> ProfileRules,
-    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
+    IReadOnlyList<WorkflowFileReference> SolutionKnowledgeFiles,
+    IReadOnlyList<WorkflowFileReference> RepositoryEvidenceFiles,
     IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    string RepositoryPath,
-    IReadOnlyDictionary<string, string> SampleFiles);
+    string RepositoryPath);
 
 public sealed record SolutionAnalysisResult(
     string Summary,
@@ -48,16 +48,16 @@ public sealed record SolutionDesignRequest(
     string AnalysisOpenQuestionsJson,
     string AnalysisDecisionsJson,
     string ProfileSummary,
-    IReadOnlyList<TextDocumentInput> ProfileRules,
-    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
+    IReadOnlyList<WorkflowFileReference> SolutionKnowledgeFiles,
+    IReadOnlyList<WorkflowFileReference> RepositoryEvidenceFiles,
     IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    string RepositoryPath,
-    IReadOnlyDictionary<string, string> SampleFiles);
+    string RepositoryPath);
 
 public sealed record SolutionDesignResult(
     string Summary,
@@ -69,7 +69,6 @@ public sealed record SolutionDesignResult(
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
     string RawJson);
-
 
 public sealed record SolutionPlanRequest(
     Guid WorkflowRunId,
@@ -87,16 +86,16 @@ public sealed record SolutionPlanRequest(
     string DesignOpenQuestionsJson,
     string DesignDecisionsJson,
     string ProfileSummary,
-    IReadOnlyList<TextDocumentInput> ProfileRules,
-    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
+    IReadOnlyList<WorkflowFileReference> SolutionKnowledgeFiles,
+    IReadOnlyList<WorkflowFileReference> RepositoryEvidenceFiles,
     IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    string RepositoryPath,
-    IReadOnlyDictionary<string, string> SampleFiles);
+    string RepositoryPath);
 
 public sealed record SolutionPlanResult(
     string Summary,
@@ -109,7 +108,6 @@ public sealed record SolutionPlanResult(
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
     string RawJson);
-
 
 public sealed record SolutionImplementationRequest(
     Guid WorkflowRunId,
@@ -131,16 +129,16 @@ public sealed record SolutionImplementationRequest(
     string PlanOpenQuestionsJson,
     string PlanDecisionsJson,
     string ProfileSummary,
-    IReadOnlyList<TextDocumentInput> ProfileRules,
-    IReadOnlyList<TextDocumentInput> SolutionKnowledgeDocuments,
+    IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
+    IReadOnlyList<WorkflowFileReference> SolutionKnowledgeFiles,
+    IReadOnlyList<WorkflowFileReference> RepositoryEvidenceFiles,
     IReadOnlyList<WorkflowArtifactDefinition> ProducedArtifacts,
     IReadOnlyList<string> KnowledgeUpdates,
     IReadOnlyList<string> ExecutionRules,
     IReadOnlyList<string> NextWorkflowCodes,
     IReadOnlyList<string> RepositoryFiles,
     IReadOnlyList<string> RepositoryDocumentationFiles,
-    string RepositoryPath,
-    IReadOnlyDictionary<string, string> SampleFiles);
+    string RepositoryPath);
 
 public sealed record SolutionImplementationResult(
     string Summary,

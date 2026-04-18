@@ -4,6 +4,12 @@ public sealed record TextDocumentInput(
     string Path,
     string Content);
 
+public sealed record WorkflowFileReference(
+    string Path,
+    string Kind,
+    string Purpose,
+    string Source);
+
 public sealed record WorkflowInputDefinition(
     string Name,
     string Type,

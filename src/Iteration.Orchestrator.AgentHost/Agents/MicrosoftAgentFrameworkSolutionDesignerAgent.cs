@@ -28,8 +28,9 @@ public sealed class MicrosoftAgentFrameworkSolutionDesignerAgent : ISolutionDesi
         var prompt = BuildPrompt(request);
         var allowedPaths = request.RepositoryFiles
             .Concat(request.RepositoryDocumentationFiles)
-            .Concat(request.SolutionKnowledgeDocuments.Select(x => x.Path))
-            .Concat(request.ProfileRules.Select(x => x.Path))
+            .Concat(request.SolutionKnowledgeFiles.Select(x => x.Path))
+            .Concat(request.ProfileRuleFiles.Select(x => x.Path))
+            .Concat(request.RepositoryEvidenceFiles.Select(x => x.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

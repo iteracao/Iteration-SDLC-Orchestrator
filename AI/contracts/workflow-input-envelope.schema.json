@@ -11,6 +11,19 @@
     "triggeredAtUtc",
     "context"
   ],
+  "$defs": {
+    "fileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "purpose": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    }
+  },
   "properties": {
     "workflowCode": {
       "type": "string"
@@ -53,19 +66,19 @@
         "documentationReferences": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/fileReference"
           }
         },
         "knowledgeReferences": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/fileReference"
           }
         },
         "repositoryEvidenceReferences": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/fileReference"
           }
         }
       }

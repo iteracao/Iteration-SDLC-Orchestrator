@@ -113,3 +113,9 @@ They should later be aligned with:
 - API contracts
 - cockpit views
 - workflow runtime persistence
+
+## File reference rule
+
+Workflow input JSON must carry file references and lightweight metadata only.
+It must not embed raw file contents for repository files, markdown documents, JSON artifacts, logs, or source files.
+Agents should inspect referenced files on demand through workflow tools such as `read_file`.
