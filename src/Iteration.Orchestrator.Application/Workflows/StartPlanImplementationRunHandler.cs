@@ -110,7 +110,7 @@ public sealed class StartPlanImplementationRunHandler
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
         var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
         var searchQuery = $"{requirement.Title} {requirement.Description}".Trim();
-        var hits = await _bridge.SearchFilesAsync(solution, searchQuery, ct);
+        var hits = await _bridge.SearchFilesAsync(solution, searchQuery, null, ct);
 
         var repositoryEvidenceFiles = new List<WorkflowFileReference>();
         foreach (var hit in hits.Take(5))

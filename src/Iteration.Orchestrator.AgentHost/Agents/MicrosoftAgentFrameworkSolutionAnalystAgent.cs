@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
+using Iteration.Orchestrator.Domain.Solutions;
 
 namespace Iteration.Orchestrator.AgentHost.Agents;
 
@@ -10,22 +11,34 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
+    private readonly ISolutionBridge _solutionBridge;
 
-    public MicrosoftAgentFrameworkSolutionAnalystAgent(string endpoint, string model, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore)
+    public MicrosoftAgentFrameworkSolutionAnalystAgent(
+        string endpoint,
+        string model,
+        IWorkflowRunLogStore logs,
+        IWorkflowPayloadStore payloadStore,
+        ISolutionBridge solutionBridge)
     {
-        _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
-        _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
+        _endpoint = endpoint;
+        _model = model;
         _logs = logs;
         _payloadStore = payloadStore;
+        _solutionBridge = solutionBridge;
     }
 
-    public async Task<SolutionAnalysisResult> AnalyzeAsync(SolutionAnalysisRequest request, AgentDefinition agentDefinition, CancellationToken ct)
+    public async Task<SolutionAnalysisResult> AnalyzeAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        SolutionTarget target,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(agentDefinition);
+        ArgumentNullException.ThrowIfNull(target);
 
         var instructions = BuildInstructions(agentDefinition);
-        var prompt = BuildPrompt(request);
+        var phases = BuildPhases(request);
         var requiredFrameworkPaths = new[]
         {
             "AI/framework/rules/sdlc/analyze.md",
@@ -47,17 +60,24 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        await _logs.AppendLineAsync(request.WorkflowRunId, "Agent prompt prepared.", ct);
-        await _logs.AppendBlockAsync(request.WorkflowRunId, "Prompt", prompt, ct);
+        var discoveryTools = new FileAwareAgentRunner.RepositoryDiscoveryTools(
+            (path, token) => _solutionBridge.ListRepositoryTreeAsync(target, path, token),
+            (query, path, token) => _solutionBridge.SearchFilesAsync(target, query, path, token));
+
+        await _logs.AppendLineAsync(request.WorkflowRunId, "Agent multi-step prompts prepared.", ct);
+        for (var i = 0; i < phases.Count; i++)
+        {
+            await _logs.AppendBlockAsync(request.WorkflowRunId, $"Phase {i + 1} prompt", phases[i].Prompt, ct);
+        }
 
         try
         {
-            var rawText = await FileAwareAgentRunner.RunAsync(
+            var rawText = await FileAwareAgentRunner.RunMultiStepAsync(
                 _endpoint,
                 _model,
                 agentDefinition.Name,
                 instructions,
-                prompt,
+                phases,
                 request.RepositoryPath,
                 allowedPaths,
                 request.WorkflowRunId,
@@ -66,7 +86,9 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 ct,
                 requiredFrameworkPaths,
                 requiredSolutionPaths,
-                requireRepositoryEvidence: true);
+                requireRepositoryEvidence: true,
+                requireRepositoryDiscovery: true,
+                discoveryTools: discoveryTools);
 
             var payload = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
@@ -101,81 +123,149 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE RULES:");
-        sb.AppendLine("- Return JSON tool calls only.");
+        sb.AppendLine("- Return one JSON tool call object at a time when using a tool.");
         sb.AppendLine("- You MUST call get_workflow_input first.");
-        sb.AppendLine("- You MUST load required framework context before analysis.");
-        sb.AppendLine("- You MUST load required solution context before analysis.");
-        sb.AppendLine("- You MUST read repository evidence before saving output.");
-        sb.AppendLine("- When reading a file, return ONLY: {\"action\":\"read_file\",\"path\":\"relative/path\"}.");
-        sb.AppendLine("- When saving output, return ONLY: {\"action\":\"save_workflow_output\",\"workflowRunId\":\"guid\",\"output\":{...}}.");
+        sb.AppendLine("- You MUST read required framework context before analysis.");
+        sb.AppendLine("- You MUST read required solution context before analysis.");
+        sb.AppendLine("- In discovery phases, use list_repo_tree and search_repo to locate relevant evidence before reading files.");
+        sb.AppendLine("- Use get_file or read_file only after discovery narrowed the evidence.");
+        sb.AppendLine("- Save output only in the last phase via save_workflow_output.");
         sb.AppendLine("- The workflowRunId used in save_workflow_output MUST match the active workflow run.");
         sb.AppendLine("- The output object MUST satisfy every required field in the schema.");
-        sb.AppendLine("- Do not include markdown fences or commentary outside the JSON object.");
-        sb.AppendLine("- Do not save output before required context-loading is complete.");
+        sb.AppendLine("- Do not include markdown fences or commentary outside the requested output.");
         return sb.ToString();
     }
 
-    private static string BuildPrompt(SolutionAnalysisRequest request)
+    private static List<FileAwareAgentRunner.AgentPhaseDefinition> BuildPhases(SolutionAnalysisRequest request)
+    {
+        return
+        [
+            new(
+                "load-required-context",
+                BuildLoadContextPrompt(request),
+                RequiresSavedOutput: false,
+                AllowRepositoryDiscovery: false,
+                PurposeSummary: "Load the workflow input plus mandatory framework and solution knowledge before repository analysis."),
+            new(
+                "discover-repository",
+                BuildRepositoryDiscoveryPrompt(request),
+                RequiresSavedOutput: false,
+                AllowRepositoryDiscovery: true,
+                PurposeSummary: "Use repository discovery tools to find the most relevant implementation evidence for this requirement."),
+            new(
+                "inspect-evidence",
+                BuildEvidenceInspectionPrompt(request),
+                RequiresSavedOutput: false,
+                AllowRepositoryDiscovery: true,
+                PurposeSummary: "Read the strongest repository evidence and summarize concrete findings, risks, and gaps."),
+            new(
+                "save-analysis-output",
+                BuildFinalOutputPrompt(request),
+                RequiresSavedOutput: true,
+                AllowRepositoryDiscovery: true,
+                PurposeSummary: "Assemble the final analysis output and save it only after all mandatory context and evidence are loaded.")
+        ];
+    }
+
+    private static string BuildLoadContextPrompt(SolutionAnalysisRequest request)
     {
         var sb = new StringBuilder();
         sb.AppendLine("WORKFLOW RUN ID:");
         sb.AppendLine(request.WorkflowRunId.ToString());
         sb.AppendLine();
-        sb.AppendLine("WORKFLOW TYPE:");
-        sb.AppendLine("ANALYSIS");
+        sb.AppendLine("STEP GOAL:");
+        sb.AppendLine("Load the structured workflow input, mandatory framework rules, and mandatory solution knowledge.");
         sb.AppendLine();
-        sb.AppendLine("ROLE:");
-        sb.AppendLine("You are the Solution Analyst working inside a strict SDLC workflow.");
+        sb.AppendLine("DO THIS NOW:");
+        sb.AppendLine("1. Call get_workflow_input.");
+        sb.AppendLine("2. Read every required framework file listed below.");
+        sb.AppendLine("3. Read every required solution knowledge file listed below.");
+        sb.AppendLine("4. Then return a short plain-text summary of what context is now loaded and which areas need repository evidence.");
         sb.AppendLine();
-        sb.AppendLine("MANDATORY EXECUTION SEQUENCE:");
-        sb.AppendLine("1. Call get_workflow_input using the workflowRunId above.");
-        sb.AppendLine("2. Read required framework context first.");
-        sb.AppendLine("3. Read required solution knowledge files.");
-        sb.AppendLine("4. Read relevant repository evidence files.");
-        sb.AppendLine("5. Only then perform the analysis.");
-        sb.AppendLine("6. Only then save final output with save_workflow_output.");
-        sb.AppendLine();
-        sb.AppendLine("REQUIRED FRAMEWORK CONTEXT:");
+        sb.AppendLine("REQUIRED FRAMEWORK FILES:");
         sb.AppendLine("- AI/framework/rules/sdlc/analyze.md");
         sb.AppendLine("- AI/framework/agents/solution-analyst/prompt.md");
         foreach (var file in request.ProfileRuleFiles)
         {
             sb.AppendLine($"- {file.Path}");
         }
+
         sb.AppendLine();
-        sb.AppendLine("REQUIRED SOLUTION CONTEXT:");
+        sb.AppendLine("REQUIRED SOLUTION KNOWLEDGE FILES:");
         foreach (var file in request.SolutionKnowledgeFiles)
         {
             sb.AppendLine($"- {file.Path}");
         }
+
         sb.AppendLine();
-        sb.AppendLine("REPOSITORY EVIDENCE RULE:");
-        sb.AppendLine("- You MUST inspect relevant repository files before concluding.");
-        sb.AppendLine("- Do not rely only on workflow input or solution documentation.");
-        sb.AppendLine("- You MUST read at least one repository file before saving output.");
+        sb.AppendLine("IMPORTANT:");
+        sb.AppendLine("- Do not use repository discovery tools yet.");
+        sb.AppendLine("- Do not save final output in this step.");
+        return sb.ToString();
+    }
+
+    private static string BuildRepositoryDiscoveryPrompt(SolutionAnalysisRequest request)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("STEP GOAL:");
+        sb.AppendLine("Discover which repository files are most relevant to the requirement before reading implementation evidence.");
         sb.AppendLine();
-        sb.AppendLine("ANALYSIS EXPECTATIONS:");
+        sb.AppendLine("DO THIS NOW:");
+        sb.AppendLine("1. Use list_repo_tree and/or search_repo to narrow candidate folders and files.");
+        sb.AppendLine("2. Focus on the smallest, strongest set of files that can prove current behavior or impacted areas.");
+        sb.AppendLine("3. Then return a short plain-text discovery summary naming the priority files to inspect next.");
+        sb.AppendLine();
+        sb.AppendLine("DISCOVERY RULES:");
+        sb.AppendLine("- Prefer targeted searches tied to the requirement language and known workflow concepts.");
+        sb.AppendLine("- Prefer specific folders over reading many unrelated files.");
+        sb.AppendLine("- You may search multiple times if needed.");
+        sb.AppendLine("- Do not save final output in this step.");
+        sb.AppendLine();
+        sb.AppendLine("REQUIREMENT TITLE:");
+        sb.AppendLine(request.RequirementTitle);
+        return sb.ToString();
+    }
+
+    private static string BuildEvidenceInspectionPrompt(SolutionAnalysisRequest request)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("STEP GOAL:");
+        sb.AppendLine("Inspect the discovered repository evidence and extract grounded findings.");
+        sb.AppendLine();
+        sb.AppendLine("DO THIS NOW:");
+        sb.AppendLine("1. Read the most relevant repository files using get_file or read_file.");
+        sb.AppendLine("2. Cross-check behavior against the loaded workflow rules and solution docs.");
+        sb.AppendLine("3. Then return a short plain-text evidence summary covering impacted areas, risks, assumptions, and open gaps.");
+        sb.AppendLine();
+        sb.AppendLine("RULES:");
+        sb.AppendLine("- Read enough evidence to justify your conclusions.");
+        sb.AppendLine("- Prefer concrete files over speculation.");
+        sb.AppendLine("- Do not save final output in this step.");
+        sb.AppendLine();
+        sb.AppendLine("REQUIREMENT TITLE:");
+        sb.AppendLine(request.RequirementTitle);
+        return sb.ToString();
+    }
+
+    private static string BuildFinalOutputPrompt(SolutionAnalysisRequest request)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("STEP GOAL:");
+        sb.AppendLine("Produce the final analysis payload from the already loaded context and repository evidence.");
+        sb.AppendLine();
+        sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
         sb.AppendLine("- Identify impacted areas.");
         sb.AppendLine("- Identify risks.");
         sb.AppendLine("- Identify assumptions.");
         sb.AppendLine("- Identify gaps and ambiguities.");
         sb.AppendLine("- Generate open questions when information is missing.");
-        sb.AppendLine();
-        sb.AppendLine("FORBIDDEN BEHAVIOR:");
         sb.AppendLine("- Do NOT design the solution.");
         sb.AppendLine("- Do NOT create backlog items.");
         sb.AppendLine("- Do NOT describe implementation steps.");
-        sb.AppendLine("- Do NOT skip required context loading.");
-        sb.AppendLine("- Do NOT save output before reading required files.");
-        sb.AppendLine("- Do NOT invent workflowRunId, file contents, or evidence.");
         sb.AppendLine();
-        sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
-        sb.AppendLine("- Return top-level workflow output fields only.");
-        sb.AppendLine("- summary is required.");
-        sb.AppendLine("- artifacts are required.");
-        sb.AppendLine("- recommendedNextWorkflowCodes are required.");
-        sb.AppendLine("- generatedOpenQuestions are required when ambiguity exists.");
-        sb.AppendLine("- Use the exact same workflowRunId when saving output.");
+        sb.AppendLine("ACTION:");
+        sb.AppendLine("Return ONLY save_workflow_output with the final workflow output object.");
+        sb.AppendLine($"Use workflowRunId '{request.WorkflowRunId}'.");
         return sb.ToString();
     }
 
@@ -223,12 +313,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             : [new ArtifactPayload { ArtifactType = fallbackType, Name = fallbackName }];
     }
 
-    private static List<string> NormalizeStringList(IEnumerable<string>? values, IEnumerable<string> fallbackValues)
+    private static List<string> NormalizeStringList(List<string>? values, IReadOnlyList<string> fallbackValues)
     {
         var normalized = values?
-            .Select(x => x?.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Cast<string>()
+            .Select(x => x.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? [];
 
@@ -238,44 +327,37 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
 
         return fallbackValues
-            .Select(x => x?.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Cast<string>()
+            .Select(x => x.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     private static string NormalizeStatus(string? status, int openQuestionCount)
-        => status?.Trim().ToLowerInvariant() switch
+    {
+        if (string.IsNullOrWhiteSpace(status))
         {
-            "completed" => "completed",
-            "completed-with-open-questions" => "completed-with-open-questions",
-            "blocked" => "blocked",
-            "failed" => "failed",
-            _ => openQuestionCount > 0 ? "completed-with-open-questions" : "completed"
-        };
+            return openQuestionCount > 0 ? "NeedsClarification" : "Completed";
+        }
+
+        return status.Trim();
+    }
 
     private static string ExtractJsonObject(string raw)
     {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            throw new InvalidOperationException("Agent returned an empty response.");
-        }
-
         var start = raw.IndexOf('{');
         var end = raw.LastIndexOf('}');
         if (start < 0 || end <= start)
         {
-            throw new InvalidOperationException($"Agent response did not contain a valid JSON object. Raw response: {raw}");
+            throw new InvalidOperationException($"Agent did not return a JSON object. Raw response: {raw}");
         }
 
         return raw[start..(end + 1)];
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true
     };
 
@@ -284,9 +366,9 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         public string Status { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
         public List<ArtifactPayload>? Artifacts { get; set; }
-        public List<JsonElement>? GeneratedRequirements { get; set; }
-        public List<JsonElement>? GeneratedOpenQuestions { get; set; }
-        public List<JsonElement>? GeneratedDecisions { get; set; }
+        public List<GeneratedRequirementPayload>? GeneratedRequirements { get; set; }
+        public List<GeneratedOpenQuestionPayload>? GeneratedOpenQuestions { get; set; }
+        public List<GeneratedDecisionPayload>? GeneratedDecisions { get; set; }
         public List<string>? DocumentationUpdates { get; set; }
         public List<string>? KnowledgeUpdates { get; set; }
         public List<string>? RecommendedNextWorkflowCodes { get; set; }
@@ -297,5 +379,28 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         public string ArtifactType { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string? Path { get; set; }
+    }
+
+    private sealed class GeneratedRequirementPayload
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string? Type { get; set; }
+        public string? Priority { get; set; }
+    }
+
+    private sealed class GeneratedOpenQuestionPayload
+    {
+        public string Question { get; set; } = string.Empty;
+        public string? Context { get; set; }
+        public string? RelatedRequirementTitle { get; set; }
+    }
+
+    private sealed class GeneratedDecisionPayload
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Decision { get; set; } = string.Empty;
+        public string? Rationale { get; set; }
+        public string? RelatedRequirementTitle { get; set; }
     }
 }

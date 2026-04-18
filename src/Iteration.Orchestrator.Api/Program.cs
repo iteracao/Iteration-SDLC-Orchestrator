@@ -68,7 +68,8 @@ builder.Services.AddScoped<ISolutionAnalystAgent>(sp =>
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
-        sp.GetRequiredService<IWorkflowPayloadStore>()));
+        sp.GetRequiredService<IWorkflowPayloadStore>(),
+        sp.GetRequiredService<ISolutionBridge>()));
 builder.Services.AddScoped<ISolutionDesignerAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionDesignerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",

@@ -144,7 +144,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         {
             await _logs.AppendSectionAsync(run.Id, "Model call", ct);
             await _logs.AppendLineAsync(run.Id, "Calling workflow agent.", ct);
-            var result = await _agent.AnalyzeAsync(request, agentDef, ct);
+            var result = await _agent.AnalyzeAsync(request, agentDef, solution, ct);
 
             taskRun.Succeed(result.RawJson);
 
