@@ -7,7 +7,7 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnalystAgent
 {
-    private const int MaxLoadedFileCharacters = 8000;
+    private const int MaxLoadedFileCharacters = 4000;
     private const int MaxSummaryCharacters = 400;
 
     private readonly string _endpoint;
@@ -61,44 +61,49 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
             foreach (var path in GetRequiredFrameworkPaths(request))
             {
-                sourceSummaries.Add(new LoadedSourceSummary(
+                var summary = await SafeSummarizeRepositoryFileAsync(
+                    request,
+                    agentDefinition,
+                    target,
+                    instructions,
                     path,
-                    await SummarizeRepositoryFileAsync(
-                        request,
-                        agentDefinition,
-                        target,
-                        instructions,
-                        path,
-                        "Read this framework/rules file and return a short plain-text summary focused on rules that affect this requirement.",
-                        ct)));
+                    "Read this framework or rules file and return a short plain-text summary focused on rules that affect this requirement.",
+                    ct);
+
+                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
             }
 
             foreach (var path in GetRequiredSolutionPaths(request))
             {
-                sourceSummaries.Add(new LoadedSourceSummary(
+                var summary = await SafeSummarizeRepositoryFileAsync(
+                    request,
+                    agentDefinition,
+                    target,
+                    instructions,
                     path,
-                    await SummarizeRepositoryFileAsync(
-                        request,
-                        agentDefinition,
-                        target,
-                        instructions,
-                        path,
-                        "Read this solution knowledge file and return a short plain-text summary focused on current solution truth and constraints relevant to this requirement.",
-                        ct)));
+                    "Read this solution knowledge file and return a short plain-text summary focused on current solution truth and constraints relevant to this requirement.",
+                    ct);
+
+                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
             }
 
-            foreach (var path in GetRepositoryReviewPaths(request))
+            foreach (var path in GetRelevantRepositoryPaths(request))
             {
-                sourceSummaries.Add(new LoadedSourceSummary(
+                if (IsIgnoredFile(path))
+                {
+                    continue;
+                }
+
+                var summary = await SafeSummarizeRepositoryFileAsync(
+                    request,
+                    agentDefinition,
+                    target,
+                    instructions,
                     path,
-                    await SummarizeRepositoryFileAsync(
-                        request,
-                        agentDefinition,
-                        target,
-                        instructions,
-                        path,
-                        "Read this repository file and return a short plain-text summary. Say whether it is relevant to the requirement and why.",
-                        ct)));
+                    "Read this repository file and return a short plain-text summary. Say whether it is relevant to the requirement and why.",
+                    ct);
+
+                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
             }
 
             var finalPrompt = BuildFinalPrompt(request, sourceSummaries);
@@ -110,7 +115,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 finalPrompt,
                 request.WorkflowRunId,
                 _logs,
-                "final-analysis-synthesis",
+                "final-analysis",
                 ct);
 
             var payload = ParseAndNormalize(rawText, request);
@@ -137,7 +142,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
     }
 
-    private async Task<string> SummarizeRepositoryFileAsync(
+    private async Task<string> SafeSummarizeRepositoryFileAsync(
         SolutionAnalysisRequest request,
         AgentDefinition agentDefinition,
         SolutionTarget target,
@@ -146,8 +151,16 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         string taskInstruction,
         CancellationToken ct)
     {
-        var content = await ReadRepositoryFileAsync(target, path, ct);
-        return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+        try
+        {
+            var content = await ReadRepositoryFileAsync(target, path, ct);
+            return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+        }
+        catch (Exception ex)
+        {
+            await _logs.AppendLineAsync(request.WorkflowRunId, $"[SKIP] {path} -> {ex.Message}", ct);
+            return $"Skipped (not found): {path}";
+        }
     }
 
     private async Task<string> SummarizeSourceAsync(
@@ -213,10 +226,25 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Select(x => x.Path)
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
-    private static IEnumerable<string> GetRepositoryReviewPaths(SolutionAnalysisRequest request)
+    private static IEnumerable<string> GetRelevantRepositoryPaths(SolutionAnalysisRequest request)
         => request.RepositoryFiles
-            .Concat(request.RepositoryDocumentationFiles)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+            .Where(path =>
+                path.StartsWith("src/", StringComparison.OrdinalIgnoreCase) &&
+                (
+                    path.Contains("Controllers", StringComparison.OrdinalIgnoreCase) ||
+                    path.Contains("Features", StringComparison.OrdinalIgnoreCase) ||
+                    path.Contains("Pages", StringComparison.OrdinalIgnoreCase) ||
+                    path.Contains("Api", StringComparison.OrdinalIgnoreCase) ||
+                    path.Contains("Models", StringComparison.OrdinalIgnoreCase)
+                ) &&
+                !path.Contains("/bin/", StringComparison.OrdinalIgnoreCase) &&
+                !path.Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+            .Take(20);
+
+    private static bool IsIgnoredFile(string path)
+        => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
+           path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
+           path.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
 
     private static string BuildSourceSummaryPrompt(
         SolutionAnalysisRequest request,
