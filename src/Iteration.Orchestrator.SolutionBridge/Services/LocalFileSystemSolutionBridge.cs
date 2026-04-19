@@ -5,6 +5,9 @@ namespace Iteration.Orchestrator.SolutionBridge.Services;
 
 public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
 {
+    private const int MaxTreeEntries = 250;
+    private const int MaxSearchHits = 25;
+
     private static readonly string[] SearchableExtensions =
     [
         ".cs",
@@ -20,6 +23,17 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
         ".xml"
     ];
 
+    private static readonly string[] IgnoredDirectoryNames =
+    [
+        "bin",
+        "obj",
+        ".git",
+        ".vs",
+        "node_modules",
+        "packages",
+        "TestResults"
+    ];
+
     public Task<IReadOnlyList<RepositoryEntry>> ListRepositoryTreeAsync(SolutionTarget target, string? relativePath, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -27,10 +41,10 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
         var basePath = ResolveDirectory(target.RepositoryPath, relativePath);
         var rootPath = Path.GetFullPath(target.RepositoryPath);
 
-        var entries = Directory.EnumerateFileSystemEntries(basePath, "*", SearchOption.TopDirectoryOnly)
+        var entries = EnumerateTopLevelEntries(basePath)
             .OrderBy(path => Directory.Exists(path) ? 0 : 1)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Take(250)
+            .Take(MaxTreeEntries)
             .Select(path =>
             {
                 var relative = Path.GetRelativePath(rootPath, path).Replace('\\', '/');
@@ -60,8 +74,7 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
         var rootPath = Path.GetFullPath(target.RepositoryPath);
         var hits = new List<FileSearchHit>();
 
-        foreach (var file in Directory.EnumerateFiles(basePath, "*.*", SearchOption.AllDirectories)
-                     .Where(IsSearchableFile)
+        foreach (var file in EnumerateSearchableFiles(basePath)
                      .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
@@ -92,7 +105,7 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
                 Path.GetRelativePath(rootPath, file).Replace('\\', '/'),
                 snippet));
 
-            if (hits.Count >= 25)
+            if (hits.Count >= MaxSearchHits)
             {
                 break;
             }
@@ -105,7 +118,7 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
     {
         ct.ThrowIfCancellationRequested();
 
-        var files = Directory.EnumerateFiles(target.RepositoryPath, "*.*", SearchOption.AllDirectories).ToList();
+        var files = EnumerateRepositoryFiles(target.RepositoryPath).ToList();
 
         var snapshot = new SolutionSnapshot(
             target.RepositoryPath,
@@ -124,16 +137,111 @@ public sealed class LocalFileSystemSolutionBridge : ISolutionBridge
             files.Where(x => x.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && x.Contains("Api", StringComparison.OrdinalIgnoreCase))
                  .Select(x => Path.GetRelativePath(target.RepositoryPath, x).Replace('\\', '/'))
                  .ToList(),
-            Directory.EnumerateDirectories(target.RepositoryPath)
-                     .Select(x => Path.GetFileName(x))
-                     .OrderBy(x => x)
-                     .ToList());
+            EnumerateTopLevelEntries(target.RepositoryPath)
+                .Where(Directory.Exists)
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList()!);
 
         return Task.FromResult(snapshot);
     }
 
+    private static IEnumerable<string> EnumerateTopLevelEntries(string directory)
+    {
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var entry in entries)
+        {
+            if (IsIgnoredPath(entry))
+            {
+                continue;
+            }
+
+            yield return entry;
+        }
+    }
+
+    private static IEnumerable<string> EnumerateRepositoryFiles(string root)
+        => EnumerateDirectoryFiles(root, includeOnlySearchableFiles: false);
+
+    private static IEnumerable<string> EnumerateSearchableFiles(string root)
+        => EnumerateDirectoryFiles(root, includeOnlySearchableFiles: true);
+
+    private static IEnumerable<string> EnumerateDirectoryFiles(string root, bool includeOnlySearchableFiles)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+
+            IEnumerable<string> directories;
+            try
+            {
+                directories = Directory.EnumerateDirectories(current, "*", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var directory in directories)
+            {
+                if (IsIgnoredPath(directory))
+                {
+                    continue;
+                }
+
+                pending.Push(directory);
+            }
+
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(current, "*", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                if (IsIgnoredPath(file))
+                {
+                    continue;
+                }
+
+                if (includeOnlySearchableFiles && !IsSearchableFile(file))
+                {
+                    continue;
+                }
+
+                yield return file;
+            }
+        }
+    }
+
     private static bool IsSearchableFile(string path)
         => SearchableExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsIgnoredPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        return segments.Any(segment => IgnoredDirectoryNames.Contains(segment, StringComparer.OrdinalIgnoreCase));
+    }
 
     private static string ResolveFile(string root, string relativePath)
     {
