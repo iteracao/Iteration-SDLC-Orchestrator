@@ -8,5 +8,5 @@ public sealed class OllamaOptions
     public bool AutoStart { get; set; } = true;
     public int StartupTimeoutSeconds { get; set; } = 20;
     public int RequestTimeoutSeconds { get; set; } = 300;
-    public int AgentResponseTimeoutSeconds { get; set; } = 60;
+    public int AgentResponseTimeoutSeconds { get; set; } = 180;
 }

@@ -28,7 +28,7 @@ internal static class FileAwareAgentRunner
         IReadOnlyCollection<string>? requiredFrameworkPaths = null,
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
         bool requireRepositoryEvidence = false,
-        int maxModelResponseSeconds = 60)
+        int maxModelResponseSeconds = 180)
     {
         var phase = new AgentPhaseDefinition(
             Name: "single-pass",
@@ -100,7 +100,7 @@ internal static class FileAwareAgentRunner
         bool requireRepositoryEvidence = false,
         bool requireRepositoryDiscovery = false,
         RepositoryDiscoveryTools? discoveryTools = null,
-        int maxModelResponseSeconds = 60)
+        int maxModelResponseSeconds = 180)
     {
         if (phases.Count == 0)
         {
@@ -498,7 +498,7 @@ internal static class FileAwareAgentRunner
         => relativePath.Replace('\\', '/').Trim();
 
     private static int NormalizeResponseTimeoutSeconds(int timeoutSeconds)
-        => Math.Clamp(timeoutSeconds, 1, 60);
+        => Math.Clamp(timeoutSeconds, 1, 180);
 
     private static async Task<string> RunModelWithTimeoutAsync(
         AIAgent agent,

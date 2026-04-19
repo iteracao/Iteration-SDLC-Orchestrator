@@ -18,7 +18,7 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
         _payloadStore = payloadStore;
-        _maxModelResponseSeconds = Math.Clamp(maxModelResponseSeconds, 1, 60);
+        _maxModelResponseSeconds = Math.Clamp(maxModelResponseSeconds, 1, 180);
     }
 
     public async Task<SolutionPlanResult> PlanAsync(SolutionPlanRequest request, AgentDefinition agentDefinition, CancellationToken ct)
