@@ -249,6 +249,14 @@ public sealed class StartImplementSolutionChangeRunHandler
             await _artifacts.SaveTextAsync(run.Id, "implementation-request.input.json", inputJson, ct);
             await _artifacts.SaveTextAsync(run.Id, "implementation-result.json", result.RawJson, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await _logs.AppendSectionAsync(run.Id, "Cancelled", CancellationToken.None);
+            await _logs.AppendLineAsync(run.Id, "Workflow execution cancelled while the agent was running.", CancellationToken.None);
+            taskRun.Fail("Workflow execution cancelled.");
+            await _db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
         catch (Exception ex)
         {
             await _logs.AppendSectionAsync(run.Id, "Error", CancellationToken.None);

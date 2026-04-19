@@ -16,6 +16,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     private readonly IWorkflowPayloadStore _payloadStore;
     private readonly ISolutionBridge _solutionBridge;
     private readonly IConfigCatalog _config;
+    private readonly int _maxModelResponseSeconds;
 
     public MicrosoftAgentFrameworkSolutionAnalystAgent(
         string endpoint,
@@ -23,7 +24,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         ISolutionBridge solutionBridge,
-        IConfigCatalog config)
+        IConfigCatalog config,
+        int maxModelResponseSeconds)
     {
         _endpoint = endpoint;
         _model = model;
@@ -31,6 +33,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         _payloadStore = payloadStore;
         _solutionBridge = solutionBridge;
         _config = config;
+        _maxModelResponseSeconds = Math.Clamp(maxModelResponseSeconds, 1, 60);
     }
 
     public async Task<SolutionAnalysisResult> AnalyzeAsync(
@@ -105,7 +108,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 request.WorkflowRunId,
                 _logs,
                 "final-analysis",
-                ct);
+                ct,
+                _maxModelResponseSeconds);
 
             var payload = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
@@ -335,7 +339,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             request.WorkflowRunId,
             _logs,
             $"review-source:{sourceName}",
-            ct);
+            ct,
+            _maxModelResponseSeconds);
 
         return NormalizeShortSummary(rawText);
     }
@@ -388,14 +393,17 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<string> GetRelevantRepositoryPaths(SolutionAnalysisRequest request)
-        => request.RepositoryFiles
-            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
-            .Where(candidate => candidate.Score > 0 && !IsIgnoredFile(candidate.Path))
-            .OrderByDescending(candidate => candidate.Score)
-            .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(candidate => candidate.Path)
+        => request.RepositoryEvidenceFiles
+            .Select(x => x.Path)
+            .Concat(
+                request.RepositoryFiles
+                    .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
+                    .Where(candidate => candidate.Score > 0 && !IsIgnoredFile(candidate.Path))
+                    .OrderByDescending(candidate => candidate.Score)
+                    .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
+                    .Select(candidate => candidate.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(20);
+            .Take(8);
 
     private static bool IsIgnoredFile(string path)
         => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||

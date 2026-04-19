@@ -6,15 +6,18 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IWorkflowExecutionQueue _queue;
+    private readonly IWorkflowRunCancellationRegistry _cancellationRegistry;
     private readonly ILogger<WorkflowExecutionBackgroundService> _logger;
 
     public WorkflowExecutionBackgroundService(
         IServiceScopeFactory scopeFactory,
         IWorkflowExecutionQueue queue,
+        IWorkflowRunCancellationRegistry cancellationRegistry,
         ILogger<WorkflowExecutionBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
+        _cancellationRegistry = cancellationRegistry;
         _logger = logger;
     }
 
@@ -36,11 +39,24 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var executor = scope.ServiceProvider.GetRequiredService<IWorkflowRunExecutor>();
-                await executor.ExecuteAsync(workflowRunId, stoppingToken);
+                var executionToken = _cancellationRegistry.Register(workflowRunId, stoppingToken);
+
+                try
+                {
+                    await executor.ExecuteAsync(workflowRunId, executionToken);
+                }
+                finally
+                {
+                    _cancellationRegistry.Complete(workflowRunId);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Background workflow execution cancelled for run {WorkflowRunId}.", workflowRunId);
             }
             catch (Exception ex)
             {

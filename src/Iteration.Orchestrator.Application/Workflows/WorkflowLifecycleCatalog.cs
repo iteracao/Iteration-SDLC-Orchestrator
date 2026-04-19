@@ -46,6 +46,7 @@ public static class WorkflowLifecycleCatalog
 
     public static bool CanCancel(WorkflowRunStatus status)
         => status is WorkflowRunStatus.Pending
+            or WorkflowRunStatus.Running
             or WorkflowRunStatus.CompletedAwaitingValidation
             or WorkflowRunStatus.Error;
 

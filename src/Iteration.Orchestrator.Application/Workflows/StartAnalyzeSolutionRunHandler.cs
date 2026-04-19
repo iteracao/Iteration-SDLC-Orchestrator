@@ -101,6 +101,14 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var repositoryFiles = await RepositoryPromptInputDiscovery.LoadRepositoryFilesAsync(solution, ct);
         var repositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetFrameworkDocumentationFiles(solution.RepositoryPath);
+        var searchQuery = $"{requirement.Title} {requirement.Description}".Trim();
+        var hits = await _bridge.SearchFilesAsync(solution, searchQuery, null, ct);
+        var repositoryEvidenceFiles = new List<WorkflowFileReference>();
+        foreach (var hit in hits.Take(5))
+        {
+            repositoryEvidenceFiles.Add(new WorkflowFileReference(hit.RelativePath, InferFileKind(hit.RelativePath), "Repository evidence hit", "repository-search"));
+        }
+
         var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
 
         await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
@@ -111,7 +119,8 @@ public sealed class StartAnalyzeSolutionRunHandler
             ["Profile rules available"] = profile.Rules.Count.ToString(),
             ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
             ["Repository files available"] = repositoryFiles.Count.ToString(),
-            ["Repository docs available"] = repositoryDocumentationFiles.Count.ToString()
+            ["Repository docs available"] = repositoryDocumentationFiles.Count.ToString(),
+            ["Search hits"] = hits.Count.ToString()
         }, ct);
 
         var request = new SolutionAnalysisRequest(
@@ -125,6 +134,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             BuildProfileSummary(profile),
             BuildProfileRuleFiles(profile),
             solutionKnowledgeDocuments,
+            repositoryEvidenceFiles,
             workflow.ProducedArtifacts,
             workflow.KnowledgeUpdates,
             workflow.ExecutionRules,
@@ -175,6 +185,14 @@ public sealed class StartAnalyzeSolutionRunHandler
             await _artifacts.SaveTextAsync(run.Id, "analysis-report.json", result.RawJson, ct);
             await _logs.AppendSectionAsync(run.Id, "Result", ct);
             await _logs.AppendLineAsync(run.Id, "Workflow completed successfully.", ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await _logs.AppendSectionAsync(run.Id, "Cancelled", CancellationToken.None);
+            await _logs.AppendLineAsync(run.Id, "Workflow execution cancelled while the agent was running.", CancellationToken.None);
+            taskRun.Fail("Workflow execution cancelled.");
+            await _db.SaveChangesAsync(CancellationToken.None);
+            throw;
         }
         catch (Exception ex)
         {

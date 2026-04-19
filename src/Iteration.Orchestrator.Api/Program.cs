@@ -46,6 +46,7 @@ builder.Services.AddScoped<WorkflowLifecycleService>();
 builder.Services.AddScoped<IWorkflowRunExecutor, WorkflowRunExecutor>();
 
 builder.Services.AddSingleton<IWorkflowExecutionQueue, InMemoryWorkflowExecutionQueue>();
+builder.Services.AddSingleton<IWorkflowRunCancellationRegistry, InMemoryWorkflowRunCancellationRegistry>();
 builder.Services.AddHostedService<WorkflowExecutionBackgroundService>();
 
 builder.Services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
@@ -56,6 +57,10 @@ var configRoot = builder.Configuration["ConfigRoot"]
 
 var resolvedConfigRoot = Path.GetFullPath(
     Path.Combine(AppContext.BaseDirectory, configRoot));
+var agentResponseTimeoutSeconds = Math.Clamp(
+    builder.Configuration.GetValue<int?>("Ollama:AgentResponseTimeoutSeconds") ?? 60,
+    1,
+    60);
 
 Console.WriteLine($"CONFIG ROOT = {resolvedConfigRoot}");
 
@@ -70,25 +75,29 @@ builder.Services.AddScoped<ISolutionAnalystAgent>(sp =>
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
         sp.GetRequiredService<ISolutionBridge>(),
-        sp.GetRequiredService<IConfigCatalog>()));
+        sp.GetRequiredService<IConfigCatalog>(),
+        agentResponseTimeoutSeconds));
 builder.Services.AddScoped<ISolutionDesignerAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionDesignerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
-        sp.GetRequiredService<IWorkflowPayloadStore>()));
+        sp.GetRequiredService<IWorkflowPayloadStore>(),
+        agentResponseTimeoutSeconds));
 builder.Services.AddScoped<ISolutionPlannerAgent>(sp =>
     new MicrosoftAgentFrameworkImplementationPlannerAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
-        sp.GetRequiredService<IWorkflowPayloadStore>()));
+        sp.GetRequiredService<IWorkflowPayloadStore>(),
+        agentResponseTimeoutSeconds));
 builder.Services.AddScoped<ISolutionImplementationAgent>(sp =>
     new MicrosoftAgentFrameworkSolutionImplementationAgent(
         builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
-        sp.GetRequiredService<IWorkflowPayloadStore>()));
+        sp.GetRequiredService<IWorkflowPayloadStore>(),
+        agentResponseTimeoutSeconds));
 
 builder.Services.AddSingleton<ISolutionSetupService, FileSystemSolutionSetupService>();
 

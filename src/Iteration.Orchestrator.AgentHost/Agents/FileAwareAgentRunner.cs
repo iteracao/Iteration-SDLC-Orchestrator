@@ -27,7 +27,8 @@ internal static class FileAwareAgentRunner
         CancellationToken ct,
         IReadOnlyCollection<string>? requiredFrameworkPaths = null,
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
-        bool requireRepositoryEvidence = false)
+        bool requireRepositoryEvidence = false,
+        int maxModelResponseSeconds = 60)
     {
         var phase = new AgentPhaseDefinition(
             Name: "single-pass",
@@ -52,7 +53,8 @@ internal static class FileAwareAgentRunner
             requiredSolutionPaths,
             requireRepositoryEvidence,
             requireRepositoryDiscovery: false,
-            discoveryTools: null);
+            discoveryTools: null,
+            maxModelResponseSeconds: maxModelResponseSeconds);
     }
 
     public static async Task<string> RunPromptAsync(
@@ -64,16 +66,18 @@ internal static class FileAwareAgentRunner
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         string logTitle,
-        CancellationToken ct)
+        CancellationToken ct,
+        int maxModelResponseSeconds = 180)
     {
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
+        var responseTimeoutSeconds = NormalizeResponseTimeoutSeconds(maxModelResponseSeconds);
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
         await logs.AppendBlockAsync(workflowRunId, $"Prompt: {logTitle}", prompt, ct);
+        await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
 
-        var rawResponse = await agent.RunAsync(prompt, cancellationToken: ct);
-        var rawText = rawResponse.Text ?? string.Empty;
+        var rawText = await RunModelWithTimeoutAsync(agent, prompt, responseTimeoutSeconds, ct);
 
         await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", rawText, ct);
         return rawText;
@@ -95,7 +99,8 @@ internal static class FileAwareAgentRunner
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
         bool requireRepositoryEvidence = false,
         bool requireRepositoryDiscovery = false,
-        RepositoryDiscoveryTools? discoveryTools = null)
+        RepositoryDiscoveryTools? discoveryTools = null,
+        int maxModelResponseSeconds = 60)
     {
         if (phases.Count == 0)
         {
@@ -107,6 +112,7 @@ internal static class FileAwareAgentRunner
         var allowedPathSet = allowedPaths
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var responseTimeoutSeconds = NormalizeResponseTimeoutSeconds(maxModelResponseSeconds);
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -116,6 +122,8 @@ internal static class FileAwareAgentRunner
 
         var transcript = new StringBuilder();
         var state = new AgentExecutionState();
+
+        await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
 
         for (var phaseIndex = 0; phaseIndex < phases.Count; phaseIndex++)
         {
@@ -140,7 +148,8 @@ internal static class FileAwareAgentRunner
                 requiredFrameworkPathSet,
                 requiredSolutionPathSet,
                 requireRepositoryEvidence,
-                requireRepositoryDiscovery);
+                requireRepositoryDiscovery,
+                responseTimeoutSeconds);
 
             if (phase.RequiresSavedOutput)
             {
@@ -174,14 +183,14 @@ internal static class FileAwareAgentRunner
         IReadOnlySet<string> requiredFrameworkPathSet,
         IReadOnlySet<string> requiredSolutionPathSet,
         bool requireRepositoryEvidence,
-        bool requireRepositoryDiscovery)
+        bool requireRepositoryDiscovery,
+        int maxModelResponseSeconds)
     {
         var currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            var rawResponse = await agent.RunAsync(currentPrompt, cancellationToken: ct);
-            var rawText = rawResponse.Text ?? string.Empty;
+            var rawText = await RunModelWithTimeoutAsync(agent, currentPrompt, maxModelResponseSeconds, ct);
             await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
             if (!TryParseToolRequest(rawText, out var toolRequest))
@@ -487,6 +496,29 @@ internal static class FileAwareAgentRunner
 
     private static string NormalizePath(string relativePath)
         => relativePath.Replace('\\', '/').Trim();
+
+    private static int NormalizeResponseTimeoutSeconds(int timeoutSeconds)
+        => Math.Clamp(timeoutSeconds, 1, 60);
+
+    private static async Task<string> RunModelWithTimeoutAsync(
+        AIAgent agent,
+        string prompt,
+        int maxModelResponseSeconds,
+        CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(maxModelResponseSeconds));
+
+        try
+        {
+            var rawResponse = await agent.RunAsync(prompt, cancellationToken: timeoutCts.Token);
+            return rawResponse.Text ?? string.Empty;
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Model response exceeded {maxModelResponseSeconds} seconds.", ex);
+        }
+    }
 
     private static string? NormalizeOptionalPath(string? relativePath)
         => string.IsNullOrWhiteSpace(relativePath) ? null : NormalizePath(relativePath);

@@ -10,13 +10,15 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
+    private readonly int _maxModelResponseSeconds;
 
-    public MicrosoftAgentFrameworkSolutionImplementationAgent(string endpoint, string model, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore)
+    public MicrosoftAgentFrameworkSolutionImplementationAgent(string endpoint, string model, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore, int maxModelResponseSeconds)
     {
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
         _payloadStore = payloadStore;
+        _maxModelResponseSeconds = Math.Clamp(maxModelResponseSeconds, 1, 60);
     }
 
     public async Task<SolutionImplementationResult> ImplementAsync(SolutionImplementationRequest request, AgentDefinition agentDefinition, CancellationToken ct)
@@ -50,7 +52,8 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
-                ct);
+                ct,
+                maxModelResponseSeconds: _maxModelResponseSeconds);
 
             var payload = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);

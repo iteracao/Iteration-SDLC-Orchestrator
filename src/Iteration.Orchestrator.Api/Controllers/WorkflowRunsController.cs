@@ -7,6 +7,7 @@ using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Iteration.Orchestrator.Domain.Workflows;
 
 namespace Iteration.Orchestrator.Api.Controllers;
 
@@ -230,7 +231,8 @@ public sealed class WorkflowRunsController : ControllerBase
             return NotFound(new { message = "Workflow run not found." });
         }
 
-        if (workflowRun.Status is not 3 and not 6)
+        if ((WorkflowRunStatus)workflowRun.Status != WorkflowRunStatus.CompletedAwaitingValidation &&
+            (WorkflowRunStatus)workflowRun.Status != WorkflowRunStatus.CompletedValidated)
         {
             return NotFound(new { message = "Workflow output payload is only available after the workflow completes successfully." });
         }

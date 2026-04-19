@@ -12,10 +12,12 @@ public sealed record CancelWorkflowRunCommand(
 public sealed class CancelWorkflowRunHandler
 {
     private readonly IAppDbContext _db;
+    private readonly IWorkflowRunCancellationRegistry _cancellationRegistry;
 
-    public CancelWorkflowRunHandler(IAppDbContext db)
+    public CancelWorkflowRunHandler(IAppDbContext db, IWorkflowRunCancellationRegistry cancellationRegistry)
     {
         _db = db;
+        _cancellationRegistry = cancellationRegistry;
     }
 
     public async Task HandleAsync(CancelWorkflowRunCommand command, CancellationToken ct)
@@ -58,6 +60,7 @@ public sealed class CancelWorkflowRunHandler
 
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        _cancellationRegistry.Cancel(command.WorkflowRunId);
     }
 
     private static string BuildCancelledStage(string currentStage)

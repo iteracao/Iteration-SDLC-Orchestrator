@@ -58,6 +58,10 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
                     throw new InvalidOperationException($"Unsupported workflow code '{run.WorkflowCode}'.");
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await _logs.AppendLineAsync(workflowRunId, "Workflow executor observed cancellation and stopped execution.", CancellationToken.None);
+        }
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(workflowRunId, "Workflow executor caught a top-level failure.", CancellationToken.None);

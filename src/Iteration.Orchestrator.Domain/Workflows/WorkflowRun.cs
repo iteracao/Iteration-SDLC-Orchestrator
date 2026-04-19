@@ -79,6 +79,7 @@ public sealed class WorkflowRun
     public void Cancel(string stage, string? reason = null)
     {
         if (Status != WorkflowRunStatus.Pending
+            && Status != WorkflowRunStatus.Running
             && Status != WorkflowRunStatus.CompletedAwaitingValidation
             && Status != WorkflowRunStatus.Error)
         {
