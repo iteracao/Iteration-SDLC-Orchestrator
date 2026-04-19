@@ -9,7 +9,7 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 internal static class FileAwareAgentRunner
 {
     private const int MaxToolCallsPerPhase = 16;
-    private const int MaxFileCharacters = 20000;
+    private const int MaxFileCharacters = 8000;
     private const int MaxTreeEntries = 120;
     private const int MaxSearchHits = 12;
 
@@ -170,7 +170,12 @@ internal static class FileAwareAgentRunner
                 return rawText;
             }
 
-            var normalizedAction = toolRequest!.Action.Trim().ToLowerInvariant();
+            var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
+            if (phase.RequiresSavedOutput && normalizedAction != "save_workflow_output")
+            {
+                throw new InvalidOperationException($"Final phase '{phase.Name}' only allows save_workflow_output, but agent requested '{toolRequest.ResolvedAction}'.");
+            }
+
             switch (normalizedAction)
             {
                 case "get_workflow_input":
@@ -301,7 +306,7 @@ internal static class FileAwareAgentRunner
                     return outputJson;
                 }
                 default:
-                    throw new InvalidOperationException($"Unsupported tool action requested by agent: {toolRequest.Action}");
+                    throw new InvalidOperationException($"Unsupported tool action requested by agent: {toolRequest.ResolvedAction}");
             }
         }
 
@@ -419,7 +424,7 @@ internal static class FileAwareAgentRunner
         try
         {
             request = JsonSerializer.Deserialize<ToolRequest>(json, JsonOptions);
-            return request is not null && !string.IsNullOrWhiteSpace(request.Action);
+            return request is not null && !string.IsNullOrWhiteSpace(request.ResolvedAction);
         }
         catch (JsonException)
         {
@@ -471,7 +476,7 @@ internal static class FileAwareAgentRunner
             return text;
         }
 
-        return text[..MaxFileCharacters] + "\n\n[TRUNCATED BY SERVER: file content exceeded 20000 characters]";
+        return text[..MaxFileCharacters] + $"\n\n[TRUNCATED BY SERVER: file content exceeded {MaxFileCharacters} characters]";
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, string transcript)
@@ -505,6 +510,9 @@ internal static class FileAwareAgentRunner
         if (phase.RequiresSavedOutput)
         {
             sb.AppendLine("- This is the final phase: you MUST finish by calling save_workflow_output.");
+            sb.AppendLine("- In the final phase, do not call get_workflow_input, read_file, get_file, list_repo_tree, or search_repo.");
+            sb.AppendLine("- Return exactly one JSON object with properties action, workflowRunId, and output.");
+            sb.AppendLine("- Use property name 'action', not 'tool'.");
         }
         else
         {
@@ -594,10 +602,17 @@ internal static class FileAwareAgentRunner
 
     private sealed class ToolRequest
     {
-        public string Action { get; set; } = string.Empty;
+        public string? Action { get; set; }
+
+        public string? Tool { get; set; }
+
         public string? WorkflowRunId { get; set; }
         public string? Path { get; set; }
         public string? Query { get; set; }
         public JsonElement? Output { get; set; }
+
+        public string ResolvedAction => !string.IsNullOrWhiteSpace(Action)
+            ? Action!
+            : Tool ?? string.Empty;
     }
 }

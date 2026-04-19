@@ -124,6 +124,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE RULES:");
         sb.AppendLine("- Return one JSON tool call object at a time when using a tool.");
+        sb.AppendLine("- Tool call objects must use property name 'action', not 'tool'.");
         sb.AppendLine("- You MUST call get_workflow_input first.");
         sb.AppendLine("- You MUST read required framework context before analysis.");
         sb.AppendLine("- You MUST read required solution context before analysis.");
@@ -162,7 +163,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 "save-analysis-output",
                 BuildFinalOutputPrompt(request),
                 RequiresSavedOutput: true,
-                AllowRepositoryDiscovery: true,
+                AllowRepositoryDiscovery: false,
                 PurposeSummary: "Assemble the final analysis output and save it only after all mandatory context and evidence are loaded.")
         ];
     }
@@ -238,8 +239,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("3. Then return a short plain-text evidence summary covering impacted areas, risks, assumptions, and open gaps.");
         sb.AppendLine();
         sb.AppendLine("RULES:");
-        sb.AppendLine("- Read enough evidence to justify your conclusions.");
-        sb.AppendLine("- Prefer concrete files over speculation.");
+        sb.AppendLine("- Read at most 4 repository files in this step.");
+        sb.AppendLine("- Prefer files already identified in discovery.");
+        sb.AppendLine("- Prefer smaller, high-signal files over large files.");
+        sb.AppendLine("- Stop reading as soon as you have enough grounded evidence.");
+        sb.AppendLine("- Do not search again unless a discovered file path is clearly insufficient.");
         sb.AppendLine("- Do not save final output in this step.");
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TITLE:");
@@ -251,7 +255,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     {
         var sb = new StringBuilder();
         sb.AppendLine("STEP GOAL:");
-        sb.AppendLine("Produce the final analysis payload from the already loaded context and repository evidence.");
+        sb.AppendLine("Save the final analysis payload from the already loaded context and repository evidence.");
         sb.AppendLine();
         sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
         sb.AppendLine("- Identify impacted areas.");
@@ -262,6 +266,17 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Do NOT design the solution.");
         sb.AppendLine("- Do NOT create backlog items.");
         sb.AppendLine("- Do NOT describe implementation steps.");
+        sb.AppendLine();
+        sb.AppendLine("HARD RULES:");
+        sb.AppendLine("- Do not call get_workflow_input in this step.");
+        sb.AppendLine("- Do not call get_file or read_file in this step.");
+        sb.AppendLine("- Do not call list_repo_tree or search_repo in this step.");
+        sb.AppendLine("- Do not gather new evidence in this step.");
+        sb.AppendLine("- Use only the context and repository evidence already loaded in previous steps.");
+        sb.AppendLine("- Return exactly one JSON object.");
+        sb.AppendLine("- The JSON object must use property name 'action', not 'tool'.");
+        sb.AppendLine("- The JSON object must contain action, workflowRunId, and output.");
+        sb.AppendLine("- Do not output plain text before or after the JSON object.");
         sb.AppendLine();
         sb.AppendLine("ACTION:");
         sb.AppendLine("Return ONLY save_workflow_output with the final workflow output object.");
