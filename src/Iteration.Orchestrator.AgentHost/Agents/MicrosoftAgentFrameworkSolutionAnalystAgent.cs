@@ -7,6 +7,9 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnalystAgent
 {
+    private const int MaxLoadedFileCharacters = 8000;
+    private const int MaxSummaryCharacters = 400;
+
     private readonly string _endpoint;
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
@@ -38,57 +41,77 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         ArgumentNullException.ThrowIfNull(target);
 
         var instructions = BuildInstructions(agentDefinition);
-        var phases = BuildPhases(request);
-        var requiredFrameworkPaths = new[]
-        {
-            "AI/framework/rules/sdlc/analyze.md",
-            "AI/framework/agents/solution-analyst/prompt.md"
-        }
-        .Concat(request.ProfileRuleFiles.Select(x => x.Path))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
+        var sourceSummaries = new List<LoadedSourceSummary>();
 
-        var requiredSolutionPaths = request.SolutionKnowledgeFiles
-            .Select(x => x.Path)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var allowedPaths = request.RepositoryFiles
-            .Concat(request.RepositoryDocumentationFiles)
-            .Concat(requiredSolutionPaths)
-            .Concat(requiredFrameworkPaths)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var discoveryTools = new FileAwareAgentRunner.RepositoryDiscoveryTools(
-            (path, token) => _solutionBridge.ListRepositoryTreeAsync(target, path, token),
-            (query, path, token) => _solutionBridge.SearchFilesAsync(target, query, path, token));
-
-        await _logs.AppendLineAsync(request.WorkflowRunId, "Agent multi-step prompts prepared.", ct);
-        for (var i = 0; i < phases.Count; i++)
-        {
-            await _logs.AppendBlockAsync(request.WorkflowRunId, $"Phase {i + 1} prompt", phases[i].Prompt, ct);
-        }
+        await _logs.AppendLineAsync(request.WorkflowRunId, "Agent sequential review prepared.", ct);
 
         try
         {
-            var rawText = await FileAwareAgentRunner.RunMultiStepAsync(
+            var workflowInput = await _payloadStore.GetInputAsync(request.WorkflowRunId, ct);
+            sourceSummaries.Add(new LoadedSourceSummary(
+                "workflow-input",
+                await SummarizeSourceAsync(
+                    request,
+                    agentDefinition,
+                    instructions,
+                    "workflow-input",
+                    workflowInput.InputPayloadJson,
+                    "Review the workflow input and return a short plain-text summary focused on analysis scope and what repository areas matter most.",
+                    ct)));
+
+            foreach (var path in GetRequiredFrameworkPaths(request))
+            {
+                sourceSummaries.Add(new LoadedSourceSummary(
+                    path,
+                    await SummarizeRepositoryFileAsync(
+                        request,
+                        agentDefinition,
+                        target,
+                        instructions,
+                        path,
+                        "Read this framework/rules file and return a short plain-text summary focused on rules that affect this requirement.",
+                        ct)));
+            }
+
+            foreach (var path in GetRequiredSolutionPaths(request))
+            {
+                sourceSummaries.Add(new LoadedSourceSummary(
+                    path,
+                    await SummarizeRepositoryFileAsync(
+                        request,
+                        agentDefinition,
+                        target,
+                        instructions,
+                        path,
+                        "Read this solution knowledge file and return a short plain-text summary focused on current solution truth and constraints relevant to this requirement.",
+                        ct)));
+            }
+
+            foreach (var path in GetRepositoryReviewPaths(request))
+            {
+                sourceSummaries.Add(new LoadedSourceSummary(
+                    path,
+                    await SummarizeRepositoryFileAsync(
+                        request,
+                        agentDefinition,
+                        target,
+                        instructions,
+                        path,
+                        "Read this repository file and return a short plain-text summary. Say whether it is relevant to the requirement and why.",
+                        ct)));
+            }
+
+            var finalPrompt = BuildFinalPrompt(request, sourceSummaries);
+            var rawText = await FileAwareAgentRunner.RunPromptAsync(
                 _endpoint,
                 _model,
                 agentDefinition.Name,
                 instructions,
-                phases,
-                request.RepositoryPath,
-                allowedPaths,
+                finalPrompt,
                 request.WorkflowRunId,
                 _logs,
-                _payloadStore,
-                ct,
-                requiredFrameworkPaths,
-                requiredSolutionPaths,
-                requireRepositoryEvidence: true,
-                requireRepositoryDiscovery: true,
-                discoveryTools: discoveryTools);
+                "final-analysis-synthesis",
+                ct);
 
             var payload = ParseAndNormalize(rawText, request);
             var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
@@ -114,6 +137,51 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
     }
 
+    private async Task<string> SummarizeRepositoryFileAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        SolutionTarget target,
+        string instructions,
+        string path,
+        string taskInstruction,
+        CancellationToken ct)
+    {
+        var content = await ReadRepositoryFileAsync(target, path, ct);
+        return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+    }
+
+    private async Task<string> SummarizeSourceAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        string instructions,
+        string sourceName,
+        string sourceContent,
+        string taskInstruction,
+        CancellationToken ct)
+    {
+        var prompt = BuildSourceSummaryPrompt(request, sourceName, sourceContent, taskInstruction);
+        var rawText = await FileAwareAgentRunner.RunPromptAsync(
+            _endpoint,
+            _model,
+            agentDefinition.Name,
+            instructions,
+            prompt,
+            request.WorkflowRunId,
+            _logs,
+            $"review-source:{sourceName}",
+            ct);
+
+        return NormalizeShortSummary(rawText);
+    }
+
+    private async Task<string> ReadRepositoryFileAsync(SolutionTarget target, string path, CancellationToken ct)
+    {
+        var content = await _solutionBridge.ReadFileAsync(target, path, ct);
+        return content.Length <= MaxLoadedFileCharacters
+            ? content
+            : content[..MaxLoadedFileCharacters] + $"\n\n[TRUNCATED BY SERVER: file content exceeded {MaxLoadedFileCharacters} characters]";
+    }
+
     private static string BuildInstructions(AgentDefinition agentDefinition)
     {
         var sb = new StringBuilder();
@@ -122,166 +190,114 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("OUTPUT CONTRACT:");
         sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
         sb.AppendLine();
-        sb.AppendLine("TOOL USAGE RULES:");
-        sb.AppendLine("- Return one JSON tool call object at a time when using a tool.");
-        sb.AppendLine("- Tool call objects must use property name 'action', not 'tool'.");
-        sb.AppendLine("- You MUST call get_workflow_input first.");
-        sb.AppendLine("- You MUST read required framework context before analysis.");
-        sb.AppendLine("- You MUST read required solution context before analysis.");
-        sb.AppendLine("- In discovery phases, use list_repo_tree and search_repo to locate relevant evidence before reading files.");
-        sb.AppendLine("- Use get_file or read_file only after discovery narrowed the evidence.");
-        sb.AppendLine("- Save output only in the last phase via save_workflow_output.");
-        sb.AppendLine("- The workflowRunId used in save_workflow_output MUST match the active workflow run.");
-        sb.AppendLine("- The output object MUST satisfy every required field in the schema.");
-        sb.AppendLine("- Do not include markdown fences or commentary outside the requested output.");
+        sb.AppendLine("GENERAL RULES:");
+        sb.AppendLine("- Follow the exact task for the current prompt only.");
+        sb.AppendLine("- When asked for a short plain-text summary, return only that short plain-text summary.");
+        sb.AppendLine("- Do not invent files, endpoints, or behaviors that are not present in the provided input.");
+        sb.AppendLine("- Do not include markdown fences.");
+        sb.AppendLine("- Keep summaries concrete and grounded in the provided source.");
         return sb.ToString();
     }
 
-    private static List<FileAwareAgentRunner.AgentPhaseDefinition> BuildPhases(SolutionAnalysisRequest request)
-    {
-        return
-        [
-            new(
-                "load-required-context",
-                BuildLoadContextPrompt(request),
-                RequiresSavedOutput: false,
-                AllowRepositoryDiscovery: false,
-                PurposeSummary: "Load the workflow input plus mandatory framework and solution knowledge before repository analysis."),
-            new(
-                "discover-repository",
-                BuildRepositoryDiscoveryPrompt(request),
-                RequiresSavedOutput: false,
-                AllowRepositoryDiscovery: true,
-                PurposeSummary: "Use repository discovery tools to find the most relevant implementation evidence for this requirement."),
-            new(
-                "inspect-evidence",
-                BuildEvidenceInspectionPrompt(request),
-                RequiresSavedOutput: false,
-                AllowRepositoryDiscovery: true,
-                PurposeSummary: "Read the strongest repository evidence and summarize concrete findings, risks, and gaps."),
-            new(
-                "save-analysis-output",
-                BuildFinalOutputPrompt(request),
-                RequiresSavedOutput: true,
-                AllowRepositoryDiscovery: false,
-                PurposeSummary: "Assemble the final analysis output and save it only after all mandatory context and evidence are loaded.")
-        ];
-    }
+    private static IEnumerable<string> GetRequiredFrameworkPaths(SolutionAnalysisRequest request)
+        => new[]
+        {
+            "AI/framework/rules/sdlc/analyze.md",
+            "AI/framework/agents/solution-analyst/prompt.md"
+        }
+        .Concat(request.ProfileRuleFiles.Select(x => x.Path))
+        .Distinct(StringComparer.OrdinalIgnoreCase);
 
-    private static string BuildLoadContextPrompt(SolutionAnalysisRequest request)
+    private static IEnumerable<string> GetRequiredSolutionPaths(SolutionAnalysisRequest request)
+        => request.SolutionKnowledgeFiles
+            .Select(x => x.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> GetRepositoryReviewPaths(SolutionAnalysisRequest request)
+        => request.RepositoryFiles
+            .Concat(request.RepositoryDocumentationFiles)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static string BuildSourceSummaryPrompt(
+        SolutionAnalysisRequest request,
+        string sourceName,
+        string sourceContent,
+        string taskInstruction)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("WORKFLOW RUN ID:");
-        sb.AppendLine(request.WorkflowRunId.ToString());
-        sb.AppendLine();
-        sb.AppendLine("STEP GOAL:");
-        sb.AppendLine("Load the structured workflow input, mandatory framework rules, and mandatory solution knowledge.");
-        sb.AppendLine();
-        sb.AppendLine("DO THIS NOW:");
-        sb.AppendLine("1. Call get_workflow_input.");
-        sb.AppendLine("2. Read every required framework file listed below.");
-        sb.AppendLine("3. Read every required solution knowledge file listed below.");
-        sb.AppendLine("4. Then return a short plain-text summary of what context is now loaded and which areas need repository evidence.");
-        sb.AppendLine();
-        sb.AppendLine("REQUIRED FRAMEWORK FILES:");
-        sb.AppendLine("- AI/framework/rules/sdlc/analyze.md");
-        sb.AppendLine("- AI/framework/agents/solution-analyst/prompt.md");
-        foreach (var file in request.ProfileRuleFiles)
-        {
-            sb.AppendLine($"- {file.Path}");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("REQUIRED SOLUTION KNOWLEDGE FILES:");
-        foreach (var file in request.SolutionKnowledgeFiles)
-        {
-            sb.AppendLine($"- {file.Path}");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("IMPORTANT:");
-        sb.AppendLine("- Do not use repository discovery tools yet.");
-        sb.AppendLine("- Do not save final output in this step.");
-        return sb.ToString();
-    }
-
-    private static string BuildRepositoryDiscoveryPrompt(SolutionAnalysisRequest request)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("STEP GOAL:");
-        sb.AppendLine("Discover which repository files are most relevant to the requirement before reading implementation evidence.");
-        sb.AppendLine();
-        sb.AppendLine("DO THIS NOW:");
-        sb.AppendLine("1. Use list_repo_tree and/or search_repo to narrow candidate folders and files.");
-        sb.AppendLine("2. Focus on the smallest, strongest set of files that can prove current behavior or impacted areas.");
-        sb.AppendLine("3. Then return a short plain-text discovery summary naming the priority files to inspect next.");
-        sb.AppendLine();
-        sb.AppendLine("DISCOVERY RULES:");
-        sb.AppendLine("- Prefer targeted searches tied to the requirement language and known workflow concepts.");
-        sb.AppendLine("- Prefer specific folders over reading many unrelated files.");
-        sb.AppendLine("- You may search multiple times if needed.");
-        sb.AppendLine("- Do not save final output in this step.");
+        sb.AppendLine("TASK:");
+        sb.AppendLine(taskInstruction);
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TITLE:");
         sb.AppendLine(request.RequirementTitle);
-        return sb.ToString();
-    }
-
-    private static string BuildEvidenceInspectionPrompt(SolutionAnalysisRequest request)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("STEP GOAL:");
-        sb.AppendLine("Inspect the discovered repository evidence and extract grounded findings.");
         sb.AppendLine();
-        sb.AppendLine("DO THIS NOW:");
-        sb.AppendLine("1. Read the most relevant repository files using get_file or read_file.");
-        sb.AppendLine("2. Cross-check behavior against the loaded workflow rules and solution docs.");
-        sb.AppendLine("3. Then return a short plain-text evidence summary covering impacted areas, risks, assumptions, and open gaps.");
+        sb.AppendLine("REQUIREMENT DESCRIPTION:");
+        sb.AppendLine(request.RequirementDescription);
+        sb.AppendLine();
+        sb.AppendLine("SOURCE:");
+        sb.AppendLine(sourceName);
+        sb.AppendLine();
+        sb.AppendLine("SOURCE CONTENT:");
+        sb.AppendLine(sourceContent);
         sb.AppendLine();
         sb.AppendLine("RULES:");
-        sb.AppendLine("- Read at most 4 repository files in this step.");
-        sb.AppendLine("- Prefer files already identified in discovery.");
-        sb.AppendLine("- Prefer smaller, high-signal files over large files.");
-        sb.AppendLine("- Stop reading as soon as you have enough grounded evidence.");
-        sb.AppendLine("- Do not search again unless a discovered file path is clearly insufficient.");
-        sb.AppendLine("- Do not save final output in this step.");
-        sb.AppendLine();
-        sb.AppendLine("REQUIREMENT TITLE:");
-        sb.AppendLine(request.RequirementTitle);
+        sb.AppendLine("- Return only a short plain-text summary.");
+        sb.AppendLine("- Mention direct relevance to the requirement when applicable.");
+        sb.AppendLine("- If the source is not relevant, say so briefly.");
+        sb.AppendLine("- Do not output JSON.");
         return sb.ToString();
     }
 
-    private static string BuildFinalOutputPrompt(SolutionAnalysisRequest request)
+    private static string BuildFinalPrompt(SolutionAnalysisRequest request, IReadOnlyList<LoadedSourceSummary> sourceSummaries)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("STEP GOAL:");
-        sb.AppendLine("Save the final analysis payload from the already loaded context and repository evidence.");
+        sb.AppendLine("Produce the final analysis payload as a JSON object.");
         sb.AppendLine();
-        sb.AppendLine("FINAL OUTPUT EXPECTATIONS:");
-        sb.AppendLine("- Identify impacted areas.");
-        sb.AppendLine("- Identify risks.");
-        sb.AppendLine("- Identify assumptions.");
-        sb.AppendLine("- Identify gaps and ambiguities.");
-        sb.AppendLine("- Generate open questions when information is missing.");
-        sb.AppendLine("- Do NOT design the solution.");
-        sb.AppendLine("- Do NOT create backlog items.");
-        sb.AppendLine("- Do NOT describe implementation steps.");
+        sb.AppendLine("REQUIREMENT TITLE:");
+        sb.AppendLine(request.RequirementTitle);
         sb.AppendLine();
-        sb.AppendLine("HARD RULES:");
-        sb.AppendLine("- Do not call get_workflow_input in this step.");
-        sb.AppendLine("- Do not call get_file or read_file in this step.");
-        sb.AppendLine("- Do not call list_repo_tree or search_repo in this step.");
-        sb.AppendLine("- Do not gather new evidence in this step.");
-        sb.AppendLine("- Use only the context and repository evidence already loaded in previous steps.");
-        sb.AppendLine("- Return exactly one JSON object.");
-        sb.AppendLine("- The JSON object must use property name 'action', not 'tool'.");
-        sb.AppendLine("- The JSON object must contain action, workflowRunId, and output.");
-        sb.AppendLine("- Do not output plain text before or after the JSON object.");
+        sb.AppendLine("REQUIREMENT DESCRIPTION:");
+        sb.AppendLine(request.RequirementDescription);
         sb.AppendLine();
-        sb.AppendLine("ACTION:");
-        sb.AppendLine("Return ONLY save_workflow_output with the final workflow output object.");
-        sb.AppendLine($"Use workflowRunId '{request.WorkflowRunId}'.");
+        sb.AppendLine("LOADED SOURCE SUMMARIES:");
+        foreach (var summary in sourceSummaries)
+        {
+            sb.AppendLine($"- {summary.Source}: {summary.Summary}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("RETURN ONLY A JSON OBJECT WITH:");
+        sb.AppendLine("- status");
+        sb.AppendLine("- summary");
+        sb.AppendLine("- artifacts");
+        sb.AppendLine("- generatedRequirements");
+        sb.AppendLine("- generatedOpenQuestions");
+        sb.AppendLine("- generatedDecisions");
+        sb.AppendLine("- documentationUpdates");
+        sb.AppendLine("- knowledgeUpdates");
+        sb.AppendLine("- recommendedNextWorkflowCodes");
+        sb.AppendLine();
+        sb.AppendLine("RULES:");
+        sb.AppendLine("- Do not output markdown fences.");
+        sb.AppendLine("- Do not output any text before or after the JSON object.");
+        sb.AppendLine("- Base the analysis only on the loaded source summaries.");
+        sb.AppendLine("- Do not design the solution.");
+        sb.AppendLine("- Do not create backlog items.");
+        sb.AppendLine("- Do not describe implementation steps.");
         return sb.ToString();
+    }
+
+    private static string NormalizeShortSummary(string raw)
+    {
+        var cleaned = raw.Replace("\r", " ").Replace("\n", " ").Trim();
+        cleaned = string.Join(" ", cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+        if (cleaned.Length <= MaxSummaryCharacters)
+        {
+            return cleaned;
+        }
+
+        return cleaned[..MaxSummaryCharacters].TrimEnd() + "...";
     }
 
     private static WorkflowOutputPayload ParseAndNormalize(string raw, SolutionAnalysisRequest request)
@@ -375,6 +391,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         PropertyNameCaseInsensitive = true,
         WriteIndented = true
     };
+
+    private sealed record LoadedSourceSummary(string Source, string Summary);
 
     private sealed class WorkflowOutputPayload
     {
