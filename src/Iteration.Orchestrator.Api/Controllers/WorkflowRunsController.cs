@@ -167,11 +167,17 @@ public sealed class WorkflowRunsController : ControllerBase
             return NotFound(new { message = "Workflow prompt not found." });
         }
 
-        var promptContent = ExtractLogSection(logContent, "Prompt");
-        if (string.IsNullOrWhiteSpace(promptContent))
+        var promptSections = ExtractPromptSections(logContent);
+        if (promptSections.Count == 0)
         {
             return NotFound(new { message = "Workflow prompt not found." });
         }
+
+        var promptContent = promptSections.Count == 1
+            ? promptSections[0].Content
+            : string.Join(
+                $"{Environment.NewLine}{Environment.NewLine}",
+                promptSections.Select(section => $"== {section.Title} =={Environment.NewLine}{section.Content}"));
 
         return Ok(new
         {
@@ -209,6 +215,26 @@ public sealed class WorkflowRunsController : ControllerBase
         [FromServices] AppDbContext db,
         CancellationToken ct)
     {
+        var workflowRun = await db.WorkflowRuns
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new
+            {
+                x.Id,
+                x.Status
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (workflowRun is null)
+        {
+            return NotFound(new { message = "Workflow run not found." });
+        }
+
+        if (workflowRun.Status is not 3 and not 6)
+        {
+            return NotFound(new { message = "Workflow output payload is only available after the workflow completes successfully." });
+        }
+
         var taskRun = await db.AgentTaskRuns
             .AsNoTracking()
             .Where(x => x.WorkflowRunId == id)
@@ -351,18 +377,48 @@ public sealed class WorkflowRunsController : ControllerBase
         });
     }
 
-    private static string? ExtractLogSection(string logContent, string sectionTitle)
+    private static List<LogSection> ExtractPromptSections(string logContent)
     {
-        if (string.IsNullOrWhiteSpace(logContent) || string.IsNullOrWhiteSpace(sectionTitle))
+        if (string.IsNullOrWhiteSpace(logContent))
         {
-            return null;
+            return [];
+        }
+
+        var sections = ExtractLogSections(logContent);
+        var exactPromptSections = sections
+            .Where(section => string.Equals(section.Title, "PROMPT", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (exactPromptSections.Count > 0)
+        {
+            return exactPromptSections;
+        }
+
+        return sections
+            .Where(section =>
+                section.Title.StartsWith("PROMPT:", StringComparison.OrdinalIgnoreCase) ||
+                section.Title.StartsWith("PHASE PROMPT:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private static List<LogSection> ExtractLogSections(string logContent)
+    {
+        if (string.IsNullOrWhiteSpace(logContent))
+        {
+            return [];
         }
 
         var normalizedLog = logContent.Replace("\r\n", "\n");
-        var pattern = $@"^\[[^\n]+\]\s==\s{Regex.Escape(sectionTitle.ToUpperInvariant())}\s==\s*\n(?<content>[\s\S]*?)(?=^\[[^\n]+\]\s==\s[A-Z0-9 _\-]+\s==\s*\n|\z)";
-        var match = Regex.Match(normalizedLog, pattern, RegexOptions.Multiline);
-        return match.Success
-            ? match.Groups["content"].Value.Trim()
-            : null;
+        var pattern = @"^\[[^\n]+\]\s==\s(?<title>.+?)\s==\s*\n(?<content>[\s\S]*?)(?=^\[[^\n]+\]\s==\s.+?\s==\s*\n|\z)";
+        var matches = Regex.Matches(normalizedLog, pattern, RegexOptions.Multiline);
+
+        return matches
+            .Select(match => new LogSection(
+                match.Groups["title"].Value.Trim(),
+                match.Groups["content"].Value.Trim()))
+            .Where(section => !string.IsNullOrWhiteSpace(section.Title))
+            .ToList();
     }
+
+    private sealed record LogSection(string Title, string Content);
 }

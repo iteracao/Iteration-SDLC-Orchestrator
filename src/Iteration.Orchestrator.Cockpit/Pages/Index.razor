@@ -896,7 +896,10 @@
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowInputAsync(_activeCard.WorkflowRun.Id)">
                                         View JSON input payload
                                     </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowOutputAsync(_activeCard.WorkflowRun.Id)">
+                                    <MudButton Size="Size.Small"
+                                               Variant="Variant.Outlined"
+                                               Disabled="!CanViewWorkflowOutput(_activeCard.WorkflowRun)"
+                                               OnClick="() => OpenWorkflowOutputAsync(_activeCard.WorkflowRun.Id)">
                                         View JSON output payload
                                     </MudButton>
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
@@ -1490,7 +1493,10 @@
     {
         var client = HttpClientFactory.CreateClient("api");
         var fileName = endpoint.Split('/').LastOrDefault() ?? "artifact";
-        _activeWorkflowArtifact = await GetWorkflowArtifactContentAsync(client, workflowRunId, endpoint, fileName, true);
+        var preferJson = fileName.Contains("input", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("output", StringComparison.OrdinalIgnoreCase)
+            || LooksLikeJsonFile(fileName);
+        _activeWorkflowArtifact = await GetWorkflowArtifactContentAsync(client, workflowRunId, endpoint, fileName, preferJson);
         _activeWorkflowLog = null;
         _viewerOpen = true;
     }
@@ -1558,7 +1564,7 @@
                     WorkflowRunId = workflowRunId,
                     FileName = fileName,
                     IsUnavailable = true,
-                    Message = "Content not available for this workflow run."
+                    Message = await ReadApiErrorAsync(response)
                 };
             }
 
@@ -1599,7 +1605,7 @@
                     WorkflowRunId = workflowRunId,
                     FileName = $"{workflowRunId}.log",
                     IsUnavailable = true,
-                    Message = "Log not available for this workflow run."
+                    Message = await ReadApiErrorAsync(response)
                 };
             }
 
@@ -1653,19 +1659,27 @@
     private static string NormalizeJsonViewerText(string value)
     {
         if (string.IsNullOrEmpty(value))
+        {
             return value;
+        }
 
-        const string escapedR = "__ESCAPED_BACKSLASH_R__";
-        const string escapedN = "__ESCAPED_BACKSLASH_N__";
+        if (TryPrettyPrintJson(value, out var prettyJson))
+        {
+            return NormalizePlainViewerText(prettyJson);
+        }
 
-        return value
-         .Replace("\\r", escapedR)
-         .Replace("\\n", escapedN)
-         .Replace("\r\n", Environment.NewLine)
-         .Replace("\r", Environment.NewLine)
-         .Replace("\n", Environment.NewLine)
-         .Replace(escapedR, "\\r")
-         .Replace(escapedN, "\\n");
+        var decodedText = TryDecodeJsonString(value);
+        if (!string.IsNullOrWhiteSpace(decodedText))
+        {
+            if (TryPrettyPrintJson(decodedText, out prettyJson))
+            {
+                return NormalizePlainViewerText(prettyJson);
+            }
+
+            return NormalizePlainViewerText(decodedText);
+        }
+
+        return NormalizePlainViewerText(value);
     }
 
     private static string NormalizePlainViewerText(string value)
@@ -1712,6 +1726,24 @@
     private static bool LooksLikeJsonFile(string? fileName)
         => !string.IsNullOrWhiteSpace(fileName)
            && fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryPrettyPrintJson(string raw, out string formatted)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(raw);
+            formatted = System.Text.Json.JsonSerializer.Serialize(document.RootElement, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            return true;
+        }
+        catch
+        {
+            formatted = string.Empty;
+            return false;
+        }
+    }
 
     private void OpenCreateSolutionPanel()
     {
@@ -2121,6 +2153,9 @@
 
     private bool HasAnyBlockingRun(Guid requirementId)
         => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+
+    private static bool CanViewWorkflowOutput(WorkflowRunRow run)
+        => run.Status is 3 or 6;
 
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;

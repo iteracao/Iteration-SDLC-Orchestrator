@@ -213,12 +213,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     }
 
     private static IEnumerable<string> GetRequiredFrameworkPaths(SolutionAnalysisRequest request)
-        => new[]
-        {
-            "AI/framework/rules/sdlc/analyze.md",
-            "AI/framework/agents/solution-analyst/prompt.md"
-        }
-        .Concat(request.ProfileRuleFiles.Select(x => x.Path))
+        => request.ProfileRuleFiles.Select(x => x.Path)
         .Distinct(StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<string> GetRequiredSolutionPaths(SolutionAnalysisRequest request)
