@@ -91,6 +91,13 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
             knowledgeDocuments);
     }
 
+    public Task<string> ReadFrameworkTextAsync(string relativePath, CancellationToken ct)
+    {
+        var normalizedPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        var path = Path.Combine(_root, normalizedPath);
+        return File.ReadAllTextAsync(path, ct);
+    }
+
     private sealed class WorkflowYaml
     {
         public string Code { get; set; } = "";

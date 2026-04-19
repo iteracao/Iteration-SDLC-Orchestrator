@@ -108,9 +108,10 @@ public sealed class StartAnalyzeSolutionRunHandler
         {
             ["Requirement"] = WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
             ["Target"] = solution.Code,
-            ["Framework docs available"] = repositoryDocumentationFiles.Count.ToString(),
+            ["Profile rules available"] = profile.Rules.Count.ToString(),
             ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
-            ["Repository files available"] = repositoryFiles.Count.ToString()
+            ["Repository files available"] = repositoryFiles.Count.ToString(),
+            ["Repository docs available"] = repositoryDocumentationFiles.Count.ToString()
         }, ct);
 
         var request = new SolutionAnalysisRequest(

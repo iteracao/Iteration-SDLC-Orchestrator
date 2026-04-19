@@ -15,19 +15,22 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
     private readonly ISolutionBridge _solutionBridge;
+    private readonly IConfigCatalog _config;
 
     public MicrosoftAgentFrameworkSolutionAnalystAgent(
         string endpoint,
         string model,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
-        ISolutionBridge solutionBridge)
+        ISolutionBridge solutionBridge,
+        IConfigCatalog config)
     {
         _endpoint = endpoint;
         _model = model;
         _logs = logs;
         _payloadStore = payloadStore;
         _solutionBridge = solutionBridge;
+        _config = config;
     }
 
     public async Task<SolutionAnalysisResult> AnalyzeAsync(
@@ -50,32 +53,18 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             var workflowInput = await _payloadStore.GetInputAsync(request.WorkflowRunId, ct);
             sourceSummaries.Add(new LoadedSourceSummary(
                 "workflow-input",
-                await SummarizeSourceAsync(
+                await SummarizeWorkflowInputAsync(
                     request,
                     agentDefinition,
-                    instructions,
                     "workflow-input",
                     workflowInput.InputPayloadJson,
-                    "Review the workflow input and return a short plain-text summary focused on analysis scope and what repository areas matter most.",
                     ct)));
 
-            foreach (var path in GetRequiredFrameworkPaths(request))
-            {
-                var summary = await SafeSummarizeRepositoryFileAsync(
-                    request,
-                    agentDefinition,
-                    target,
-                    instructions,
-                    path,
-                    "Read this framework or rules file and return a short plain-text summary focused on rules that affect this requirement.",
-                    ct);
-
-                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
-            }
+            await LoadCriticalGuidanceAsync(request, agentDefinition, target, instructions, sourceSummaries, ct);
 
             foreach (var path in GetRequiredSolutionPaths(request))
             {
-                var summary = await SafeSummarizeRepositoryFileAsync(
+                var summary = await SafeSummarizeSolutionKnowledgeAsync(
                     request,
                     agentDefinition,
                     target,
@@ -94,7 +83,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     continue;
                 }
 
-                var summary = await SafeSummarizeRepositoryFileAsync(
+                var summary = await SafeSummarizeRepositoryEvidenceAsync(
                     request,
                     agentDefinition,
                     target,
@@ -142,7 +131,171 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
     }
 
-    private async Task<string> SafeSummarizeRepositoryFileAsync(
+    private async Task LoadCriticalGuidanceAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        SolutionTarget target,
+        string instructions,
+        ICollection<LoadedSourceSummary> sourceSummaries,
+        CancellationToken ct)
+    {
+        var analyzeRules = await LoadRequiredFrameworkTextAsync(
+            request.WorkflowRunId,
+            "AI/framework/rules/sdlc/analyze.md",
+            () => _config.ReadFrameworkTextAsync("rules/sdlc/analyze.md", ct),
+            ct);
+
+        sourceSummaries.Add(new LoadedSourceSummary(
+            "AI/framework/rules/sdlc/analyze.md",
+            await SummarizeSourceAsync(
+                request,
+                agentDefinition,
+                instructions,
+                "AI/framework/rules/sdlc/analyze.md",
+                analyzeRules,
+                "Read this framework rule file and return a short plain-text summary focused on analysis discipline, evidence standards, and what must not be skipped.",
+                ct)));
+
+        var agentPrompt = await LoadRequiredFrameworkTextAsync(
+            request.WorkflowRunId,
+            "AI/framework/agents/solution-analyst/prompt.md",
+            () => Task.FromResult(agentDefinition.PromptText),
+            ct);
+
+        sourceSummaries.Add(new LoadedSourceSummary(
+            "AI/framework/agents/solution-analyst/prompt.md",
+            await SummarizeSourceAsync(
+                request,
+                agentDefinition,
+                instructions,
+                "AI/framework/agents/solution-analyst/prompt.md",
+                agentPrompt,
+                "Read this analyst agent prompt and return a short plain-text summary focused on what analysis output is expected and how the requirement should be examined.",
+                ct)));
+
+        var profile = await LoadRequiredProfileAsync(target.ProfileCode, request.WorkflowRunId, ct);
+        var requiredProfilePaths = request.ProfileRuleFiles
+            .Select(x => NormalizePath(x.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var loadedProfileRules = profile.Rules
+            .Where(rule => requiredProfilePaths.Count == 0 || requiredProfilePaths.Contains(NormalizePath(rule.Path), StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        var missingProfileRules = requiredProfilePaths
+            .Where(requiredPath => !loadedProfileRules.Any(rule => NormalizePath(rule.Path).Equals(requiredPath, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (missingProfileRules.Count > 0)
+        {
+            var message = $"Required profile rules could not be loaded from the framework profile source. Missing: {string.Join(", ", missingProfileRules)}";
+            await _logs.AppendLineAsync(request.WorkflowRunId, $"[MISSING REQUIRED CONTEXT] {message}", ct);
+            throw new InvalidOperationException(message);
+        }
+
+        foreach (var rule in loadedProfileRules)
+        {
+            var summary = await SummarizeSourceAsync(
+                request,
+                agentDefinition,
+                instructions,
+                rule.Path,
+                rule.Content,
+                "Read this profile rule file and return a short plain-text summary focused on engineering constraints that matter for this requirement.",
+                ct);
+
+            sourceSummaries.Add(new LoadedSourceSummary(rule.Path, summary));
+        }
+    }
+
+    private async Task<ProfileDefinition> LoadRequiredProfileAsync(string profileCode, Guid workflowRunId, CancellationToken ct)
+    {
+        try
+        {
+            return await _config.GetProfileAsync(profileCode, ct);
+        }
+        catch (Exception ex)
+        {
+            var message = $"Required profile guidance could not be loaded for profile '{profileCode}'. {ex.Message}";
+            await _logs.AppendLineAsync(workflowRunId, $"[MISSING REQUIRED CONTEXT] profile '{profileCode}' -> {ex.Message}", ct);
+            throw new InvalidOperationException(message, ex);
+        }
+    }
+
+    private async Task<string> LoadRequiredFrameworkTextAsync(
+        Guid workflowRunId,
+        string displayPath,
+        Func<Task<string>> loadAsync,
+        CancellationToken ct)
+    {
+        try
+        {
+            var content = await loadAsync();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                throw new InvalidOperationException("Content is empty.");
+            }
+
+            return content;
+        }
+        catch (Exception ex)
+        {
+            var message = $"Required guidance could not be loaded: {displayPath}. {ex.Message}";
+            await _logs.AppendLineAsync(workflowRunId, $"[MISSING REQUIRED CONTEXT] {displayPath} -> {ex.Message}", ct);
+            throw new InvalidOperationException(message, ex);
+        }
+    }
+
+    private async Task<string> SummarizeWorkflowInputAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        string sourceName,
+        string sourceContent,
+        CancellationToken ct)
+    {
+        const string taskInstruction = "Review the workflow input and return a short plain-text summary focused on analysis scope and what repository areas matter most.";
+        var summary = BuildWorkflowInputSummary(request);
+        await LogSyntheticSummaryAsync(
+            request,
+            agentDefinition,
+            sourceName,
+            sourceContent,
+            taskInstruction,
+            summary,
+            ct);
+        return summary;
+    }
+
+    private async Task<string> SafeSummarizeSolutionKnowledgeAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        SolutionTarget target,
+        string instructions,
+        string path,
+        string taskInstruction,
+        CancellationToken ct)
+    {
+        try
+        {
+            var content = await ReadRepositoryFileAsync(target, path, ct);
+            if (TryBuildPlaceholderKnowledgeSummary(content, out var placeholderSummary))
+            {
+                await _logs.AppendLineAsync(request.WorkflowRunId, $"[PLACEHOLDER CONTEXT] {path} -> solution knowledge file is blank or template-only.", ct);
+                await LogSyntheticSummaryAsync(request, agentDefinition, path, content, taskInstruction, placeholderSummary, ct);
+                return placeholderSummary;
+            }
+
+            return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+        }
+        catch (Exception ex)
+        {
+            await _logs.AppendLineAsync(request.WorkflowRunId, $"[SKIP] {path} -> {ex.Message}", ct);
+            return $"Skipped (not found): {path}";
+        }
+    }
+
+    private async Task<string> SafeSummarizeRepositoryEvidenceAsync(
         SolutionAnalysisRequest request,
         AgentDefinition agentDefinition,
         SolutionTarget target,
@@ -187,6 +340,22 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         return NormalizeShortSummary(rawText);
     }
 
+    private async Task LogSyntheticSummaryAsync(
+        SolutionAnalysisRequest request,
+        AgentDefinition agentDefinition,
+        string sourceName,
+        string sourceContent,
+        string taskInstruction,
+        string summary,
+        CancellationToken ct)
+    {
+        var logTitle = $"review-source:{sourceName}";
+        var prompt = BuildSourceSummaryPrompt(request, sourceName, sourceContent, taskInstruction);
+        await _logs.AppendSectionAsync(request.WorkflowRunId, logTitle, ct);
+        await _logs.AppendBlockAsync(request.WorkflowRunId, $"Prompt: {logTitle}", prompt, ct);
+        await _logs.AppendBlockAsync(request.WorkflowRunId, $"Response: {logTitle}", summary, ct);
+    }
+
     private async Task<string> ReadRepositoryFileAsync(SolutionTarget target, string path, CancellationToken ct)
     {
         var content = await _solutionBridge.ReadFileAsync(target, path, ct);
@@ -209,12 +378,9 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Do not invent files, endpoints, or behaviors that are not present in the provided input.");
         sb.AppendLine("- Do not include markdown fences.");
         sb.AppendLine("- Keep summaries concrete and grounded in the provided source.");
+        sb.AppendLine("- If a source is blank or only a scaffold/template, call that out and treat it as low-value context.");
         return sb.ToString();
     }
-
-    private static IEnumerable<string> GetRequiredFrameworkPaths(SolutionAnalysisRequest request)
-        => request.ProfileRuleFiles.Select(x => x.Path)
-        .Distinct(StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<string> GetRequiredSolutionPaths(SolutionAnalysisRequest request)
         => request.SolutionKnowledgeFiles
@@ -223,17 +389,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
     private static IEnumerable<string> GetRelevantRepositoryPaths(SolutionAnalysisRequest request)
         => request.RepositoryFiles
-            .Where(path =>
-                path.StartsWith("src/", StringComparison.OrdinalIgnoreCase) &&
-                (
-                    path.Contains("Controllers", StringComparison.OrdinalIgnoreCase) ||
-                    path.Contains("Features", StringComparison.OrdinalIgnoreCase) ||
-                    path.Contains("Pages", StringComparison.OrdinalIgnoreCase) ||
-                    path.Contains("Api", StringComparison.OrdinalIgnoreCase) ||
-                    path.Contains("Models", StringComparison.OrdinalIgnoreCase)
-                ) &&
-                !path.Contains("/bin/", StringComparison.OrdinalIgnoreCase) &&
-                !path.Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
+            .Where(candidate => candidate.Score > 0 && !IsIgnoredFile(candidate.Path))
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(candidate => candidate.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(20);
 
     private static bool IsIgnoredFile(string path)
@@ -267,6 +428,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Return only a short plain-text summary.");
         sb.AppendLine("- Mention direct relevance to the requirement when applicable.");
         sb.AppendLine("- If the source is not relevant, say so briefly.");
+        sb.AppendLine("- If the source is blank or only a heading/template scaffold, say it is placeholder knowledge and low-value context.");
         sb.AppendLine("- Do not output JSON.");
         return sb.ToString();
     }
@@ -304,11 +466,138 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Do not output markdown fences.");
         sb.AppendLine("- Do not output any text before or after the JSON object.");
         sb.AppendLine("- Base the analysis only on the loaded source summaries.");
+        sb.AppendLine("- Treat summaries that say placeholder, blank, or low-value as weak evidence and favor repository evidence in those cases.");
         sb.AppendLine("- Do not design the solution.");
         sb.AppendLine("- Do not create backlog items.");
         sb.AppendLine("- Do not describe implementation steps.");
         return sb.ToString();
     }
+
+    private static string BuildWorkflowInputSummary(SolutionAnalysisRequest request)
+    {
+        var description = NormalizeShortSummary(request.RequirementDescription);
+        var impactedAreas = GetLikelyRepositoryAreas(request).ToList();
+
+        var sb = new StringBuilder();
+        sb.Append($"Requirement '{request.RequirementTitle}' requests: {description}");
+
+        if (impactedAreas.Count > 0)
+        {
+            sb.Append(" Likely impacted repository areas: ");
+            sb.Append(string.Join(", ", impactedAreas));
+            sb.Append('.');
+        }
+        else
+        {
+            sb.Append(" Likely impacted areas should be inferred from repository features, API controllers, layout/navigation, and shared CRUD/validation components.");
+        }
+
+        return NormalizeShortSummary(sb.ToString());
+    }
+
+    private static IEnumerable<string> GetLikelyRepositoryAreas(SolutionAnalysisRequest request)
+        => request.RepositoryFiles
+            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
+            .Where(candidate => candidate.Score > 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(candidate => NormalizeArea(candidate.Path))
+            .Where(area => !string.IsNullOrWhiteSpace(area))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4);
+
+    private static int ScoreRepositoryPath(string path, SolutionAnalysisRequest request)
+    {
+        if (!path.StartsWith("src/", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("/bin/", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var score = 0;
+        var lowerPath = path.ToLowerInvariant();
+        var queryText = $"{request.RequirementTitle} {request.RequirementDescription}".ToLowerInvariant();
+
+        foreach (var token in Tokenize(queryText))
+        {
+            if (lowerPath.Contains(token, StringComparison.Ordinal))
+            {
+                score += 3;
+            }
+        }
+
+        if ((queryText.Contains("navigation", StringComparison.Ordinal) || queryText.Contains("menu", StringComparison.Ordinal)) &&
+            (lowerPath.Contains("navigation", StringComparison.Ordinal) || lowerPath.Contains("layout", StringComparison.Ordinal)))
+        {
+            score += 6;
+        }
+
+        if ((queryText.Contains("user", StringComparison.Ordinal) || queryText.Contains("users", StringComparison.Ordinal)) &&
+            (lowerPath.Contains("/users/", StringComparison.Ordinal) || lowerPath.Contains("userscontroller", StringComparison.Ordinal)))
+        {
+            score += 8;
+        }
+
+        if (lowerPath.Contains("/pages/", StringComparison.Ordinal) || lowerPath.EndsWith("page.razor", StringComparison.Ordinal))
+        {
+            score += 3;
+        }
+
+        if (lowerPath.Contains("/components/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/forms/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/crud/", StringComparison.Ordinal))
+        {
+            score += 2;
+        }
+
+        if (lowerPath.Contains("/controllers/", StringComparison.Ordinal) || lowerPath.Contains("/api/", StringComparison.Ordinal))
+        {
+            score += 2;
+        }
+
+        if (lowerPath.Contains("/models/", StringComparison.Ordinal) || lowerPath.Contains("/validation/", StringComparison.Ordinal))
+        {
+            score += 1;
+        }
+
+        return score;
+    }
+
+    private static IEnumerable<string> Tokenize(string value)
+        => value
+            .Split([' ', '\r', '\n', '\t', '.', ',', ':', ';', '(', ')', '[', ']', '{', '}', '/', '\\', '-', '_', '"'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length >= 4)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static string NormalizeArea(string path)
+    {
+        var directory = Path.GetDirectoryName(path)?.Replace('\\', '/');
+        return string.IsNullOrWhiteSpace(directory) ? path : directory;
+    }
+
+    private static bool TryBuildPlaceholderKnowledgeSummary(string content, out string summary)
+    {
+        var substantiveLines = content
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Where(line => !line.StartsWith("#", StringComparison.Ordinal))
+            .ToList();
+
+        if (substantiveLines.Count == 0)
+        {
+            summary = "Placeholder solution knowledge file; no solution-specific facts are recorded here. Treat this as low-value context and rely on repository evidence.";
+            return true;
+        }
+
+        summary = string.Empty;
+        return false;
+    }
+
+    private static string NormalizePath(string path)
+        => path.Replace('\\', '/').Trim();
 
     private static string NormalizeShortSummary(string raw)
     {

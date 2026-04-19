@@ -6,4 +6,5 @@ public interface IConfigCatalog
     Task<AgentDefinition> GetAgentAsync(string agentCode, CancellationToken ct);
     Task<ProfileDefinition> GetProfileAsync(string profileCode, CancellationToken ct);
     Task<SolutionOverlayDefinition> GetSolutionOverlayAsync(string solutionCode, CancellationToken ct);
+    Task<string> ReadFrameworkTextAsync(string relativePath, CancellationToken ct);
 }
