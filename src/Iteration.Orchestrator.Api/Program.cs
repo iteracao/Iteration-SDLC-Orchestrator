@@ -57,10 +57,8 @@ var configRoot = builder.Configuration["ConfigRoot"]
 
 var resolvedConfigRoot = Path.GetFullPath(
     Path.Combine(AppContext.BaseDirectory, configRoot));
-var agentResponseTimeoutSeconds = Math.Clamp(
-    builder.Configuration.GetValue<int?>("Ollama:AgentResponseTimeoutSeconds") ?? 180,
-    1,
-    180);
+var agentResponseTimeoutSeconds = NormalizeAgentResponseTimeoutSeconds(
+    builder.Configuration.GetValue<int?>("Ollama:AgentResponseTimeoutSeconds"));
 
 Console.WriteLine($"CONFIG ROOT = {resolvedConfigRoot}");
 
@@ -120,3 +118,6 @@ app.UseSwaggerUI();
 app.MapControllers();
 
 app.Run();
+
+static int NormalizeAgentResponseTimeoutSeconds(int? configuredTimeoutSeconds)
+    => Math.Clamp(configuredTimeoutSeconds ?? 180, 1, 180);

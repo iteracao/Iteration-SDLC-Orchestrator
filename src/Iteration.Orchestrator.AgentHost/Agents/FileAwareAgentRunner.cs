@@ -71,7 +71,7 @@ internal static class FileAwareAgentRunner
     {
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
-        var responseTimeoutSeconds = NormalizeResponseTimeoutSeconds(maxModelResponseSeconds);
+        var responseTimeoutSeconds = maxModelResponseSeconds;
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
         await logs.AppendBlockAsync(workflowRunId, $"Prompt: {logTitle}", prompt, ct);
@@ -112,7 +112,7 @@ internal static class FileAwareAgentRunner
         var allowedPathSet = allowedPaths
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var responseTimeoutSeconds = NormalizeResponseTimeoutSeconds(maxModelResponseSeconds);
+        var responseTimeoutSeconds = maxModelResponseSeconds;
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -496,9 +496,6 @@ internal static class FileAwareAgentRunner
 
     private static string NormalizePath(string relativePath)
         => relativePath.Replace('\\', '/').Trim();
-
-    private static int NormalizeResponseTimeoutSeconds(int timeoutSeconds)
-        => Math.Clamp(timeoutSeconds, 1, 180);
 
     private static async Task<string> RunModelWithTimeoutAsync(
         AIAgent agent,

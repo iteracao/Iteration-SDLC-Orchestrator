@@ -33,7 +33,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         _payloadStore = payloadStore;
         _solutionBridge = solutionBridge;
         _config = config;
-        _maxModelResponseSeconds = Math.Clamp(maxModelResponseSeconds, 1, 60);
+        _maxModelResponseSeconds = maxModelResponseSeconds;
     }
 
     public async Task<SolutionAnalysisResult> AnalyzeAsync(
