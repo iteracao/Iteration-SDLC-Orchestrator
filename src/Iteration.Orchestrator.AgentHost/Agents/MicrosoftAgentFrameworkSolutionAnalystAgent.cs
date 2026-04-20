@@ -7,8 +7,10 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnalystAgent
 {
-    private const int MaxLoadedFileCharacters = 4000;
-    private const int MaxSummaryCharacters = 400;
+    private const int MaxLoadedFileCharacters = 3000;
+    private const int MaxSummaryCharacters = 260;
+    private const int MaxSummaryFacts = 3;
+    private const int MaxRelevantRepositoryPaths = 6;
 
     private readonly string _endpoint;
     private readonly string _model;
@@ -46,7 +48,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         ArgumentNullException.ThrowIfNull(agentDefinition);
         ArgumentNullException.ThrowIfNull(target);
 
-        var instructions = BuildInstructions(agentDefinition);
+        var reviewInstructions = BuildDirectReviewInstructions();
+        var finalInstructions = BuildDirectFinalAnalysisInstructions(agentDefinition);
         var sourceSummaries = new List<LoadedSourceSummary>();
 
         await _logs.AppendLineAsync(request.WorkflowRunId, "Agent sequential review prepared.", ct);
@@ -54,29 +57,24 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         try
         {
             var workflowInput = await _payloadStore.GetInputAsync(request.WorkflowRunId, ct);
-            sourceSummaries.Add(new LoadedSourceSummary(
+            var workflowInputSummary = await SummarizeWorkflowInputAsync(
+                request,
                 "workflow-input",
-                await SummarizeWorkflowInputAsync(
-                    request,
-                    agentDefinition,
-                    "workflow-input",
-                    workflowInput.InputPayloadJson,
-                    ct)));
+                workflowInput.InputPayloadJson,
+                ct);
+            sourceSummaries.Add(workflowInputSummary);
 
-            await LoadCriticalGuidanceAsync(request, agentDefinition, target, instructions, sourceSummaries, ct);
+            await LoadCriticalGuidanceAsync(request, agentDefinition, target, sourceSummaries, ct);
 
             foreach (var path in GetRequiredSolutionPaths(request))
             {
                 var summary = await SafeSummarizeSolutionKnowledgeAsync(
                     request,
-                    agentDefinition,
                     target,
-                    instructions,
                     path,
-                    "Read this solution knowledge file and return a short plain-text summary focused on current solution truth and constraints relevant to this requirement.",
                     ct);
 
-                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
+                sourceSummaries.Add(summary);
             }
 
             foreach (var path in GetRelevantRepositoryPaths(request))
@@ -88,14 +86,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
                 var summary = await SafeSummarizeRepositoryEvidenceAsync(
                     request,
-                    agentDefinition,
                     target,
-                    instructions,
+                    reviewInstructions,
                     path,
-                    "Read this repository file and return a short plain-text summary. Say whether it is relevant to the requirement and why.",
                     ct);
 
-                sourceSummaries.Add(new LoadedSourceSummary(path, summary));
+                sourceSummaries.Add(summary);
             }
 
             var finalPrompt = BuildFinalPrompt(request, sourceSummaries);
@@ -103,7 +99,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 _endpoint,
                 _model,
                 agentDefinition.Name,
-                instructions,
+                finalInstructions,
                 finalPrompt,
                 request.WorkflowRunId,
                 _logs,
@@ -139,7 +135,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         SolutionAnalysisRequest request,
         AgentDefinition agentDefinition,
         SolutionTarget target,
-        string instructions,
         ICollection<LoadedSourceSummary> sourceSummaries,
         CancellationToken ct)
     {
@@ -149,16 +144,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             () => _config.ReadFrameworkTextAsync("rules/sdlc/analyze.md", ct),
             ct);
 
-        sourceSummaries.Add(new LoadedSourceSummary(
+        sourceSummaries.Add(BuildDeterministicSummary(
             "AI/framework/rules/sdlc/analyze.md",
-            await SummarizeSourceAsync(
-                request,
-                agentDefinition,
-                instructions,
-                "AI/framework/rules/sdlc/analyze.md",
-                analyzeRules,
-                "Read this framework rule file and return a short plain-text summary focused on analysis discipline, evidence standards, and what must not be skipped.",
-                ct)));
+            "framework",
+            "constraint",
+            analyzeRules));
 
         var agentPrompt = await LoadRequiredFrameworkTextAsync(
             request.WorkflowRunId,
@@ -166,16 +156,15 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             () => Task.FromResult(agentDefinition.PromptText),
             ct);
 
-        sourceSummaries.Add(new LoadedSourceSummary(
+        sourceSummaries.Add(BuildDeterministicSummary(
             "AI/framework/agents/solution-analyst/prompt.md",
-            await SummarizeSourceAsync(
-                request,
-                agentDefinition,
-                instructions,
-                "AI/framework/agents/solution-analyst/prompt.md",
-                agentPrompt,
-                "Read this analyst agent prompt and return a short plain-text summary focused on what analysis output is expected and how the requirement should be examined.",
-                ct)));
+            "framework",
+            "constraint",
+            agentPrompt,
+            "get_workflow_input",
+            "save_workflow_output",
+            "workflowRunId",
+            "Return valid JSON tool calls only"));
 
         var profile = await LoadRequiredProfileAsync(target.ProfileCode, request.WorkflowRunId, ct);
         var requiredProfilePaths = request.ProfileRuleFiles
@@ -200,16 +189,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         foreach (var rule in loadedProfileRules)
         {
-            var summary = await SummarizeSourceAsync(
-                request,
-                agentDefinition,
-                instructions,
+            sourceSummaries.Add(BuildDeterministicSummary(
                 rule.Path,
-                rule.Content,
-                "Read this profile rule file and return a short plain-text summary focused on engineering constraints that matter for this requirement.",
-                ct);
-
-            sourceSummaries.Add(new LoadedSourceSummary(rule.Path, summary));
+                "profile",
+                "constraint",
+                rule.Content));
         }
     }
 
@@ -251,33 +235,21 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
     }
 
-    private async Task<string> SummarizeWorkflowInputAsync(
+    private async Task<LoadedSourceSummary> SummarizeWorkflowInputAsync(
         SolutionAnalysisRequest request,
-        AgentDefinition agentDefinition,
         string sourceName,
         string sourceContent,
         CancellationToken ct)
     {
-        const string taskInstruction = "Review the workflow input and return a short plain-text summary focused on analysis scope and what repository areas matter most.";
         var summary = BuildWorkflowInputSummary(request);
-        await LogSyntheticSummaryAsync(
-            request,
-            agentDefinition,
-            sourceName,
-            sourceContent,
-            taskInstruction,
-            summary,
-            ct);
+        await LogSyntheticSummaryAsync(request, sourceName, sourceContent, "Workflow input scope prepared in code.", summary, ct);
         return summary;
     }
 
-    private async Task<string> SafeSummarizeSolutionKnowledgeAsync(
+    private async Task<LoadedSourceSummary> SafeSummarizeSolutionKnowledgeAsync(
         SolutionAnalysisRequest request,
-        AgentDefinition agentDefinition,
         SolutionTarget target,
-        string instructions,
         string path,
-        string taskInstruction,
         CancellationToken ct)
     {
         try
@@ -285,55 +257,54 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             var content = await ReadRepositoryFileAsync(target, path, ct);
             if (TryBuildPlaceholderKnowledgeSummary(content, out var placeholderSummary))
             {
+                placeholderSummary = placeholderSummary with { Source = path };
                 await _logs.AppendLineAsync(request.WorkflowRunId, $"[PLACEHOLDER CONTEXT] {path} -> solution knowledge file is blank or template-only.", ct);
-                await LogSyntheticSummaryAsync(request, agentDefinition, path, content, taskInstruction, placeholderSummary, ct);
+                await LogSyntheticSummaryAsync(request, path, content, "Solution knowledge placeholder detected in code.", placeholderSummary, ct);
                 return placeholderSummary;
             }
 
-            return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+            var summary = BuildDeterministicSummary(path, "solution-knowledge", "context", content);
+            await LogSyntheticSummaryAsync(request, path, content, "Solution knowledge summarized in code.", summary, ct);
+            return summary;
         }
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(request.WorkflowRunId, $"[SKIP] {path} -> {ex.Message}", ct);
-            return $"Skipped (not found): {path}";
+            return CreateSkippedSummary(path, "solution-knowledge");
         }
     }
 
-    private async Task<string> SafeSummarizeRepositoryEvidenceAsync(
+    private async Task<LoadedSourceSummary> SafeSummarizeRepositoryEvidenceAsync(
         SolutionAnalysisRequest request,
-        AgentDefinition agentDefinition,
         SolutionTarget target,
-        string instructions,
+        string reviewInstructions,
         string path,
-        string taskInstruction,
         CancellationToken ct)
     {
         try
         {
             var content = await ReadRepositoryFileAsync(target, path, ct);
-            return await SummarizeSourceAsync(request, agentDefinition, instructions, path, content, taskInstruction, ct);
+            return await ReviewRepositorySourceAsync(request, reviewInstructions, path, content, ct);
         }
         catch (Exception ex)
         {
             await _logs.AppendLineAsync(request.WorkflowRunId, $"[SKIP] {path} -> {ex.Message}", ct);
-            return $"Skipped (not found): {path}";
+            return CreateSkippedSummary(path, "repository");
         }
     }
 
-    private async Task<string> SummarizeSourceAsync(
+    private async Task<LoadedSourceSummary> ReviewRepositorySourceAsync(
         SolutionAnalysisRequest request,
-        AgentDefinition agentDefinition,
         string instructions,
         string sourceName,
         string sourceContent,
-        string taskInstruction,
         CancellationToken ct)
     {
-        var prompt = BuildSourceSummaryPrompt(request, sourceName, sourceContent, taskInstruction);
+        var prompt = BuildRepositoryReviewPrompt(request, sourceName, sourceContent);
         var rawText = await FileAwareAgentRunner.RunPromptAsync(
             _endpoint,
             _model,
-            agentDefinition.Name,
+            "SolutionAnalystSourceReview",
             instructions,
             prompt,
             request.WorkflowRunId,
@@ -342,23 +313,22 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             ct,
             _maxModelResponseSeconds);
 
-        return NormalizeShortSummary(rawText);
+        return ParseRepositoryReview(request, sourceName, rawText);
     }
 
     private async Task LogSyntheticSummaryAsync(
         SolutionAnalysisRequest request,
-        AgentDefinition agentDefinition,
         string sourceName,
         string sourceContent,
-        string taskInstruction,
-        string summary,
+        string note,
+        LoadedSourceSummary summary,
         CancellationToken ct)
     {
         var logTitle = $"review-source:{sourceName}";
-        var prompt = BuildSourceSummaryPrompt(request, sourceName, sourceContent, taskInstruction);
+        var prompt = BuildSyntheticSummaryPrompt(sourceName, sourceContent, note);
         await _logs.AppendSectionAsync(request.WorkflowRunId, logTitle, ct);
         await _logs.AppendBlockAsync(request.WorkflowRunId, $"Prompt: {logTitle}", prompt, ct);
-        await _logs.AppendBlockAsync(request.WorkflowRunId, $"Response: {logTitle}", summary, ct);
+        await _logs.AppendBlockAsync(request.WorkflowRunId, $"Response: {logTitle}", FormatLoadedSourceSummary(summary), ct);
     }
 
     private async Task<string> ReadRepositoryFileAsync(SolutionTarget target, string path, CancellationToken ct)
@@ -369,21 +339,38 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             : content[..MaxLoadedFileCharacters] + $"\n\n[TRUNCATED BY SERVER: file content exceeded {MaxLoadedFileCharacters} characters]";
     }
 
-    private static string BuildInstructions(AgentDefinition agentDefinition)
+    private static string BuildDirectReviewInstructions()
     {
         var sb = new StringBuilder();
-        sb.AppendLine(agentDefinition.PromptText.Trim());
-        sb.AppendLine();
-        sb.AppendLine("OUTPUT CONTRACT:");
-        sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
-        sb.AppendLine();
-        sb.AppendLine("GENERAL RULES:");
-        sb.AppendLine("- Follow the exact task for the current prompt only.");
-        sb.AppendLine("- When asked for a short plain-text summary, return only that short plain-text summary.");
+        sb.AppendLine("You are performing one direct source review for an analyze-request workflow.");
+        sb.AppendLine("This is not a tool loop.");
+        sb.AppendLine("- Follow only the current prompt.");
+        sb.AppendLine("- Return only the JSON object requested by the prompt.");
         sb.AppendLine("- Do not invent files, endpoints, or behaviors that are not present in the provided input.");
         sb.AppendLine("- Do not include markdown fences.");
-        sb.AppendLine("- Keep summaries concrete and grounded in the provided source.");
-        sb.AppendLine("- If a source is blank or only a scaffold/template, call that out and treat it as low-value context.");
+        sb.AppendLine("- Keep the response compact and grounded in the provided source.");
+        sb.AppendLine("- Facts must be observations from the source, not recommendations.");
+        return sb.ToString();
+    }
+
+    private static string BuildDirectFinalAnalysisInstructions(AgentDefinition agentDefinition)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are the Solution Analyst producing the final analysis payload for one direct model call.");
+        sb.AppendLine("This is not a tool loop.");
+        sb.AppendLine("Return only the final JSON object that satisfies this contract:");
+        sb.AppendLine(agentDefinition.OutputSchemaJson.Trim());
+        sb.AppendLine();
+        sb.AppendLine("FINAL RULES:");
+        sb.AppendLine("- Do not output tool calls, markdown fences, or commentary.");
+        sb.AppendLine("- The 'summary' field must be a single string, not an object or array.");
+        sb.AppendLine("- Stay in analysis mode only.");
+        sb.AppendLine("- Do not design the solution.");
+        sb.AppendLine("- Do not create backlog items.");
+        sb.AppendLine("- Do not describe implementation steps.");
+        sb.AppendLine("- Keep facts, assumptions, and unknowns clearly separated inside the summary string.");
+        sb.AppendLine("- Use generatedOpenQuestions for genuine unknowns or missing information.");
+        sb.AppendLine("- Do not invent requirements, questions, or decisions when evidence does not support them.");
         return sb.ToString();
     }
 
@@ -393,32 +380,40 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<string> GetRelevantRepositoryPaths(SolutionAnalysisRequest request)
-        => request.RepositoryEvidenceFiles
+    {
+        var evidenceHitSet = request.RepositoryEvidenceFiles
+            .Select(x => NormalizePath(x.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return request.RepositoryEvidenceFiles
             .Select(x => x.Path)
-            .Concat(
-                request.RepositoryFiles
-                    .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
-                    .Where(candidate => candidate.Score > 0 && !IsIgnoredFile(candidate.Path))
-                    .OrderByDescending(candidate => candidate.Score)
-                    .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
-                    .Select(candidate => candidate.Path))
+            .Concat(request.RepositoryFiles)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(8);
+            .Select(path => new
+            {
+                Path = path,
+                Score = ScoreRepositoryPath(path, request, evidenceHitSet.Contains(NormalizePath(path)))
+            })
+            .Where(candidate => candidate.Score > 0 && !IsIgnoredFile(candidate.Path))
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(MaxRelevantRepositoryPaths)
+            .Select(candidate => candidate.Path);
+    }
 
     private static bool IsIgnoredFile(string path)
         => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
            path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
            path.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
 
-    private static string BuildSourceSummaryPrompt(
+    private static string BuildRepositoryReviewPrompt(
         SolutionAnalysisRequest request,
         string sourceName,
-        string sourceContent,
-        string taskInstruction)
+        string sourceContent)
     {
         var sb = new StringBuilder();
         sb.AppendLine("TASK:");
-        sb.AppendLine(taskInstruction);
+        sb.AppendLine("Classify this repository source for analysis relevance and return a compact JSON review.");
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TITLE:");
         sb.AppendLine(request.RequirementTitle);
@@ -432,19 +427,58 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("SOURCE CONTENT:");
         sb.AppendLine(sourceContent);
         sb.AppendLine();
+        sb.AppendLine("SOURCE SELECTION HINTS:");
+        foreach (var hint in BuildRepositorySelectionHints(sourceName, request))
+        {
+            sb.AppendLine($"- {hint}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("RETURN ONLY JSON:");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"relevance\": \"direct|pattern|shared|context|low\",");
+        sb.AppendLine("  \"summary\": \"short explanation\",");
+        sb.AppendLine("  \"facts\": [\"fact 1\", \"fact 2\"]");
+        sb.AppendLine("}");
+        sb.AppendLine();
         sb.AppendLine("RULES:");
-        sb.AppendLine("- Return only a short plain-text summary.");
-        sb.AppendLine("- Mention direct relevance to the requirement when applicable.");
-        sb.AppendLine("- If the source is not relevant, say so briefly.");
-        sb.AppendLine("- If the source is blank or only a heading/template scaffold, say it is placeholder knowledge and low-value context.");
-        sb.AppendLine("- Do not output JSON.");
+        sb.AppendLine("- direct = the file likely implements the requested area directly.");
+        sb.AppendLine("- pattern = the file is a reference feature or example the new change should match.");
+        sb.AppendLine("- shared = the file is shared layout/component/navigation/security/API context that shapes multiple features.");
+        sb.AppendLine("- context = secondary background that still helps analysis.");
+        sb.AppendLine("- low = mostly unrelated or too weak to rely on.");
+        sb.AppendLine("- Shared CRUD/layout/navigation files must prefer shared, not direct.");
+        sb.AppendLine("- If the requirement explicitly references another feature/page/module as the thing to match, classify files from that referenced feature as pattern, not low, even when the entity differs.");
+        sb.AppendLine("- Different entity name alone must not downgrade relevance when the requirement says to match that referenced feature.");
+        sb.AppendLine("- Facts must be concrete observations from this source only.");
+        sb.AppendLine("- Never repeat SOURCE SELECTION HINTS as facts unless the source content itself supports them.");
+        sb.AppendLine("- Keep the response compact.");
         return sb.ToString();
     }
 
     private static string BuildFinalPrompt(SolutionAnalysisRequest request, IReadOnlyList<LoadedSourceSummary> sourceSummaries)
     {
+        var strongEvidence = sourceSummaries
+            .Where(summary => !summary.IsWeakEvidence)
+            .ToList();
+        var weakEvidence = sourceSummaries
+            .Where(summary => summary.IsWeakEvidence)
+            .ToList();
+
         var sb = new StringBuilder();
         sb.AppendLine("Produce the final analysis payload as a JSON object.");
+        sb.AppendLine();
+        sb.AppendLine("WORKFLOW:");
+        sb.AppendLine($"- code: {request.WorkflowCode}");
+        sb.AppendLine($"- name: {request.WorkflowName}");
+        sb.AppendLine($"- purpose: {NormalizeShortSummary(request.WorkflowPurpose)}");
+        sb.AppendLine();
+        sb.AppendLine("ALLOWED NEXT WORKFLOW CODES:");
+        foreach (var workflowCode in request.NextWorkflowCodes.Count > 0 ? request.NextWorkflowCodes : [request.WorkflowCode])
+        {
+            sb.AppendLine($"- {workflowCode}");
+        }
+
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TITLE:");
         sb.AppendLine(request.RequirementTitle);
@@ -452,10 +486,20 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("REQUIREMENT DESCRIPTION:");
         sb.AppendLine(request.RequirementDescription);
         sb.AppendLine();
-        sb.AppendLine("LOADED SOURCE SUMMARIES:");
-        foreach (var summary in sourceSummaries)
+        sb.AppendLine("PRIMARY EVIDENCE:");
+        foreach (var summary in strongEvidence)
         {
-            sb.AppendLine($"- {summary.Source}: {summary.Summary}");
+            sb.AppendLine(FormatLoadedSourceSummary(summary));
+        }
+
+        if (weakEvidence.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("WEAK OR PLACEHOLDER CONTEXT:");
+            foreach (var summary in weakEvidence)
+            {
+                sb.AppendLine($"- [{summary.Category}/{summary.Relevance}] {summary.Source}: {summary.Summary}");
+            }
         }
 
         sb.AppendLine();
@@ -473,18 +517,24 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("RULES:");
         sb.AppendLine("- Do not output markdown fences.");
         sb.AppendLine("- Do not output any text before or after the JSON object.");
-        sb.AppendLine("- Base the analysis only on the loaded source summaries.");
-        sb.AppendLine("- Treat summaries that say placeholder, blank, or low-value as weak evidence and favor repository evidence in those cases.");
+        sb.AppendLine("- Base the analysis only on the evidence listed above.");
+        sb.AppendLine("- Favor repository evidence over weak or placeholder context.");
+        sb.AppendLine("- The 'summary' value must be a single string.");
+        sb.AppendLine("- Format the summary string with explicit sections, for example: 'Facts: ... Assumptions: ... Unknowns: ...'.");
+        sb.AppendLine("- recommendedNextWorkflowCodes may only contain values from ALLOWED NEXT WORKFLOW CODES.");
+        sb.AppendLine("- Generate open questions only when the evidence shows a real ambiguity, contradiction, missing dependency, or missing requirement detail.");
+        sb.AppendLine("- Do not generate generic auth, navigation, or permission questions unless the evidence explicitly raises that uncertainty.");
         sb.AppendLine("- Do not design the solution.");
         sb.AppendLine("- Do not create backlog items.");
         sb.AppendLine("- Do not describe implementation steps.");
         return sb.ToString();
     }
 
-    private static string BuildWorkflowInputSummary(SolutionAnalysisRequest request)
+    private static LoadedSourceSummary BuildWorkflowInputSummary(SolutionAnalysisRequest request)
     {
         var description = NormalizeShortSummary(request.RequirementDescription);
         var impactedAreas = GetLikelyRepositoryAreas(request).ToList();
+        var facts = new List<string>();
 
         var sb = new StringBuilder();
         sb.Append($"Requirement '{request.RequirementTitle}' requests: {description}");
@@ -494,18 +544,25 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             sb.Append(" Likely impacted repository areas: ");
             sb.Append(string.Join(", ", impactedAreas));
             sb.Append('.');
+            facts.AddRange(impactedAreas.Select(area => $"Likely impacted area: {area}"));
         }
         else
         {
             sb.Append(" Likely impacted areas should be inferred from repository features, API controllers, layout/navigation, and shared CRUD/validation components.");
         }
 
-        return NormalizeShortSummary(sb.ToString());
+        return new LoadedSourceSummary(
+            "workflow-input",
+            "workflow-input",
+            "scope",
+            NormalizeShortSummary(sb.ToString()),
+            NormalizeFacts(facts),
+            false);
     }
 
     private static IEnumerable<string> GetLikelyRepositoryAreas(SolutionAnalysisRequest request)
         => request.RepositoryFiles
-            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request) })
+            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, request, false) })
             .Where(candidate => candidate.Score > 0)
             .OrderByDescending(candidate => candidate.Score)
             .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
@@ -514,24 +571,48 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(4);
 
-    private static int ScoreRepositoryPath(string path, SolutionAnalysisRequest request)
+    private static int ScoreRepositoryPath(string path, SolutionAnalysisRequest request, bool isRepositoryEvidenceHit)
     {
-        if (!path.StartsWith("src/", StringComparison.OrdinalIgnoreCase) ||
-            path.Contains("/bin/", StringComparison.OrdinalIgnoreCase) ||
-            path.Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+        var normalizedPath = NormalizePath(path);
+        var lowerPath = normalizedPath.ToLowerInvariant();
+
+        if ((normalizedPath.StartsWith("src/", StringComparison.OrdinalIgnoreCase) ||
+             normalizedPath.StartsWith("AI/", StringComparison.OrdinalIgnoreCase)) is false ||
+            lowerPath.Contains("/bin/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/obj/", StringComparison.Ordinal))
         {
             return 0;
         }
 
         var score = 0;
-        var lowerPath = path.ToLowerInvariant();
         var queryText = $"{request.RequirementTitle} {request.RequirementDescription}".ToLowerInvariant();
+
+        if (isRepositoryEvidenceHit)
+        {
+            score += 12;
+        }
 
         foreach (var token in Tokenize(queryText))
         {
             if (lowerPath.Contains(token, StringComparison.Ordinal))
             {
                 score += 3;
+            }
+        }
+
+        if (IsPatternMatchingRequirement(queryText))
+        {
+            if (lowerPath.Contains("/pages/", StringComparison.Ordinal) || lowerPath.EndsWith(".razor", StringComparison.Ordinal))
+            {
+                score += 4;
+            }
+
+            if (lowerPath.Contains("/components/", StringComparison.Ordinal) ||
+                lowerPath.Contains("/forms/", StringComparison.Ordinal) ||
+                lowerPath.Contains("/crud/", StringComparison.Ordinal) ||
+                lowerPath.Contains("/shared/", StringComparison.Ordinal))
+            {
+                score += 4;
             }
         }
 
@@ -545,6 +626,22 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             (lowerPath.Contains("/users/", StringComparison.Ordinal) || lowerPath.Contains("userscontroller", StringComparison.Ordinal)))
         {
             score += 8;
+        }
+
+        if (queryText.Contains("crud", StringComparison.Ordinal) &&
+            (lowerPath.Contains("/crud/", StringComparison.Ordinal) ||
+             lowerPath.Contains("controller", StringComparison.Ordinal) ||
+             lowerPath.Contains("form", StringComparison.Ordinal)))
+        {
+            score += 5;
+        }
+
+        if (queryText.Contains("layout", StringComparison.Ordinal) &&
+            (lowerPath.Contains("layout", StringComparison.Ordinal) ||
+             lowerPath.Contains("navigation", StringComparison.Ordinal) ||
+             lowerPath.Contains("menu", StringComparison.Ordinal)))
+        {
+            score += 5;
         }
 
         if (lowerPath.Contains("/pages/", StringComparison.Ordinal) || lowerPath.EndsWith("page.razor", StringComparison.Ordinal))
@@ -579,13 +676,23 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .Where(token => token.Length >= 4)
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
+    private static bool IsPatternMatchingRequirement(string queryText)
+        => queryText.Contains("same as", StringComparison.Ordinal) ||
+           queryText.Contains("same layout", StringComparison.Ordinal) ||
+           queryText.Contains("same crud", StringComparison.Ordinal) ||
+           queryText.Contains("identical", StringComparison.Ordinal) ||
+           queryText.Contains("match", StringComparison.Ordinal) ||
+           queryText.Contains("similar", StringComparison.Ordinal) ||
+           queryText.Contains("mirror", StringComparison.Ordinal) ||
+           queryText.Contains("like the", StringComparison.Ordinal);
+
     private static string NormalizeArea(string path)
     {
         var directory = Path.GetDirectoryName(path)?.Replace('\\', '/');
         return string.IsNullOrWhiteSpace(directory) ? path : directory;
     }
 
-    private static bool TryBuildPlaceholderKnowledgeSummary(string content, out string summary)
+    private static bool TryBuildPlaceholderKnowledgeSummary(string content, out LoadedSourceSummary summary)
     {
         var substantiveLines = content
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
@@ -596,11 +703,17 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         if (substantiveLines.Count == 0)
         {
-            summary = "Placeholder solution knowledge file; no solution-specific facts are recorded here. Treat this as low-value context and rely on repository evidence.";
+            summary = new LoadedSourceSummary(
+                "placeholder",
+                "solution-knowledge",
+                "low",
+                "Placeholder solution knowledge file; no solution-specific facts are recorded here.",
+                [],
+                true);
             return true;
         }
 
-        summary = string.Empty;
+        summary = default!;
         return false;
     }
 
@@ -620,6 +733,289 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         return cleaned[..MaxSummaryCharacters].TrimEnd() + "...";
     }
 
+    private static LoadedSourceSummary BuildDeterministicSummary(
+        string sourceName,
+        string category,
+        string relevance,
+        string content,
+        params string[] excludedFragments)
+    {
+        var facts = ExtractMeaningfulLines(content, excludedFragments)
+            .Take(MaxSummaryFacts)
+            .ToArray();
+
+        var summary = facts.Length > 0
+            ? NormalizeShortSummary(string.Join("; ", facts))
+            : "Low-value context.";
+
+        return new LoadedSourceSummary(
+            sourceName,
+            category,
+            relevance,
+            summary,
+            NormalizeFacts(facts),
+            false);
+    }
+
+    private static IEnumerable<string> ExtractMeaningfulLines(string content, IReadOnlyList<string> excludedFragments)
+    {
+        foreach (var rawLine in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed) ||
+                trimmed.StartsWith("#", StringComparison.Ordinal) ||
+                trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var normalized = TrimListPrefix(trimmed);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            if (excludedFragments.Any(fragment => normalized.Contains(fragment, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            yield return NormalizeShortSummary(normalized);
+        }
+    }
+
+    private static string TrimListPrefix(string value)
+    {
+        var normalized = value.Trim();
+        while (normalized.StartsWith("-", StringComparison.Ordinal) ||
+               normalized.StartsWith("*", StringComparison.Ordinal) ||
+               normalized.StartsWith("•", StringComparison.Ordinal))
+        {
+            normalized = normalized[1..].TrimStart();
+        }
+
+        return normalized;
+    }
+
+    private static LoadedSourceSummary CreateSkippedSummary(string sourceName, string category)
+        => new(
+            sourceName,
+            category,
+            "low",
+            "Skipped because the source could not be loaded.",
+            [],
+            true);
+
+    private static string BuildSyntheticSummaryPrompt(string sourceName, string sourceContent, string note)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("DETERMINISTIC SUMMARY:");
+        sb.AppendLine(note);
+        sb.AppendLine();
+        sb.AppendLine("SOURCE:");
+        sb.AppendLine(sourceName);
+        sb.AppendLine();
+        sb.AppendLine("SOURCE CONTENT:");
+        sb.AppendLine(sourceContent);
+        return sb.ToString();
+    }
+
+    private static LoadedSourceSummary ParseRepositoryReview(SolutionAnalysisRequest request, string sourceName, string rawText)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<SourceReviewPayload>(ExtractJsonObject(rawText), JsonOptions)
+                ?? throw new InvalidOperationException("Repository review payload was empty.");
+
+            var relevance = NormalizeRepositoryRelevance(payload.Relevance, sourceName, request);
+            var facts = NormalizeFacts(payload.Facts);
+            var summary = string.IsNullOrWhiteSpace(payload.Summary)
+                ? (facts.Count > 0 ? NormalizeShortSummary(string.Join("; ", facts)) : "Repository source reviewed.")
+                : NormalizeShortSummary(payload.Summary);
+
+            return new LoadedSourceSummary(
+                sourceName,
+                "repository",
+                relevance,
+                summary,
+                facts,
+                string.Equals(relevance, "low", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return new LoadedSourceSummary(
+                sourceName,
+                "repository",
+                "context",
+                NormalizeShortSummary(rawText),
+                [],
+                false);
+        }
+    }
+
+    private static string NormalizeRepositoryRelevance(string? relevance, string sourceName, SolutionAnalysisRequest request)
+    {
+        var normalized = relevance?.Trim().ToLowerInvariant() switch
+        {
+            "direct" => "direct",
+            "pattern" => "pattern",
+            "shared" => "shared",
+            "context" => "context",
+            "low" => "low",
+            _ => "context"
+        };
+
+        var normalizedPath = NormalizePath(sourceName);
+        var lowerPath = normalizedPath.ToLowerInvariant();
+        var queryText = $"{request.RequirementTitle} {request.RequirementDescription}".ToLowerInvariant();
+        var referenceFeatureTerms = ExtractReferenceFeatureTerms(queryText);
+        var isSharedCrudOrLayout =
+            lowerPath.Contains("/shared/", StringComparison.Ordinal) ||
+            ((lowerPath.Contains("crud", StringComparison.Ordinal) ||
+              lowerPath.Contains("layout", StringComparison.Ordinal) ||
+              lowerPath.Contains("navigation", StringComparison.Ordinal) ||
+              lowerPath.Contains("menu", StringComparison.Ordinal)) &&
+             (lowerPath.Contains("/components/", StringComparison.Ordinal) ||
+              lowerPath.Contains("/layouts/", StringComparison.Ordinal) ||
+              lowerPath.Contains("/shared/", StringComparison.Ordinal)));
+        var isReferencedFeaturePath = IsPatternMatchingRequirement(queryText) &&
+            referenceFeatureTerms.Any(term => lowerPath.Contains(term, StringComparison.Ordinal));
+
+        if (isSharedCrudOrLayout)
+        {
+            return "shared";
+        }
+
+        if (isReferencedFeaturePath)
+        {
+            return "pattern";
+        }
+
+        return normalized;
+    }
+
+    private static IReadOnlyList<string> BuildRepositorySelectionHints(string sourceName, SolutionAnalysisRequest request)
+    {
+        var hints = new List<string>();
+        var normalizedPath = NormalizePath(sourceName);
+        var lowerPath = normalizedPath.ToLowerInvariant();
+        var queryText = $"{request.RequirementTitle} {request.RequirementDescription}".ToLowerInvariant();
+        var evidenceHitPaths = request.RepositoryEvidenceFiles
+            .Select(x => NormalizePath(x.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (evidenceHitPaths.Contains(normalizedPath))
+        {
+            hints.Add("Selected from repository search hits.");
+        }
+
+        if (IsPatternMatchingRequirement(queryText))
+        {
+            hints.Add("Requirement explicitly references matching an existing feature or behavior.");
+        }
+
+        foreach (var referenceFeature in ExtractReferenceFeatureTerms(queryText))
+        {
+            if (lowerPath.Contains(referenceFeature, StringComparison.Ordinal))
+            {
+                hints.Add($"Path matches explicitly referenced feature term '{referenceFeature}'.");
+            }
+        }
+
+        if (lowerPath.Contains("/pages/", StringComparison.Ordinal) || lowerPath.EndsWith(".razor", StringComparison.Ordinal))
+        {
+            hints.Add("Path looks like UI page evidence.");
+        }
+
+        if (lowerPath.Contains("/components/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/forms/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/crud/", StringComparison.Ordinal) ||
+            lowerPath.Contains("/shared/", StringComparison.Ordinal))
+        {
+            hints.Add("Path looks like shared UI/component/CRUD pattern evidence.");
+        }
+
+        if (lowerPath.Contains("/controllers/", StringComparison.Ordinal) || lowerPath.Contains("/api/", StringComparison.Ordinal))
+        {
+            hints.Add("Path looks like API/controller evidence.");
+        }
+
+        if (lowerPath.Contains("layout", StringComparison.Ordinal) ||
+            lowerPath.Contains("navigation", StringComparison.Ordinal) ||
+            lowerPath.Contains("menu", StringComparison.Ordinal))
+        {
+            hints.Add("Path looks like layout or navigation evidence.");
+        }
+
+        foreach (var token in Tokenize(queryText).Where(token => lowerPath.Contains(token, StringComparison.Ordinal)).Take(3))
+        {
+            hints.Add($"Path matches requirement token '{token}'.");
+        }
+
+        return hints.Count > 0 ? hints : ["Selected because the path likely overlaps the requested area."];
+    }
+
+    private static IReadOnlyList<string> NormalizeFacts(IEnumerable<string>? facts)
+        => (facts ?? [])
+            .Where(fact => !string.IsNullOrWhiteSpace(fact))
+            .Select(fact => NormalizeShortSummary(fact))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxSummaryFacts)
+            .ToArray();
+
+    private static IReadOnlyList<string> ExtractReferenceFeatureTerms(string queryText)
+    {
+        var tokens = Tokenize(queryText).ToList();
+        var referenceTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var anchors = new[]
+        {
+            "same as",
+            "identical to",
+            "match",
+            "like the",
+            "same layout as",
+            "same crud as"
+        };
+
+        foreach (var anchor in anchors)
+        {
+            var index = queryText.IndexOf(anchor, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            var trailingText = queryText[(index + anchor.Length)..];
+            foreach (var token in Tokenize(trailingText).Take(3))
+            {
+                if (token.Length >= 4)
+                {
+                    referenceTerms.Add(token);
+                }
+            }
+        }
+
+        foreach (var token in tokens.Where(token => token is "users" or "user"))
+        {
+            referenceTerms.Add(token);
+        }
+
+        return referenceTerms.ToArray();
+    }
+
+    private static string FormatLoadedSourceSummary(LoadedSourceSummary summary)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"- [{summary.Category}/{summary.Relevance}] {summary.Source}: {summary.Summary}");
+        if (summary.Facts.Count > 0)
+        {
+            sb.Append(" Facts: ");
+            sb.Append(string.Join("; ", summary.Facts));
+        }
+
+        return sb.ToString();
+    }
+
     private static WorkflowOutputPayload ParseAndNormalize(string raw, SolutionAnalysisRequest request)
     {
         var cleaned = ExtractJsonObject(raw);
@@ -636,7 +1032,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         parsed.GeneratedDecisions ??= [];
         parsed.DocumentationUpdates = NormalizeStringList(parsed.DocumentationUpdates, request.KnowledgeUpdates);
         parsed.KnowledgeUpdates = NormalizeStringList(parsed.KnowledgeUpdates, request.KnowledgeUpdates);
-        parsed.RecommendedNextWorkflowCodes = NormalizeStringList(
+        parsed.RecommendedNextWorkflowCodes = NormalizeAllowedWorkflowCodes(
             parsed.RecommendedNextWorkflowCodes,
             request.NextWorkflowCodes.Count > 0 ? request.NextWorkflowCodes : [request.WorkflowCode]);
         return parsed;
@@ -684,6 +1080,28 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             .ToList();
     }
 
+    private static List<string> NormalizeAllowedWorkflowCodes(List<string>? values, IReadOnlyList<string> allowedValues)
+    {
+        var allowedSet = allowedValues
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var normalized = values?
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Where(allowedSet.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        return allowedSet.ToList();
+    }
+
     private static string NormalizeStatus(string? status, int openQuestionCount)
     {
         if (string.IsNullOrWhiteSpace(status))
@@ -696,14 +1114,38 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
     private static string ExtractJsonObject(string raw)
     {
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
+        var cleaned = StripMarkdownCodeFence(raw).Trim();
+        var start = cleaned.IndexOf('{');
+        var end = cleaned.LastIndexOf('}');
         if (start < 0 || end <= start)
         {
             throw new InvalidOperationException($"Agent did not return a JSON object. Raw response: {raw}");
         }
 
-        return raw[start..(end + 1)];
+        return cleaned[start..(end + 1)];
+    }
+
+    private static string StripMarkdownCodeFence(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            return trimmed;
+        }
+
+        var firstNewLine = trimmed.IndexOf('\n');
+        if (firstNewLine < 0)
+        {
+            return trimmed;
+        }
+
+        var lastFence = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+        if (lastFence <= firstNewLine)
+        {
+            return trimmed;
+        }
+
+        return trimmed[(firstNewLine + 1)..lastFence];
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -712,7 +1154,20 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         WriteIndented = true
     };
 
-    private sealed record LoadedSourceSummary(string Source, string Summary);
+    private sealed record LoadedSourceSummary(
+        string Source,
+        string Category,
+        string Relevance,
+        string Summary,
+        IReadOnlyList<string> Facts,
+        bool IsWeakEvidence);
+
+    private sealed class SourceReviewPayload
+    {
+        public string? Relevance { get; set; }
+        public string? Summary { get; set; }
+        public List<string>? Facts { get; set; }
+    }
 
     private sealed class WorkflowOutputPayload
     {
