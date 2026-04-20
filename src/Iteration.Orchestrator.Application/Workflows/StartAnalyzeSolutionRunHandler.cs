@@ -317,34 +317,6 @@ public sealed class StartAnalyzeSolutionRunHandler
             primaryRequirement.ConstraintsJson,
             DateTime.UtcNow);
 
-        var generatedRequirements = DeserializeList<GeneratedRequirementDto>(result.GeneratedRequirementsJson);
-        foreach (var item in generatedRequirements)
-        {
-            var parentRequirementId = ResolveRequirementReference(item.ParentRequirementId, requirementMap, primaryRequirement.Id);
-            var requirement = new Requirement(
-                primaryRequirement.TargetSolutionId,
-                null,
-                workflowRunId,
-                parentRequirementId,
-                FirstNonEmpty(item.Title, "Derived requirement from analysis"),
-                FirstNonEmpty(item.Description, primaryRequirement.Description),
-                item.RequirementType ?? "functional",
-                item.Source ?? "analysis",
-                RequirementLifecycleStatus.Normalize(item.Status),
-                item.Priority ?? primaryRequirement.Priority,
-                SerializeStringList(item.AcceptanceCriteria),
-                SerializeStringList(item.Constraints),
-                ParseDateOrDefault(item.SubmittedAtUtc, DateTime.UtcNow),
-                ParseNullableDate(item.LastUpdatedAtUtc));
-
-            _db.Requirements.Add(requirement);
-
-            if (!string.IsNullOrWhiteSpace(item.RequirementId))
-            {
-                requirementMap[item.RequirementId.Trim()] = requirement.Id;
-            }
-        }
-
         return requirementMap;
     }
 

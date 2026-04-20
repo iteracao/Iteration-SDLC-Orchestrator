@@ -363,27 +363,6 @@ public sealed class StartImplementSolutionChangeRunHandler
         Guid backlogItemId,
         Guid workflowRunId)
     {
-        var items = DeserializeList<GeneratedRequirementDto>(result.GeneratedRequirementsJson);
-        foreach (var item in items)
-        {
-            var title = FirstNonEmpty(item.Title, "Generated requirement from implementation");
-            var description = FirstNonEmpty(item.Description, title);
-            _db.Requirements.Add(new Requirement(
-                targetSolutionId,
-                backlogItemId,
-                workflowRunId,
-                requirementId,
-                title,
-                description,
-                FirstNonEmpty(item.RequirementType, "functional"),
-                FirstNonEmpty(item.Source, "implementation"),
-                RequirementLifecycleStatus.Normalize(item.Status),
-                FirstNonEmpty(item.Priority, "medium"),
-                item.AcceptanceCriteriaJson ?? "[]",
-                item.ConstraintsJson ?? "[]",
-                DateTime.UtcNow,
-                null));
-        }
     }
 
     private void PersistGeneratedOpenQuestions(
