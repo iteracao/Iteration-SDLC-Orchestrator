@@ -2017,7 +2017,7 @@
     }
 
     private bool HasActiveWorkflowRuns()
-        => _runs.Any(x => x.Status is 1 or 2 or 6);
+        => _runs.Any(x => IsExecutingWorkflowStatus(x.Status));
 
     private void StartWorkflowPolling()
     {
@@ -2143,6 +2143,9 @@
 
     private static bool CanCancel(WorkflowRunRow run)
         => run.Status is 1 or 4 or 6;
+
+    private static bool IsExecutingWorkflowStatus(int status)
+        => status is 1 or 2;
 
     private bool HasBlockingRun(Guid? requirementId, Guid? backlogItemId, string workflowCode)
         => _runs.Any(x =>
