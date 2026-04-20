@@ -231,12 +231,6 @@ public sealed class WorkflowRunsController : ControllerBase
             return NotFound(new { message = "Workflow run not found." });
         }
 
-        if ((WorkflowRunStatus)workflowRun.Status != WorkflowRunStatus.CompletedAwaitingValidation &&
-            (WorkflowRunStatus)workflowRun.Status != WorkflowRunStatus.CompletedValidated)
-        {
-            return NotFound(new { message = "Workflow output payload is only available after the workflow completes successfully." });
-        }
-
         var taskRun = await db.AgentTaskRuns
             .AsNoTracking()
             .Where(x => x.WorkflowRunId == id)
@@ -257,10 +251,32 @@ public sealed class WorkflowRunsController : ControllerBase
         });
     }
 
+    [HttpGet("{id:guid}/artifacts/{fileName}")]
+    public async Task<IActionResult> GetArtifact(
+        Guid id,
+        string fileName,
+        [FromServices] IArtifactStore artifacts,
+        CancellationToken ct)
+    {
+        var content = await artifacts.ReadTextAsync(id, fileName, ct);
+        if (content is null)
+        {
+            return NotFound(new { message = "Workflow artifact not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName,
+            content
+        });
+    }
+
     [HttpGet("{id:guid}/log")]
     public async Task<IActionResult> GetLog(
         Guid id,
         [FromServices] IWorkflowRunLogStore logs,
+        [FromServices] IArtifactStore artifacts,
         CancellationToken ct)
     {
         var content = await logs.ReadAsync(id, ct);
@@ -269,11 +285,14 @@ public sealed class WorkflowRunsController : ControllerBase
             return NotFound(new { message = "Workflow log not found." });
         }
 
+        var artifactFiles = await artifacts.ListFilesAsync(id, ct);
+
         return Ok(new
         {
             workflowRunId = id,
             fileName = $"{id}.log",
-            content
+            content,
+            artifactFiles
         });
     }
 
@@ -355,6 +374,7 @@ public sealed class WorkflowRunsController : ControllerBase
     public async Task<IActionResult> Get(
         Guid id,
         [FromServices] AppDbContext db,
+        [FromServices] IArtifactStore artifacts,
         CancellationToken ct)
     {
         var run = await db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -364,6 +384,14 @@ public sealed class WorkflowRunsController : ControllerBase
         var designReport = await db.DesignReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
         var planReport = await db.PlanReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
         var implementationReport = await db.ImplementationReports.FirstOrDefaultAsync(x => x.WorkflowRunId == id, ct);
+        var hasOutputPayload = await db.AgentTaskRuns
+            .AsNoTracking()
+            .Where(x => x.WorkflowRunId == id)
+            .OrderByDescending(x => x.StartedUtc)
+            .ThenByDescending(x => x.Id)
+            .Select(x => !string.IsNullOrWhiteSpace(x.OutputPayloadJson))
+            .FirstOrDefaultAsync(ct);
+        var artifactFiles = await artifacts.ListFilesAsync(id, ct);
 
         return Ok(new
         {
@@ -372,6 +400,8 @@ public sealed class WorkflowRunsController : ControllerBase
             designReport,
             planReport,
             implementationReport,
+            hasOutputPayload,
+            artifactFiles,
             report = implementationReport as object
                 ?? planReport as object
                 ?? designReport as object
