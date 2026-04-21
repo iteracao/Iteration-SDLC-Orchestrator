@@ -827,24 +827,30 @@
                                     </MudButton>
                                 }
 
-                                @if (_activeCard.WorkflowRun is not null)
+                                @if (_activeCard.WorkflowRun is not null && CanValidate(_activeCard.WorkflowRun))
                                 {
                                     <MudButton Size="Size.Small"
                                                Variant="Variant.Filled"
                                                Color="Color.Warning"
-                                               Disabled="!CanValidate(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                               Disabled="_mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
                                                OnClick="() => ValidateWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
                                         Validate
                                     </MudButton>
+                                }
 
+                                @if (_activeCard.WorkflowRun is not null && CanCancel(_activeCard.WorkflowRun))
+                                {
                                     <MudButton Size="Size.Small"
                                                Variant="Variant.Outlined"
                                                Color="Color.Error"
-                                               Disabled="!CanCancel(_activeCard.WorkflowRun) || _mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
+                                               Disabled="_mutatingWorkflowRunId == _activeCard.WorkflowRun.Id"
                                                OnClick="() => CancelWorkflowRunAsync(_activeCard.WorkflowRun.Id)">
                                         Cancel
                                     </MudButton>
+                                }
 
+                                @if (_activeCard.WorkflowRun is not null)
+                                {
                                     <MudButton Size="Size.Small"
                                                Variant="Variant.Outlined"
                                                OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
@@ -2266,7 +2272,7 @@
         => run.Status == 6;
 
     private static bool CanCancel(WorkflowRunRow run)
-        => run.Status is 1 or 4 or 6;
+        => run.Status == 4;
 
     private static bool IsExecutingWorkflowStatus(int status)
         => status is 1 or 2;
