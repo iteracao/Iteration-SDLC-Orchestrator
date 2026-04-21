@@ -69,19 +69,22 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     Prompt: BuildBootstrapPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Establish analysis behavior and workflow intent only."),
+                    PurposeSummary: "Establish analysis behavior and workflow intent only.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
                     Prompt: BuildRepositoryStructurePrompt(repositoryPathList),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Provide the deterministic full physical path list for source files and solution documentation."),
+                    PurposeSummary: "Provide the deterministic full physical path list for source files and solution documentation.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.ContextOnly),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: true,
                     PurposeSummary: "Use targeted repository discovery and file reads to produce the final Markdown analysis report.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireWorkflowInput: false,
                     RequireCompletionValidation: true)
             };

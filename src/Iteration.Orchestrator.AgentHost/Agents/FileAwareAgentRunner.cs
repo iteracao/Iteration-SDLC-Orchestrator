@@ -35,6 +35,7 @@ internal static class FileAwareAgentRunner
             RequiresSavedOutput: true,
             AllowRepositoryDiscovery: false,
             PurposeSummary: "Run the workflow in a single prompt/tool loop.",
+            Mode: AgentPhaseMode.Interactive,
             RequireWorkflowInput: true,
             RequireCompletionValidation: true);
 
@@ -129,24 +130,33 @@ internal static class FileAwareAgentRunner
             await logs.AppendSectionAsync(workflowRunId, $"Agent phase {phaseIndex + 1}: {phase.Name}", ct);
             await logs.AppendBlockAsync(workflowRunId, $"Phase prompt: {phase.Name}", phase.Prompt, ct);
 
-            var phaseResult = await ExecutePhaseAsync(
-                agent,
-                phase,
-                phaseIndex,
-                phases.Count,
-                repositoryRoot,
-                workflowRunId,
-                logs,
-                payloadStore,
-                discoveryTools,
-                transcript,
-                state,
-                ct,
-                requiredFrameworkPathSet,
-                requiredSolutionPathSet,
-                requireRepositoryEvidence,
-                requireRepositoryDiscovery,
-                responseTimeoutSeconds);
+            string phaseResult;
+            if (phase.Mode == AgentPhaseMode.ContextOnly)
+            {
+                await logs.AppendLineAsync(workflowRunId, $"Phase mode ({phase.Name}): ContextOnly. Prompt injected into execution context with no model call.", ct);
+                phaseResult = "Context loaded.";
+            }
+            else
+            {
+                phaseResult = await ExecutePhaseAsync(
+                    agent,
+                    phase,
+                    phaseIndex,
+                    phases.Count,
+                    repositoryRoot,
+                    workflowRunId,
+                    logs,
+                    payloadStore,
+                    discoveryTools,
+                    transcript,
+                    state,
+                    ct,
+                    requiredFrameworkPathSet,
+                    requiredSolutionPathSet,
+                    requireRepositoryEvidence,
+                    requireRepositoryDiscovery,
+                    responseTimeoutSeconds);
+            }
 
             if (phase.RequiresSavedOutput)
             {
@@ -659,12 +669,19 @@ internal static class FileAwareAgentRunner
         WriteIndented = true
     };
 
+    internal enum AgentPhaseMode
+    {
+        Interactive,
+        ContextOnly
+    }
+
     internal sealed record AgentPhaseDefinition(
         string Name,
         string Prompt,
         bool RequiresSavedOutput,
         bool AllowRepositoryDiscovery,
         string PurposeSummary,
+        AgentPhaseMode Mode = AgentPhaseMode.Interactive,
         bool RequireWorkflowInput = false,
         bool RequireCompletionValidation = false);
 
