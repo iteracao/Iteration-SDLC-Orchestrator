@@ -259,16 +259,16 @@ internal static class FileAwareAgentRunner
                         throw new InvalidOperationException($"Agent requested {normalizedAction} without a valid 'path'.");
                     }
 
-                    var normalizedPath = NormalizePath(toolRequest.Path);
-                    var fileContent = ReadFile(repositoryRoot, normalizedPath);
-                    state.ReadPaths.Add(normalizedPath);
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): {normalizedAction}('{normalizedPath}').", ct);
-                    await logs.AppendBlockAsync(workflowRunId, $"File content: {normalizedPath}", fileContent, ct);
+                    var requestedPath = toolRequest.Path.Trim();
+                    var fileRead = ReadFileByPhysicalPath(repositoryRoot, requestedPath);
+                    state.ReadPaths.Add(fileRead.NormalizedPath);
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_file('{fileRead.FullPath}').", ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}.", ct);
 
-                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR {normalizedAction}('{normalizedPath}'):",
+                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR get_file('{fileRead.FullPath}'):",
                     [
                         "--- FILE CONTENT START ---",
-                        fileContent,
+                        fileRead.Content,
                         "--- FILE CONTENT END ---"
                     ]);
 
@@ -539,24 +539,24 @@ internal static class FileAwareAgentRunner
     private static string? NormalizeOptionalPath(string? relativePath)
         => string.IsNullOrWhiteSpace(relativePath) ? null : NormalizePath(relativePath);
 
-    private static string ReadFile(string repositoryRoot, string relativePath)
+    private static FileReadResult ReadFileByPhysicalPath(string repositoryRoot, string requestedPath)
     {
         var fullRoot = Path.GetFullPath(repositoryRoot)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        var fullPath = Path.GetFullPath(requestedPath);
         var rootPrefix = fullRoot + Path.DirectorySeparatorChar;
 
         if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Invalid path requested: {relativePath}");
+            throw new InvalidOperationException($"Invalid path requested: {requestedPath}");
         }
 
         if (!File.Exists(fullPath))
         {
-            throw new InvalidOperationException($"Requested file does not exist: {relativePath}");
+            throw new InvalidOperationException($"Requested file does not exist: {requestedPath}");
         }
 
-        return File.ReadAllText(fullPath);
+        return new FileReadResult(fullPath, NormalizePath(fullPath), File.ReadAllText(fullPath));
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, string transcript)
@@ -582,17 +582,12 @@ internal static class FileAwareAgentRunner
         sb.AppendLine("- Keep phase summaries concrete and evidence-based.");
         sb.AppendLine("- Preserve any useful findings for later phases.");
 
-        if (phase.AllowRepositoryDiscovery)
-        {
-            sb.AppendLine("- You may use discovery tools list_repo_tree and search_repo to explore before reading files.");
-        }
-
-        sb.AppendLine("- You may request direct file evidence with read_file or get_file.");
+        sb.AppendLine("- You may request direct file evidence only with get_file using a full physical path from Prompt 2.");
 
         if (phase.RequiresSavedOutput)
         {
             sb.AppendLine("- This is the final phase: you MUST finish by calling save_workflow_output.");
-            sb.AppendLine("- In the final phase, do not call get_workflow_input, read_file, get_file, list_repo_tree, or search_repo.");
+            sb.AppendLine("- In the final phase, do not call get_workflow_input or get_file.");
             sb.AppendLine("- Return exactly one JSON object with properties action, workflowRunId, and output.");
             sb.AppendLine("- Use property name 'action', not 'tool'.");
         }
@@ -695,6 +690,8 @@ internal static class FileAwareAgentRunner
         public bool RepositoryDiscoveryUsed { get; set; }
         public HashSet<string> ReadPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
+
+    private sealed record FileReadResult(string FullPath, string NormalizedPath, string Content);
 
     private sealed class ToolRequest
     {

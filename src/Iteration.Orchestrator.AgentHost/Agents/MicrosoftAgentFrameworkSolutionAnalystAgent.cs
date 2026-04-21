@@ -82,8 +82,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
                     RequiresSavedOutput: false,
-                    AllowRepositoryDiscovery: true,
-                    PurposeSummary: "Use targeted repository discovery and file reads to produce the final Markdown analysis report.",
+                    AllowRepositoryDiscovery: false,
+                    PurposeSummary: "Read relevant files by full physical path and produce the final Markdown analysis report.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireWorkflowInput: false,
                     RequireCompletionValidation: true)
@@ -161,7 +161,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Prompt 3 is the analysis step.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed tool actions are get_file, list_repo_tree, and search_repo.");
+        sb.AppendLine("- Allowed tool action is get_file.");
         return sb.ToString().TrimEnd();
     }
 
@@ -226,15 +226,9 @@ Return a very short Markdown note with:
         sb.AppendLine("- Description:");
         sb.AppendLine(request.RequirementDescription);
         sb.AppendLine();
-        sb.AppendLine("TOOLS AVAILABLE");
-        sb.AppendLine("- `search_repo` to find relevant repository content.");
-        sb.AppendLine("- `list_repo_tree` to inspect repository folders when useful.");
-        sb.AppendLine("- `get_file` to inspect file contents by full physical path.");
-        sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- Use repository tools to inspect relevant files before concluding.");
-        sb.AppendLine("- Use `get_file` with full physical paths to inspect implementation details.");
+        sb.AppendLine("- Use `get_file` with full physical paths from Prompt 2 to inspect file contents when needed.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
         return sb.ToString().TrimEnd();
     }
