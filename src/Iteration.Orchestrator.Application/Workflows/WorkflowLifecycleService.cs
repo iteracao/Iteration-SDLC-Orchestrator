@@ -30,7 +30,7 @@ public sealed class WorkflowLifecycleService
         var blockingRunExists = await query.AnyAsync(
             x => x.Status == WorkflowRunStatus.Pending
                 || x.Status == WorkflowRunStatus.Running
-                || x.Status == WorkflowRunStatus.CompletedAwaitingValidation,
+                || x.Status == WorkflowRunStatus.Completed,
             ct);
 
         if (blockingRunExists)
@@ -45,7 +45,15 @@ public sealed class WorkflowLifecycleService
             .Where(x => x.RequirementId == requirementId)
             .AnyAsync(x => x.Status == WorkflowRunStatus.Pending
                 || x.Status == WorkflowRunStatus.Running
-                || x.Status == WorkflowRunStatus.CompletedAwaitingValidation, ct);
+                || x.Status == WorkflowRunStatus.Completed, ct);
+    }
+
+
+    public async Task<bool> HasRunningRunAsync(Guid requirementId, CancellationToken ct)
+    {
+        return await _db.WorkflowRuns
+            .Where(x => x.RequirementId == requirementId)
+            .AnyAsync(x => x.Status == WorkflowRunStatus.Running, ct);
     }
 
     public async Task<WorkflowRun> GetLatestValidatedRunAsync(Guid requirementId, string workflowCode, CancellationToken ct)
@@ -53,7 +61,7 @@ public sealed class WorkflowLifecycleService
         return await _db.WorkflowRuns
             .Where(x => x.RequirementId == requirementId)
             .Where(x => x.WorkflowCode == workflowCode)
-            .Where(x => x.Status == WorkflowRunStatus.CompletedValidated)
+            .Where(x => x.Status == WorkflowRunStatus.Validated)
             .OrderByDescending(x => x.CompletedUtc ?? x.StartedUtc)
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException($"Validated workflow run not found for '{workflowCode}'.");

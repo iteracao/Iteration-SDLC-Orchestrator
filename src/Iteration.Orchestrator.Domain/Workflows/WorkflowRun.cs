@@ -37,14 +37,14 @@ public sealed class WorkflowRun
         FailureReason = null;
     }
 
-    public void CompleteAwaitingValidation(string stage)
+    public void Complete(string stage)
     {
         if (Status != WorkflowRunStatus.Running)
         {
             throw new InvalidOperationException("Only running workflow runs can complete.");
         }
 
-        Status = WorkflowRunStatus.CompletedAwaitingValidation;
+        Status = WorkflowRunStatus.Completed;
         CurrentStage = stage;
         CompletedUtc = DateTime.UtcNow;
         FailureReason = null;
@@ -52,7 +52,7 @@ public sealed class WorkflowRun
 
     public void Fail(string stage, string reason)
     {
-        if (Status == WorkflowRunStatus.CompletedValidated || Status == WorkflowRunStatus.Cancelled)
+        if (Status == WorkflowRunStatus.Validated || Status == WorkflowRunStatus.Cancelled)
         {
             throw new InvalidOperationException("Validated or cancelled workflow runs cannot fail.");
         }
@@ -65,12 +65,12 @@ public sealed class WorkflowRun
 
     public void Validate(string stage)
     {
-        if (Status != WorkflowRunStatus.CompletedAwaitingValidation)
+        if (Status != WorkflowRunStatus.Completed)
         {
-            throw new InvalidOperationException("Only workflow runs awaiting validation can be validated.");
+            throw new InvalidOperationException("Only completed workflow runs can be validated.");
         }
 
-        Status = WorkflowRunStatus.CompletedValidated;
+        Status = WorkflowRunStatus.Validated;
         CurrentStage = stage;
         CompletedUtc = DateTime.UtcNow;
         FailureReason = null;
@@ -79,8 +79,7 @@ public sealed class WorkflowRun
     public void Cancel(string stage, string? reason = null)
     {
         if (Status != WorkflowRunStatus.Pending
-            && Status != WorkflowRunStatus.Running
-            && Status != WorkflowRunStatus.CompletedAwaitingValidation
+            && Status != WorkflowRunStatus.Completed
             && Status != WorkflowRunStatus.Error)
         {
             throw new InvalidOperationException("Workflow run cannot be cancelled from its current state.");

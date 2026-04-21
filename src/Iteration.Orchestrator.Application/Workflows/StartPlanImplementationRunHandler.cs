@@ -49,9 +49,9 @@ public sealed class StartPlanImplementationRunHandler
         var requirement = await _db.Requirements.FindAsync([command.RequirementId], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Designed, StringComparison.OrdinalIgnoreCase))
+        if (!WorkflowLifecycleCatalog.CanStartWorkflow("plan-implementation", requirement.Status))
         {
-            throw new InvalidOperationException("Requirement must be in 'Designed' status before planning can start.");
+            throw new InvalidOperationException("Requirement must be in a valid status before planning can start.");
         }
 
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
@@ -61,7 +61,7 @@ public sealed class StartPlanImplementationRunHandler
 
         var workflow = await _config.GetWorkflowAsync("plan-implementation", ct);
         var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.AttachWorkflowRun(run.Id);
+        requirement.AdvanceLifecycle(run.Id, WorkflowLifecycleCatalog.GetWorkflowRequirementState("plan-implementation")!);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -193,7 +193,7 @@ public sealed class StartPlanImplementationRunHandler
             PersistGeneratedOpenQuestions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
 
-            run.CompleteAwaitingValidation("implementation-planning-completed-awaiting-validation");
+            run.Complete("implementation-planning-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 

@@ -22,7 +22,7 @@ public sealed class ValidateWorkflowRunHandler
 
         if (!WorkflowLifecycleCatalog.CanValidate(run.Status))
         {
-            throw new InvalidOperationException("Workflow run is not awaiting validation.");
+            throw new InvalidOperationException("Workflow run is not completed.");
         }
 
         await using var transaction = await _db.BeginTransactionAsync(ct);
@@ -34,12 +34,12 @@ public sealed class ValidateWorkflowRunHandler
             var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == run.RequirementId.Value, ct)
                 ?? throw new InvalidOperationException("Requirement not found for workflow run.");
 
-            var nextStatus = WorkflowLifecycleCatalog.GetValidatedRequirementStatus(run.WorkflowCode);
+            var nextStatus = WorkflowLifecycleCatalog.GetNextRequirementStatusAfterValidation(run.WorkflowCode);
             if (!string.IsNullOrWhiteSpace(nextStatus))
             {
-                if (string.Equals(nextStatus, RequirementLifecycleStatus.PendingCommit, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(nextStatus, RequirementLifecycleStatus.Completed, StringComparison.OrdinalIgnoreCase))
                 {
-                    requirement.MarkPendingCommit(run.Id);
+                    requirement.Commit();
                 }
                 else
                 {
@@ -67,9 +67,9 @@ public sealed class ValidateWorkflowRunHandler
             return "validated";
         }
 
-        const string awaitingSuffix = "-awaiting-validation";
-        return currentStage.EndsWith(awaitingSuffix, StringComparison.OrdinalIgnoreCase)
-            ? $"{currentStage[..^awaitingSuffix.Length]}-validated"
+        const string completedSuffix = "-completed";
+        return currentStage.EndsWith(completedSuffix, StringComparison.OrdinalIgnoreCase)
+            ? $"{currentStage[..^completedSuffix.Length]}-validated"
             : $"{currentStage}-validated";
     }
 }

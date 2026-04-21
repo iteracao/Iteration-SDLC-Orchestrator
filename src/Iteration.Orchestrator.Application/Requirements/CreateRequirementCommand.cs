@@ -43,7 +43,7 @@ public sealed class CreateRequirementHandler
             x => x.TargetSolutionId == command.TargetSolutionId
                  && (x.Status == WorkflowRunStatus.Pending
                      || x.Status == WorkflowRunStatus.Running
-                     || x.Status == WorkflowRunStatus.CompletedAwaitingValidation),
+                     || x.Status == WorkflowRunStatus.Completed),
             ct);
 
         if (hasBlockingRuns)

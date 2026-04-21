@@ -982,7 +982,7 @@
                             <MudPaper Class="drawer-content-block" Elevation="0">
                                 <MudText Typo="Typo.subtitle2" Class="mb-2">Requirement decision</MudText>
                                 <MudText Typo="Typo.body2" Class="mb-2">
-                                    All workflow steps are completed. You can now commit the requirement or cancel it.
+                                    The workflow result is ready for a final decision.
                                 </MudText>
                                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
                                     <MudButton Size="Size.Small"
@@ -2165,34 +2165,31 @@
     }
 
     private bool CanAnalyze(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+        => (string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(requirement.Status, "Analyze", StringComparison.OrdinalIgnoreCase))
            && !HasBlockingRun(requirement.Id, null, "analyze-request");
 
     private bool CanDesign(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Analyzed", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(requirement.Status, "Design", StringComparison.OrdinalIgnoreCase)
            && !HasBlockingRun(requirement.Id, null, "design-solution-change");
 
     private bool CanPlan(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Designed", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(requirement.Status, "Plan", StringComparison.OrdinalIgnoreCase)
            && !HasBlockingRun(requirement.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow requirement)
-        => string.Equals(requirement.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
-           && !HasAnyBlockingRun(requirement.Id);
+        => false;
 
     private bool CanCancelRequirement(RequirementRow requirement)
-        => string.Equals(requirement.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
-           && !HasAnyBlockingRun(requirement.Id);
+        => false;
 
     private bool ShowRequirementDecisionActions(RequirementStageCard card)
-        => string.Equals(card.LaneKey, LaneKeys.Requirement, StringComparison.OrdinalIgnoreCase)
-           && string.Equals(card.Requirement.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
-           && !HasAnyBlockingRun(card.Requirement.Id);
+        => false;
 
     private bool CanImplement(BacklogRow backlogItem)
     {
         if (backlogItem.RequirementId.HasValue
-            && !string.Equals(GetRequirementStatus(backlogItem.RequirementId), "Planned", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(GetRequirementStatus(backlogItem.RequirementId), "Implement", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -2235,6 +2232,9 @@
 
     private bool HasAnyBlockingRun(Guid requirementId)
         => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+
+    private bool HasRunningRun(Guid requirementId)
+        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 2);
 
     private static bool CanViewWorkflowOutput(WorkflowRunDetail? detail)
         => detail?.HasOutputPayload == true;
@@ -2327,7 +2327,7 @@
             var response = await client.PostAsJsonAsync("api/workflow-runs/cancel", new
             {
                 WorkflowRunId = workflowRunId,
-                TerminateRequirementLifecycle = false,
+                TerminateRequirementLifecycle = true,
                 Reason = "Cancelled from cockpit"
             });
 
@@ -2355,14 +2355,14 @@
             3 => "Validated",
             4 => "Error",
             5 => "Cancelled",
-            6 => "Awaiting Validation",
+            6 => "Completed",
             _ => "Unknown"
         };
 
     private static string HumanizeRequirementStatus(string status)
         => status.Trim() switch
         {
-            var value when string.Equals(value, "PendingCommit", StringComparison.OrdinalIgnoreCase) => "Pending Commit",
+            var value when string.Equals(value, "Documentation", StringComparison.OrdinalIgnoreCase) => "Documentation",
             var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => "Completed",
             var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => "Cancelled",
             _ => string.Concat(status.Select((ch, index) => index > 0 && char.IsUpper(ch) ? $" {ch}" : ch.ToString())).Trim()
@@ -2384,14 +2384,14 @@
         return status.Trim() switch
         {
             var value when string.Equals(value, "Pending", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Analyzed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Designed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Planned", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Implemented", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Tested", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Reviewed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "Delivered", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
-            var value when string.Equals(value, "PendingCommit", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Analyze", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Design", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Plan", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Implement", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Test", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Review", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Deliver", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, "Documentation", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Canceled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
             var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,

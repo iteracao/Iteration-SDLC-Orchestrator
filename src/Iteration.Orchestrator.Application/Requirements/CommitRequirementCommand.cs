@@ -23,14 +23,14 @@ public sealed class CommitRequirementHandler
         var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == command.RequirementId, ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.PendingCommit, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Documentation, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Requirement must be in 'PendingCommit' status before it can be committed.");
+            throw new InvalidOperationException("Requirement must be in 'Documentation' status before it can be committed.");
         }
 
         if (await _workflowLifecycle.HasBlockingRunsAsync(requirement.Id, ct))
         {
-            throw new InvalidOperationException("Requirement cannot be committed while it has pending, running, or awaiting-validation workflow runs.");
+            throw new InvalidOperationException("Requirement cannot be committed while it has pending, running, or completed workflow runs.");
         }
 
         requirement.Commit();

@@ -572,30 +572,30 @@ else
     }
 
     private bool CanAnalyze(RequirementRow row)
-        => string.Equals(row.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+        => (string.Equals(row.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(row.Status, "Analyze", StringComparison.OrdinalIgnoreCase))
             && !HasBlockingRun(row.Id, null, "analyze-request");
 
     private bool CanDesign(RequirementRow row)
-        => string.Equals(row.Status, "Analyzed", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(row.Status, "Design", StringComparison.OrdinalIgnoreCase)
             && !HasBlockingRun(row.Id, null, "design-solution-change");
 
     private bool CanPlan(RequirementRow row)
-        => string.Equals(row.Status, "Designed", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(row.Status, "Plan", StringComparison.OrdinalIgnoreCase)
             && !HasBlockingRun(row.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow row)
-        => string.Equals(row.Status, "PendingCommit", StringComparison.OrdinalIgnoreCase)
-            && !HasAnyBlockingRun(row.Id);
+        => false;
 
     private bool CanCancelRequirement(RequirementRow row)
         => !string.Equals(row.Status, "Completed", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(row.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
-            && !HasAnyBlockingRun(row.Id);
+            && !HasRunningRun(row.Id);
 
     private bool CanImplement(BacklogRow row)
     {
         if (row.RequirementId.HasValue
-            && !string.Equals(GetRequirementStatus(row.RequirementId), "Planned", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(GetRequirementStatus(row.RequirementId), "Implement", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -631,6 +631,9 @@ else
     private bool HasAnyBlockingRun(Guid requirementId)
         => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
 
+    private bool HasRunningRun(Guid requirementId)
+        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 2);
+
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
 
@@ -646,7 +649,7 @@ else
             response.EnsureSuccessStatusCode();
 
             _formSeverity = Severity.Success;
-            _formMessage = "Requirement committed.";
+            _formMessage = "Requirement completed.";
             await LoadAsync();
         }
         catch (Exception ex)
@@ -723,7 +726,7 @@ else
             var response = await client.PostAsJsonAsync("api/workflow-runs/cancel", new
             {
                 WorkflowRunId = workflowRunId,
-                TerminateRequirementLifecycle = false,
+                TerminateRequirementLifecycle = true,
                 Reason = "Cancelled from cockpit"
             });
             response.EnsureSuccessStatusCode();
@@ -751,7 +754,7 @@ else
             3 => "Validated",
             4 => "Error",
             5 => "Cancelled",
-            6 => "Awaiting Validation",
+            6 => "Completed",
             _ => "Unknown"
         };
 

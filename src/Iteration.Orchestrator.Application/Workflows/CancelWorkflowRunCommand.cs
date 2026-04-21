@@ -35,7 +35,7 @@ public sealed class CancelWorkflowRunHandler
         var previousStatus = run.Status;
         run.Cancel(BuildCancelledStage(run.CurrentStage), command.Reason);
 
-        if (run.RequirementId.HasValue && command.TerminateRequirementLifecycle)
+        if (run.RequirementId.HasValue)
         {
             var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == run.RequirementId.Value, ct)
                 ?? throw new InvalidOperationException("Requirement not found for workflow run.");
@@ -48,14 +48,7 @@ public sealed class CancelWorkflowRunHandler
             var backlogItem = await _db.BacklogItems.FirstOrDefaultAsync(x => x.Id == run.BacklogItemId.Value, ct)
                 ?? throw new InvalidOperationException("Backlog item not found for workflow run.");
 
-            if (command.TerminateRequirementLifecycle)
-            {
-                backlogItem.MarkCanceled();
-            }
-            else if (previousStatus == WorkflowRunStatus.CompletedAwaitingValidation)
-            {
-                backlogItem.ResetToNotImplemented();
-            }
+            backlogItem.MarkCanceled();
         }
 
         await _db.SaveChangesAsync(ct);

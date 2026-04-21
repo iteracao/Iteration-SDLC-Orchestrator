@@ -199,7 +199,7 @@ public sealed class SetupSolutionHandler
         taskRun.Start();
         taskRun.Succeed(outputPayload);
         run.Start("solution-setup");
-        run.CompleteAwaitingValidation("setup-completed-awaiting-validation");
+        run.Complete("setup-completed-awaiting-validation");
         run.Validate("setup-completed-validated");
 
         await SaveArtifactsAsync(run.Id, inputPayload, outputPayload, ct);

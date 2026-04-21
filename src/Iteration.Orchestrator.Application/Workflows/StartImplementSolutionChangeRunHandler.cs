@@ -66,9 +66,9 @@ public sealed class StartImplementSolutionChangeRunHandler
         var requirement = await _db.Requirements.FindAsync([backlogItem.RequirementId.Value], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Planned, StringComparison.OrdinalIgnoreCase))
+        if (!WorkflowLifecycleCatalog.CanStartWorkflow("implement-solution-change", requirement.Status))
         {
-            throw new InvalidOperationException("Requirement must be in 'Planned' status before implementation can start.");
+            throw new InvalidOperationException("Requirement must be in a valid status before implementation can start.");
         }
 
         await _workflowLifecycle.EnsureNoBlockingRunAsync(requirement.Id, "implement-solution-change", backlogItem.Id, ct);
@@ -91,14 +91,14 @@ public sealed class StartImplementSolutionChangeRunHandler
         var planRun = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == backlogItem.PlanWorkflowRunId.Value, ct)
             ?? throw new InvalidOperationException("Planning workflow run not found for backlog item.");
 
-        if (planRun.Status != WorkflowRunStatus.CompletedValidated)
+        if (planRun.Status != WorkflowRunStatus.Validated)
         {
             throw new InvalidOperationException("Planning workflow must be validated before implementation can start.");
         }
 
         var workflow = await _config.GetWorkflowAsync("implement-solution-change", ct);
         var run = new WorkflowRun(requirement.Id, backlogItem.Id, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.AttachWorkflowRun(run.Id);
+        requirement.AdvanceLifecycle(run.Id, WorkflowLifecycleCatalog.GetWorkflowRequirementState("implement-solution-change")!);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -242,7 +242,7 @@ public sealed class StartImplementSolutionChangeRunHandler
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, requirement.Id, backlogItem.Id, run.Id);
 
             backlogItem.MarkAwaitingValidation();
-            run.CompleteAwaitingValidation("implementation-completed-awaiting-validation");
+            run.Complete("implementation-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 

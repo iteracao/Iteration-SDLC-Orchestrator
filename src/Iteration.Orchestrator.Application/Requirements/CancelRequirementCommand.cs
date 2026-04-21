@@ -32,34 +32,21 @@ public sealed class CancelRequirementHandler
             throw new InvalidOperationException("Requirement is already finalized.");
         }
 
-        if (await _workflowLifecycle.HasBlockingRunsAsync(requirement.Id, ct))
+        if (await _workflowLifecycle.HasRunningRunAsync(requirement.Id, ct))
         {
-            throw new InvalidOperationException("Requirement cannot be cancelled while it has pending, running, or awaiting-validation workflow runs.");
-        }
-
-        var hasCompletedWorkflowWork = await _db.WorkflowRuns.AnyAsync(
-            x => x.RequirementId == requirement.Id
-                 && (x.Status == WorkflowRunStatus.CompletedAwaitingValidation
-                     || x.Status == WorkflowRunStatus.CompletedValidated),
-            ct);
-        if (!hasCompletedWorkflowWork)
-        {
-            throw new InvalidOperationException("Requirement cannot be cancelled before completed workflow work exists.");
+            throw new InvalidOperationException("Requirement cannot be cancelled while a workflow is running.");
         }
 
         await using var transaction = await _db.BeginTransactionAsync(ct);
 
         requirement.Cancel();
 
-        var backlogItems = await _db.BacklogItems
-            .Where(x => x.RequirementId == requirement.Id)
-            .ToListAsync(ct);
-
-        foreach (var backlogItem in backlogItems)
+        if (requirement.WorkflowRunId.HasValue)
         {
-            if (backlogItem.Status != BacklogItemStatus.Validated && backlogItem.Status != BacklogItemStatus.Canceled)
+            var currentRun = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == requirement.WorkflowRunId.Value, ct);
+            if (currentRun is not null && currentRun.Status != WorkflowRunStatus.Validated && currentRun.Status != WorkflowRunStatus.Cancelled)
             {
-                backlogItem.MarkCanceled();
+                currentRun.Cancel($"{currentRun.CurrentStage}-cancelled", "Requirement cancelled.");
             }
         }
 

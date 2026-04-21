@@ -104,12 +104,6 @@ public sealed class Requirement
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
-    public void MarkPendingCommit(Guid workflowRunId)
-    {
-        WorkflowRunId = workflowRunId;
-        Status = RequirementLifecycleStatus.PendingCommit;
-        UpdatedAtUtc = DateTime.UtcNow;
-    }
 
     public void Commit()
     {

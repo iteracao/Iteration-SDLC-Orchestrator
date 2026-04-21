@@ -47,9 +47,9 @@ public sealed class StartAnalyzeSolutionRunHandler
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        if (!WorkflowLifecycleCatalog.CanStartWorkflow("analyze-request", requirement.Status))
         {
-            throw new InvalidOperationException("Requirement must be in 'Pending' status before analysis can start.");
+            throw new InvalidOperationException("Requirement must be in a valid status before analysis can start.");
         }
 
         await _workflowLifecycle.EnsureNoBlockingRunAsync(requirement.Id, "analyze-request", null, ct);
@@ -57,7 +57,7 @@ public sealed class StartAnalyzeSolutionRunHandler
         var workflow = await _config.GetWorkflowAsync("analyze-request", ct);
 
         var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.AttachWorkflowRun(run.Id);
+        requirement.AdvanceLifecycle(run.Id, WorkflowLifecycleCatalog.GetWorkflowRequirementState("analyze-request")!);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -162,7 +162,7 @@ public sealed class StartAnalyzeSolutionRunHandler
             _db.AnalysisReports.Add(report);
             PersistRequirementAnalysis(result, requirement, run.Id);
 
-            run.CompleteAwaitingValidation("analysis-completed-awaiting-validation");
+            run.Complete("analysis-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 

@@ -47,9 +47,9 @@ public sealed class StartDesignSolutionRunHandler
         var requirement = await _db.Requirements.FindAsync([command.RequirementId], ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Analyzed, StringComparison.OrdinalIgnoreCase))
+        if (!WorkflowLifecycleCatalog.CanStartWorkflow("design-solution-change", requirement.Status))
         {
-            throw new InvalidOperationException("Requirement must be in 'Analyzed' status before design can start.");
+            throw new InvalidOperationException("Requirement must be in a valid status before design can start.");
         }
 
         var solution = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == requirement.TargetSolutionId, ct)
@@ -60,7 +60,7 @@ public sealed class StartDesignSolutionRunHandler
         var workflow = await _config.GetWorkflowAsync("design-solution-change", ct);
 
         var run = new WorkflowRun(requirement.Id, null, solution.Id, workflow.Code, command.RequestedBy);
-        requirement.AttachWorkflowRun(run.Id);
+        requirement.AdvanceLifecycle(run.Id, WorkflowLifecycleCatalog.GetWorkflowRequirementState("design-solution-change")!);
 
         _db.WorkflowRuns.Add(run);
         await _db.SaveChangesAsync(ct);
@@ -190,7 +190,7 @@ public sealed class StartDesignSolutionRunHandler
             PersistGeneratedOpenQuestions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
             PersistGeneratedDecisions(result, requirement.TargetSolutionId, requirement.Id, run.Id);
 
-            run.CompleteAwaitingValidation("solution-design-completed-awaiting-validation");
+            run.Complete("solution-design-completed-awaiting-validation");
 
             await _db.SaveChangesAsync(ct);
 

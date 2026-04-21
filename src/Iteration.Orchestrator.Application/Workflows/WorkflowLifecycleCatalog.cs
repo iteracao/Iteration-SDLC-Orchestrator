@@ -6,60 +6,86 @@ namespace Iteration.Orchestrator.Application.Workflows;
 public static class WorkflowLifecycleCatalog
 {
     public static bool IsRequirementWorkflow(string workflowCode)
-        => GetValidatedRequirementStatus(workflowCode) is not null;
+        => GetWorkflowRequirementState(workflowCode) is not null;
+
+    public static string? GetWorkflowRequirementState(string workflowCode)
+        => workflowCode switch
+        {
+            "analyze-request" => RequirementLifecycleStatus.Analyze,
+            "design-solution-change" => RequirementLifecycleStatus.Design,
+            "plan-implementation" => RequirementLifecycleStatus.Plan,
+            "implement-solution-change" => RequirementLifecycleStatus.Implement,
+            "test-solution-change" => RequirementLifecycleStatus.Test,
+            "review-implementation" => RequirementLifecycleStatus.Review,
+            "deliver-solution-change" => RequirementLifecycleStatus.Deliver,
+            "update-solution-history" => RequirementLifecycleStatus.Documentation,
+            _ => null
+        };
 
     public static string? GetRequiredRequirementStatus(string workflowCode)
         => workflowCode switch
         {
             "analyze-request" => RequirementLifecycleStatus.Pending,
-            "design-solution-change" => RequirementLifecycleStatus.Analyzed,
-            "plan-implementation" => RequirementLifecycleStatus.Designed,
-            "implement-solution-change" => RequirementLifecycleStatus.Planned,
-            "test-solution-change" => RequirementLifecycleStatus.Implemented,
-            "review-implementation" => RequirementLifecycleStatus.Tested,
-            "deliver-solution-change" => RequirementLifecycleStatus.Reviewed,
-            "update-solution-history" => RequirementLifecycleStatus.Delivered,
+            "design-solution-change" => RequirementLifecycleStatus.Design,
+            "plan-implementation" => RequirementLifecycleStatus.Plan,
+            "implement-solution-change" => RequirementLifecycleStatus.Implement,
+            "test-solution-change" => RequirementLifecycleStatus.Test,
+            "review-implementation" => RequirementLifecycleStatus.Review,
+            "deliver-solution-change" => RequirementLifecycleStatus.Deliver,
+            "update-solution-history" => RequirementLifecycleStatus.Documentation,
             _ => null
         };
 
-    public static string? GetValidatedRequirementStatus(string workflowCode)
+    public static bool CanStartWorkflow(string workflowCode, string requirementStatus)
+    {
+        var normalized = RequirementLifecycleStatus.Normalize(requirementStatus);
+        return workflowCode switch
+        {
+            "analyze-request" => normalized is RequirementLifecycleStatus.Pending or RequirementLifecycleStatus.Analyze,
+            _ => string.Equals(normalized, GetRequiredRequirementStatus(workflowCode), StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    public static string? GetNextRequirementStatusAfterValidation(string workflowCode)
         => workflowCode switch
         {
-            "analyze-request" => RequirementLifecycleStatus.Analyzed,
-            "design-solution-change" => RequirementLifecycleStatus.Designed,
-            "plan-implementation" => RequirementLifecycleStatus.Planned,
-            "implement-solution-change" => RequirementLifecycleStatus.Implemented,
-            "test-solution-change" => RequirementLifecycleStatus.Tested,
-            "review-implementation" => RequirementLifecycleStatus.Reviewed,
-            "deliver-solution-change" => RequirementLifecycleStatus.Delivered,
-            "update-solution-history" => RequirementLifecycleStatus.PendingCommit,
+            "analyze-request" => RequirementLifecycleStatus.Design,
+            "design-solution-change" => RequirementLifecycleStatus.Plan,
+            "plan-implementation" => RequirementLifecycleStatus.Implement,
+            "implement-solution-change" => RequirementLifecycleStatus.Test,
+            "test-solution-change" => RequirementLifecycleStatus.Review,
+            "review-implementation" => RequirementLifecycleStatus.Deliver,
+            "deliver-solution-change" => RequirementLifecycleStatus.Documentation,
+            "update-solution-history" => RequirementLifecycleStatus.Completed,
             _ => null
         };
 
     public static bool IsBlockingStatus(WorkflowRunStatus status)
         => status is WorkflowRunStatus.Pending
             or WorkflowRunStatus.Running
-            or WorkflowRunStatus.CompletedAwaitingValidation;
+            or WorkflowRunStatus.Completed;
 
     public static bool CanValidate(WorkflowRunStatus status)
-        => status == WorkflowRunStatus.CompletedAwaitingValidation;
+        => status == WorkflowRunStatus.Completed;
 
     public static bool CanCancel(WorkflowRunStatus status)
         => status is WorkflowRunStatus.Pending
-            or WorkflowRunStatus.Running
-            or WorkflowRunStatus.CompletedAwaitingValidation
+            or WorkflowRunStatus.Completed
             or WorkflowRunStatus.Error;
 
     public static bool IsActive(WorkflowRunStatus status)
         => status is WorkflowRunStatus.Pending or WorkflowRunStatus.Running;
 
+    public static bool IsRunning(WorkflowRunStatus status)
+        => status == WorkflowRunStatus.Running;
+
     public static string BuildBlockingRunMessage(string workflowCode)
         => workflowCode switch
         {
-            "analyze-request" => "Analysis already has a pending, running, or awaiting-validation run.",
-            "design-solution-change" => "Design already has a pending, running, or awaiting-validation run.",
-            "plan-implementation" => "Planning already has a pending, running, or awaiting-validation run.",
-            "implement-solution-change" => "Implementation already has a pending, running, or awaiting-validation run for this backlog item.",
-            _ => "A workflow run for this stage is already pending, running, or awaiting validation."
+            "analyze-request" => "Analysis already has a pending, running, or completed run awaiting a decision.",
+            "design-solution-change" => "Design already has a pending, running, or completed run awaiting a decision.",
+            "plan-implementation" => "Planning already has a pending, running, or completed run awaiting a decision.",
+            "implement-solution-change" => "Implementation already has a pending, running, or completed run awaiting a decision for this backlog item.",
+            _ => "A workflow run for this stage is already pending, running, or completed and awaiting a decision."
         };
 }
