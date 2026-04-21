@@ -94,7 +94,7 @@ else
                                         Plan
                                     </MudButton>
                                     <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="_mutatingRequirementId == context.Id || !CanCommitRequirement(context)" OnClick="() => CommitRequirementAsync(context.Id)">
-                                        Commit
+                                        Validate
                                     </MudButton>
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="_mutatingRequirementId == context.Id || !CanCancelRequirement(context)" OnClick="() => CancelRequirementAsync(context.Id)">
                                         Cancel
@@ -585,7 +585,7 @@ else
             && !HasBlockingRun(row.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow row)
-        => false;
+        => IsAwaitingRequirementDecision(row);
 
     private bool CanCancelRequirement(RequirementRow row)
         => !string.Equals(row.Status, "Completed", StringComparison.OrdinalIgnoreCase)
@@ -637,6 +637,23 @@ else
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
 
+    private bool IsAwaitingRequirementDecision(RequirementRow row)
+    {
+        if (!string.Equals(row.Status, "Documentation", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var latestRun = _runs
+            .Where(x => x.RequirementId == row.Id)
+            .OrderByDescending(x => x.StartedUtc)
+            .FirstOrDefault();
+
+        return latestRun is not null
+            && string.Equals(latestRun.WorkflowCode, "update-solution-history", StringComparison.OrdinalIgnoreCase)
+            && latestRun.Status == 3;
+    }
+
     private async Task CommitRequirementAsync(Guid requirementId)
     {
         _mutatingRequirementId = requirementId;
@@ -649,7 +666,7 @@ else
             response.EnsureSuccessStatusCode();
 
             _formSeverity = Severity.Success;
-            _formMessage = "Requirement completed.";
+            _formMessage = "Requirement validated and completed.";
             await LoadAsync();
         }
         catch (Exception ex)

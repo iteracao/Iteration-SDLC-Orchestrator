@@ -878,7 +878,7 @@
                                         </MudButton>
                                     }
 
-                                    @if (CanCancelRequirement(_activeCard.Requirement))
+                                    @if (!ShowRequirementDecisionActions(_activeCard) && CanCancelRequirement(_activeCard.Requirement))
                                     {
                                         <MudButton Size="Size.Small"
                                                    Variant="Variant.Outlined"
@@ -969,7 +969,7 @@
                             <MudPaper Class="drawer-content-block" Elevation="0">
                                 <MudText Typo="Typo.subtitle2" Class="mb-2">Requirement decision</MudText>
                                 <MudText Typo="Typo.body2" Class="mb-2">
-                                    The workflow result is ready for a final decision.
+                                    Documentation is validated. A final requirement decision is still needed to complete or roll back this requirement.
                                 </MudText>
                                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
                                     <MudButton Size="Size.Small"
@@ -977,7 +977,7 @@
                                                Color="Color.Success"
                                                Disabled="!CanCommitRequirement(_activeCard.Requirement) || _mutatingRequirementId == _activeCard.Requirement.Id"
                                                OnClick="() => CommitRequirementAsync(_activeCard.Requirement.Id)">
-                                        Commit Requirement
+                                        Validate Requirement
                                     </MudButton>
 
                                     <MudButton Size="Size.Small"
@@ -2257,7 +2257,7 @@
            && !HasBlockingRun(requirement.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow requirement)
-        => false;
+        => IsAwaitingRequirementDecision(requirement);
 
     private bool CanDeleteRequirement(RequirementRow requirement)
         => string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
@@ -2271,7 +2271,8 @@
             && !HasRunningRun(requirement.Id);
 
     private bool ShowRequirementDecisionActions(RequirementStageCard card)
-        => false;
+        => string.Equals(card.LaneKey, LaneKeys.Requirement, StringComparison.OrdinalIgnoreCase)
+            && IsAwaitingRequirementDecision(card.Requirement);
 
     private bool CanImplement(BacklogRow backlogItem)
     {
@@ -2343,16 +2344,9 @@
             return "Pending";
         }
 
-        var latestRun = _runs
-            .Where(x => x.RequirementId == requirement.Id)
-            .OrderByDescending(x => x.StartedUtc)
-            .FirstOrDefault();
-
-        if (string.Equals(normalizedStatus, "Documentation", StringComparison.OrdinalIgnoreCase)
-            && latestRun is not null
-            && latestRun.Status == 3)
+        if (IsAwaitingRequirementDecision(requirement))
         {
-            return "Validated";
+            return "Awaiting Validation";
         }
 
         return HumanizeRequirementStatus(normalizedStatus);
@@ -2366,8 +2360,32 @@
             return VisualStatePalette.Success;
         }
 
+        if (string.Equals(label, "Awaiting Validation", StringComparison.OrdinalIgnoreCase))
+        {
+            return VisualStatePalette.Waiting;
+        }
+
         return GetRequirementVisualState(requirement.Status);
     }
+
+    private bool IsAwaitingRequirementDecision(RequirementRow requirement)
+    {
+        if (!string.Equals(requirement.Status, "Documentation", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var latestRun = GetLatestRequirementRun(requirement.Id);
+        return latestRun is not null
+            && string.Equals(latestRun.WorkflowCode, "update-solution-history", StringComparison.OrdinalIgnoreCase)
+            && latestRun.Status == 3;
+    }
+
+    private WorkflowRunRow? GetLatestRequirementRun(Guid requirementId)
+        => _runs
+            .Where(x => x.RequirementId == requirementId)
+            .OrderByDescending(x => x.StartedUtc)
+            .FirstOrDefault();
 
     private async Task DeleteRequirementAsync(Guid requirementId)
     {
