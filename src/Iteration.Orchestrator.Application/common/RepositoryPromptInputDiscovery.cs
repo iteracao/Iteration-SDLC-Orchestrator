@@ -101,6 +101,26 @@ public static class RepositoryPromptInputDiscovery
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+
+    public static IReadOnlyList<string> GetPromptContextFiles(
+        string repositoryPath,
+        string targetCode,
+        IReadOnlyList<string> visibleFiles)
+    {
+        var srcFiles = visibleFiles
+            .Where(path => path.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+
+        var solutionDocs = GetSolutionDocumentationFiles(repositoryPath, targetCode)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+
+        return srcFiles
+            .Concat(solutionDocs)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static string FormatPhysicalPathList(string repositoryPath, IReadOnlyList<string> visibleFiles)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath))

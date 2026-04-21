@@ -49,15 +49,19 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 ct);
             var repositoryStructureFiles = RepositoryPromptInputDiscovery.FilterExcludedStructurePaths(visibleRepositoryFiles);
             var inspectableFiles = RepositoryPromptInputDiscovery.GetInspectableTextFiles(visibleRepositoryFiles);
+            var promptContextFiles = RepositoryPromptInputDiscovery.GetPromptContextFiles(
+                request.RepositoryPath,
+                target.Code,
+                visibleRepositoryFiles);
 
-            if (repositoryStructureFiles.Count == 0)
+            if (promptContextFiles.Count == 0)
             {
-                throw new InvalidOperationException("Repository path enumeration returned no visible files for analysis.");
+                throw new InvalidOperationException("Repository path enumeration returned no prompt context files for analysis.");
             }
 
             var repositoryPathList = RepositoryPromptInputDiscovery.FormatPhysicalPathList(
                 request.RepositoryPath,
-                repositoryStructureFiles);
+                promptContextFiles);
             var phases = new[]
             {
                 new FileAwareAgentRunner.AgentPhaseDefinition(
@@ -71,7 +75,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     Prompt: BuildRepositoryStructurePrompt(repositoryPathList),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Provide the deterministic full physical repository path list filtered by .gitignore."),
+                    PurposeSummary: "Provide the deterministic full physical path list for source files and solution documentation."),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
@@ -149,14 +153,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine();
         sb.AppendLine("Execution mode:");
         sb.AppendLine("- This analyze workflow runs as a three-prompt sequence.");
-        sb.AppendLine("- Prompt 1 and Prompt 2 are context/bootstrap prompts and should receive concise markdown responses only.");
-        sb.AppendLine("- Prompt 3 is the final evidence-gathering prompt.");
-        sb.AppendLine("- In Prompt 3, use tool calls when you need repository evidence, then finish with a plain Markdown report.");
+        sb.AppendLine("- Prompt 1 is behavior only.");
+        sb.AppendLine("- Prompt 2 is context only.");
+        sb.AppendLine("- Prompt 3 is the analysis step.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
-        sb.AppendLine("- Do not return JSON contracts, schemas, envelopes, or code-like payloads.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed tool actions are read_file, get_file, list_repo_tree, and search_repo.");
-        sb.AppendLine("- The final Prompt 3 response must be plain Markdown suitable to save directly as analysis-report.md.");
+        sb.AppendLine("- Allowed tool actions are get_file, list_repo_tree, and search_repo.");
         return sb.ToString().TrimEnd();
     }
 
@@ -186,10 +188,6 @@ Execution flow:
 - Prompt 2: repository and documentation awareness
 - Prompt 3: requirement analysis and final report
 
-Final output (Prompt 3 only):
-- A plain Markdown analysis report
-- Suitable to be saved directly as analysis-report.md
-
 For this prompt:
 Return a very short Markdown note with:
 
@@ -201,19 +199,14 @@ Return a very short Markdown note with:
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: provide repository and documentation awareness from the real repository file list only.");
-        sb.AppendLine("This is a full physical path list prompt only.");
-        sb.AppendLine("Do not infer code behavior from file names alone.");
-        sb.AppendLine("Do not request file contents in this prompt.");
-        sb.AppendLine("The list below is a deterministic enumeration of full physical repository paths from disk, filtered by .gitignore.");
-        sb.AppendLine("Additional exclusions applied for this path-list prompt:");
-        sb.AppendLine("- `AI\\Contracts\\**`");
-        sb.AppendLine("- `AI\\Framework\\**`");
+        sb.AppendLine("Purpose: provide the real full physical path list for source files and solution documentation.");
+        sb.AppendLine("The list below is a deterministic enumeration of full physical paths from disk.");
+        sb.AppendLine("It includes:");
+        sb.AppendLine("- `src/**`");
+        sb.AppendLine("- target solution documentation files");
         sb.AppendLine();
-        sb.AppendLine("Return a short Markdown note with these sections only:");
-        sb.AppendLine("- `## Likely Areas To Inspect`");
-        sb.AppendLine("- `## Search Starting Points`");
-        sb.AppendLine("- `## Path-List Caveats`");
+        sb.AppendLine("Use this context in the next step.");
+        sb.AppendLine("No response is required for this step.");
         sb.AppendLine();
         sb.AppendLine(repositoryPathList);
         return sb.ToString().TrimEnd();
@@ -223,70 +216,23 @@ Return a very short Markdown note with:
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 3 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: investigate the requirement with targeted repository evidence gathering and return the final Markdown analysis report.");
+        sb.AppendLine("Analyze the requirement against the repository and provided solution documentation, then return the final analysis report in Markdown.");
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TO ANALYZE");
         sb.AppendLine($"- Title: {request.RequirementTitle}");
         sb.AppendLine("- Description:");
         sb.AppendLine(request.RequirementDescription);
         sb.AppendLine();
-        sb.AppendLine("TOOL USAGE INSTRUCTIONS");
+        sb.AppendLine("TOOLS AVAILABLE");
+        sb.AppendLine("- `search_repo` to find relevant repository content.");
+        sb.AppendLine("- `list_repo_tree` to inspect repository folders when useful.");
+        sb.AppendLine("- `get_file` to inspect file contents by full physical path.");
+        sb.AppendLine();
+        sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- Use the repository structure already provided to identify likely impacted areas.");
         sb.AppendLine("- Use repository tools to inspect relevant files before concluding.");
-        sb.AppendLine("- Prefer targeted exploration, not random reading.");
-        sb.AppendLine("- Do not try to read everything.");
-        sb.AppendLine("- Use `search_repo` to narrow likely candidates first.");
-        sb.AppendLine("- Use `list_repo_tree` when you need to inspect a specific folder more closely.");
-        sb.AppendLine("- Use `read_file` or `get_file` to confirm implementation details in the most relevant files.");
-        sb.AppendLine("- Do not invent code behavior without reading evidence.");
-        sb.AppendLine("- Be explicit when evidence is incomplete, conflicting, or missing.");
+        sb.AppendLine("- Use `get_file` with full physical paths to inspect implementation details.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
-        sb.AppendLine();
-        sb.AppendLine("FINAL RESPONSE RULES");
-        sb.AppendLine("- Return plain Markdown only.");
-        sb.AppendLine("- Do not return JSON.");
-        sb.AppendLine("- Do not wrap the report in markdown fences.");
-        sb.AppendLine("- The final Markdown is saved directly as `analysis-report.md`.");
-        sb.AppendLine("- Ground claims in the repository files and context already provided.");
-        sb.AppendLine();
-        sb.AppendLine("BOOTSTRAP MARKDOWN TEMPLATE");
-        sb.AppendLine(BuildReportTemplate());
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string BuildReportTemplate()
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("# Analysis Report");
-        sb.AppendLine();
-        sb.AppendLine("## Requirement");
-        sb.AppendLine("- Title: <requirement title>");
-        sb.AppendLine("- Description: <requirement description>");
-        sb.AppendLine();
-        sb.AppendLine("## Executive Summary");
-        sb.AppendLine("<2-4 concise paragraphs summarizing what the requirement appears to mean in the current system and the most important findings.>");
-        sb.AppendLine();
-        sb.AppendLine("## Current System Evidence");
-        sb.AppendLine("- <grounded observation with file path>");
-        sb.AppendLine();
-        sb.AppendLine("## Likely Impacted Areas");
-        sb.AppendLine("- <area and why>");
-        sb.AppendLine();
-        sb.AppendLine("## Risks And Constraints");
-        sb.AppendLine("- <risk or constraint>");
-        sb.AppendLine();
-        sb.AppendLine("## Assumptions");
-        sb.AppendLine("- <assumption>");
-        sb.AppendLine();
-        sb.AppendLine("## Unknowns And Evidence Gaps");
-        sb.AppendLine("- <unknown or missing evidence>");
-        sb.AppendLine();
-        sb.AppendLine("## Recommended Next Workflow");
-        sb.AppendLine("- <likely next workflow code and why>");
-        sb.AppendLine();
-        sb.AppendLine("## Evidence Reviewed");
-        sb.AppendLine("- <file path>");
         return sb.ToString().TrimEnd();
     }
 
