@@ -59,9 +59,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 throw new InvalidOperationException("Repository path enumeration returned no prompt context files for analysis.");
             }
 
-            var repositoryPathList = RepositoryPromptInputDiscovery.FormatPhysicalPathList(
-                request.RepositoryPath,
-                promptContextFiles);
             var phases = new[]
             {
                 new FileAwareAgentRunner.AgentPhaseDefinition(
@@ -73,7 +70,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
-                    Prompt: BuildRepositoryStructurePrompt(repositoryPathList),
+                    Prompt: BuildRepositoryStructurePrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Provide the deterministic full physical path list for source files and solution documentation.",
@@ -107,7 +104,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 instructions,
                 phases,
                 request.RepositoryPath,
-                inspectableFiles,
+                promptContextFiles,
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
@@ -161,7 +158,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Prompt 3 is the analysis step.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed tool action is get_file.");
+        sb.AppendLine("- Allowed tool actions are find_available_files and get_file.");
         return sb.ToString().TrimEnd();
     }
 
@@ -198,20 +195,15 @@ Return a very short Markdown note with:
 ## Boundaries To Preserve
 """;
 
-    private static string BuildRepositoryStructurePrompt(string repositoryPathList)
+    private static string BuildRepositoryStructurePrompt()
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: provide the real full physical path list for source files and solution documentation.");
-        sb.AppendLine("The list below is a deterministic enumeration of full physical paths from disk.");
-        sb.AppendLine("It includes:");
-        sb.AppendLine("- `src/**`");
-        sb.AppendLine("- target solution documentation files");
+        sb.AppendLine("Purpose: provide repository file access context for the next step.");
         sb.AppendLine();
-        sb.AppendLine("Use this context in the next step.");
+        sb.AppendLine("Repository source files and target solution documentation are available through the tool `find_available_files`.");
+        sb.AppendLine("That tool returns exact full physical paths for files available in this run.");
         sb.AppendLine("No response is required for this step.");
-        sb.AppendLine();
-        sb.AppendLine(repositoryPathList);
         return sb.ToString().TrimEnd();
     }
 
@@ -228,7 +220,8 @@ Return a very short Markdown note with:
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- Use `get_file` with full physical paths from Prompt 2 to inspect file contents when needed.");
+        sb.AppendLine("- Use `find_available_files` to obtain exact full physical paths available for this run.");
+        sb.AppendLine("- Use `get_file` only with an exact full physical path returned by `find_available_files`.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
         return sb.ToString().TrimEnd();
     }

@@ -125,6 +125,7 @@ internal static class FileAwareAgentRunner
         var requiredSolutionPathSet = (requiredSolutionPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var availableFileIndex = BuildAvailableFileIndex(repositoryRoot, allowedPaths);
 
         var pendingMessages = new List<ChatMessage>();
         var state = new AgentExecutionState();
@@ -157,6 +158,7 @@ internal static class FileAwareAgentRunner
                     logs,
                     payloadStore,
                     discoveryTools,
+                    availableFileIndex,
                     pendingMessages,
                     state,
                     ct,
@@ -187,6 +189,7 @@ internal static class FileAwareAgentRunner
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         RepositoryDiscoveryTools? discoveryTools,
+        AvailableFileIndex availableFileIndex,
         List<ChatMessage> pendingMessages,
         AgentExecutionState state,
         CancellationToken ct,
@@ -249,6 +252,16 @@ internal static class FileAwareAgentRunner
                     ];
                     continue;
                 }
+                case "find_available_files":
+                {
+                    var query = toolRequest.Query?.Trim();
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files(query='{query ?? string.Empty}').", ct);
+
+                    var fileListResult = FormatAvailableFiles(availableFileIndex, query);
+                    await logs.AppendBlockAsync(workflowRunId, $"Available files ({phase.Name})", fileListResult, ct);
+                    currentMessages = [CreateToolMessage(fileListResult)];
+                    continue;
+                }
                 case "read_file":
                 case "get_file":
                 {
@@ -258,56 +271,24 @@ internal static class FileAwareAgentRunner
                     }
 
                     var requestedPath = toolRequest.Path.Trim();
-                    var fileRead = ReadFileByPhysicalPath(repositoryRoot, requestedPath);
+                    var fileRead = TryReadFileByPhysicalPath(availableFileIndex, requestedPath);
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_file('{requestedPath}').", ct);
+
+                    if (fileRead is null)
+                    {
+                        var errorResult = $"FILE ERROR\nRequested path is not available for this run or the file does not exist: {requestedPath}\nUse only exact full physical paths returned by find_available_files.";
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File not available for this run.", ct);
+                        currentMessages = [CreateToolMessage(errorResult)];
+                        continue;
+                    }
+
                     state.ReadPaths.Add(fileRead.NormalizedPath);
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_file('{fileRead.FullPath}').", ct);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}.", ct);
 
                     currentMessages =
                     [
                         CreateToolMessage($"FILE CONTENT FOR {fileRead.FullPath}\n{fileRead.Content}")
                     ];
-                    continue;
-                }
-                case "list_repo_tree":
-                case "list_repository_tree":
-                {
-                    if (!phase.AllowRepositoryDiscovery || discoveryTools?.ListRepositoryTreeAsync is null)
-                    {
-                        throw new InvalidOperationException($"Agent requested {normalizedAction}, but repository discovery is not enabled for phase '{phase.Name}'.");
-                    }
-
-                    var scope = NormalizeOptionalPath(toolRequest.Path);
-                    var entries = await discoveryTools.ListRepositoryTreeAsync(scope, ct);
-                    state.RepositoryDiscoveryUsed = true;
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): {normalizedAction}('{scope ?? "."}').", ct);
-
-                    var treeResult = FormatRepositoryTree(entries, scope);
-                    await logs.AppendBlockAsync(workflowRunId, $"Repository tree ({phase.Name})", treeResult, ct);
-                    currentMessages = [CreateToolMessage(treeResult)];
-                    continue;
-                }
-                case "search_repo":
-                case "search_files":
-                {
-                    if (!phase.AllowRepositoryDiscovery || discoveryTools?.SearchRepositoryAsync is null)
-                    {
-                        throw new InvalidOperationException($"Agent requested {normalizedAction}, but repository discovery is not enabled for phase '{phase.Name}'.");
-                    }
-
-                    if (string.IsNullOrWhiteSpace(toolRequest.Query))
-                    {
-                        throw new InvalidOperationException($"Agent requested {normalizedAction} without a valid 'query'.");
-                    }
-
-                    var scope = NormalizeOptionalPath(toolRequest.Path);
-                    var hits = await discoveryTools.SearchRepositoryAsync(toolRequest.Query, scope, ct);
-                    state.RepositoryDiscoveryUsed = true;
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): {normalizedAction}(query='{toolRequest.Query}', path='{scope ?? "."}').", ct);
-
-                    var searchResult = FormatSearchHits(toolRequest.Query, hits, scope);
-                    await logs.AppendBlockAsync(workflowRunId, $"Repository search ({phase.Name})", searchResult, ct);
-                    currentMessages = [CreateToolMessage(searchResult)];
                     continue;
                 }
                 case "save_workflow_output":
@@ -492,24 +473,83 @@ internal static class FileAwareAgentRunner
     private static string? NormalizeOptionalPath(string? relativePath)
         => string.IsNullOrWhiteSpace(relativePath) ? null : NormalizePath(relativePath);
 
-    private static FileReadResult ReadFileByPhysicalPath(string repositoryRoot, string requestedPath)
+    private static AvailableFileIndex BuildAvailableFileIndex(string repositoryRoot, IReadOnlyCollection<string> allowedPaths)
     {
-        var fullRoot = Path.GetFullPath(repositoryRoot)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var files = new List<string>();
+        var normalizedMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var allowedPath in allowedPaths)
+        {
+            if (string.IsNullOrWhiteSpace(allowedPath))
+            {
+                continue;
+            }
+
+            var fullPath = Path.IsPathRooted(allowedPath)
+                ? Path.GetFullPath(allowedPath)
+                : Path.GetFullPath(Path.Combine(repositoryRoot, allowedPath));
+
+            var normalizedFullPath = NormalizePath(fullPath);
+            if (normalizedMap.ContainsKey(normalizedFullPath))
+            {
+                continue;
+            }
+
+            files.Add(fullPath);
+            normalizedMap[normalizedFullPath] = fullPath;
+        }
+
+        files.Sort(StringComparer.OrdinalIgnoreCase);
+        return new AvailableFileIndex(files, normalizedMap);
+    }
+
+    private static FileReadResult? TryReadFileByPhysicalPath(AvailableFileIndex availableFileIndex, string requestedPath)
+    {
         var fullPath = Path.GetFullPath(requestedPath);
-        var rootPrefix = fullRoot + Path.DirectorySeparatorChar;
+        var normalizedFullPath = NormalizePath(fullPath);
 
-        if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        if (!availableFileIndex.NormalizedFullPaths.TryGetValue(normalizedFullPath, out var allowedFullPath))
         {
-            throw new InvalidOperationException($"Invalid path requested: {requestedPath}");
+            return null;
         }
 
-        if (!File.Exists(fullPath))
+        if (!File.Exists(allowedFullPath))
         {
-            throw new InvalidOperationException($"Requested file does not exist: {requestedPath}");
+            return null;
         }
 
-        return new FileReadResult(fullPath, NormalizePath(fullPath), File.ReadAllText(fullPath));
+        return new FileReadResult(allowedFullPath, NormalizePath(allowedFullPath), File.ReadAllText(allowedFullPath));
+    }
+
+    private static string FormatAvailableFiles(AvailableFileIndex availableFileIndex, string? query)
+    {
+        IEnumerable<string> matches = availableFileIndex.FullPaths;
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            matches = matches.Where(path => path.Contains(query, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var items = matches.Take(MaxTreeEntries).ToList();
+        var sb = new StringBuilder();
+        sb.AppendLine($"MATCHES: {items.Count}");
+        sb.AppendLine();
+        for (var i = 0; i < items.Count; i++)
+        {
+            sb.AppendLine($"[{i + 1}] {items[i]}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query) && items.Count == 0)
+        {
+            sb.AppendLine("No matching files were found for this run.");
+        }
+
+        if (availableFileIndex.FullPaths.Count > MaxTreeEntries && string.IsNullOrWhiteSpace(query))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"... truncated to first {MaxTreeEntries} files ...");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases)
@@ -525,7 +565,8 @@ internal static class FileAwareAgentRunner
         sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
         sb.AppendLine("- Do not include markdown fences.");
         sb.AppendLine("- Keep phase summaries concrete and evidence-based.");
-        sb.AppendLine("- Use get_file only with a full physical path from Prompt 2.");
+        sb.AppendLine("- Use find_available_files to obtain exact full physical paths for this run.");
+        sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
 
         if (phase.RequiresSavedOutput)
         {
@@ -643,6 +684,10 @@ internal static class FileAwareAgentRunner
     }
 
     private sealed record FileReadResult(string FullPath, string NormalizedPath, string Content);
+
+    private sealed record AvailableFileIndex(
+        IReadOnlyList<string> FullPaths,
+        IReadOnlyDictionary<string, string> NormalizedFullPaths);
 
     private sealed class ToolRequest
     {
