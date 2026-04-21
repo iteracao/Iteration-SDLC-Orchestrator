@@ -257,8 +257,13 @@ internal static class FileAwareAgentRunner
                     var query = toolRequest.Query?.Trim();
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files(query='{query ?? string.Empty}').", ct);
 
-                    var fileListResult = FormatAvailableFiles(availableFileIndex, query);
-                    await logs.AppendBlockAsync(workflowRunId, $"Available files ({phase.Name})", fileListResult, ct);
+                    var matchingPaths = FindAvailableFiles(availableFileIndex, query);
+                    var fileListResult = FormatAvailableFiles(matchingPaths);
+                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
+                    if (matchingPaths.Count > 0)
+                    {
+                        await logs.AppendBlockAsync(workflowRunId, $"Available files ({phase.Name})", fileListResult, ct);
+                    }
                     currentMessages = [CreateToolMessage(fileListResult)];
                     continue;
                 }
@@ -521,7 +526,7 @@ internal static class FileAwareAgentRunner
         return new FileReadResult(allowedFullPath, NormalizePath(allowedFullPath), File.ReadAllText(allowedFullPath));
     }
 
-    private static string FormatAvailableFiles(AvailableFileIndex availableFileIndex, string? query)
+    private static List<string> FindAvailableFiles(AvailableFileIndex availableFileIndex, string? query)
     {
         IEnumerable<string> matches = availableFileIndex.FullPaths;
         if (!string.IsNullOrWhiteSpace(query))
@@ -529,27 +534,19 @@ internal static class FileAwareAgentRunner
             matches = matches.Where(path => path.Contains(query, StringComparison.OrdinalIgnoreCase));
         }
 
-        var items = matches.Take(MaxTreeEntries).ToList();
-        var sb = new StringBuilder();
-        sb.AppendLine($"MATCHES: {items.Count}");
-        sb.AppendLine();
-        for (var i = 0; i < items.Count; i++)
+        return matches
+            .Take(MaxTreeEntries)
+            .ToList();
+    }
+
+    private static string FormatAvailableFiles(IReadOnlyList<string> fullPaths)
+    {
+        if (fullPaths.Count == 0)
         {
-            sb.AppendLine($"[{i + 1}] {items[i]}");
+            return string.Empty;
         }
 
-        if (!string.IsNullOrWhiteSpace(query) && items.Count == 0)
-        {
-            sb.AppendLine("No matching files were found for this run.");
-        }
-
-        if (availableFileIndex.FullPaths.Count > MaxTreeEntries && string.IsNullOrWhiteSpace(query))
-        {
-            sb.AppendLine();
-            sb.AppendLine($"... truncated to first {MaxTreeEntries} files ...");
-        }
-
-        return sb.ToString().TrimEnd();
+        return string.Join(Environment.NewLine, fullPaths);
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases)
