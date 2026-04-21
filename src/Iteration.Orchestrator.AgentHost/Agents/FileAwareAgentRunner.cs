@@ -74,12 +74,18 @@ internal static class FileAwareAgentRunner
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
         var responseTimeoutSeconds = maxModelResponseSeconds;
+        var session = await agent.CreateSessionAsync(ct);
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
         await logs.AppendBlockAsync(workflowRunId, $"Prompt: {logTitle}", prompt, ct);
         await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
 
-        var rawText = await RunModelWithTimeoutAsync(agent, prompt, responseTimeoutSeconds, ct);
+        var rawText = await RunModelWithTimeoutAsync(
+            agent,
+            [CreateUserMessage(prompt)],
+            session,
+            responseTimeoutSeconds,
+            ct);
 
         await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", rawText, ct);
         return rawText;
@@ -111,6 +117,7 @@ internal static class FileAwareAgentRunner
 
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
+        var session = await agent.CreateSessionAsync(ct);
         var responseTimeoutSeconds = maxModelResponseSeconds;
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
@@ -119,7 +126,7 @@ internal static class FileAwareAgentRunner
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var transcript = new StringBuilder();
+        var pendingMessages = new List<ChatMessage>();
         var state = new AgentExecutionState();
 
         await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
@@ -133,13 +140,15 @@ internal static class FileAwareAgentRunner
             string phaseResult;
             if (phase.Mode == AgentPhaseMode.ContextOnly)
             {
-                await logs.AppendLineAsync(workflowRunId, $"Phase mode ({phase.Name}): ContextOnly. Prompt injected into execution context with no model call.", ct);
+                pendingMessages.Add(CreateUserMessage(phase.Prompt));
+                await logs.AppendLineAsync(workflowRunId, $"Phase mode ({phase.Name}): ContextOnly. Prompt queued into agent conversation context with no model call.", ct);
                 phaseResult = "Context loaded.";
             }
             else
             {
                 phaseResult = await ExecutePhaseAsync(
                     agent,
+                    session,
                     phase,
                     phaseIndex,
                     phases.Count,
@@ -148,7 +157,7 @@ internal static class FileAwareAgentRunner
                     logs,
                     payloadStore,
                     discoveryTools,
-                    transcript,
+                    pendingMessages,
                     state,
                     ct,
                     requiredFrameworkPathSet,
@@ -162,15 +171,6 @@ internal static class FileAwareAgentRunner
             {
                 return phaseResult;
             }
-
-            transcript.AppendLine($"PHASE COMPLETED: {phase.Name}");
-            transcript.AppendLine("--- PHASE PROMPT START ---");
-            transcript.AppendLine(phase.Prompt.Trim());
-            transcript.AppendLine("--- PHASE PROMPT END ---");
-            transcript.AppendLine("--- PHASE SUMMARY START ---");
-            transcript.AppendLine(phaseResult.Trim());
-            transcript.AppendLine("--- PHASE SUMMARY END ---");
-            transcript.AppendLine();
         }
 
         throw new InvalidOperationException("Multi-step agent execution finished without saving a final workflow output.");
@@ -178,6 +178,7 @@ internal static class FileAwareAgentRunner
 
     private static async Task<string> ExecutePhaseAsync(
         AIAgent agent,
+        AgentSession session,
         AgentPhaseDefinition phase,
         int phaseIndex,
         int totalPhases,
@@ -186,7 +187,7 @@ internal static class FileAwareAgentRunner
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         RepositoryDiscoveryTools? discoveryTools,
-        StringBuilder transcript,
+        List<ChatMessage> pendingMessages,
         AgentExecutionState state,
         CancellationToken ct,
         IReadOnlySet<string> requiredFrameworkPathSet,
@@ -195,11 +196,12 @@ internal static class FileAwareAgentRunner
         bool requireRepositoryDiscovery,
         int maxModelResponseSeconds)
     {
-        var currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
+        var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages);
+        pendingMessages.Clear();
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            var rawText = await RunModelWithTimeoutAsync(agent, currentPrompt, maxModelResponseSeconds, ct);
+            var rawText = await RunModelWithTimeoutAsync(agent, currentMessages, session, maxModelResponseSeconds, ct);
             await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
             if (!TryParseToolRequest(rawText, out var toolRequest))
@@ -239,16 +241,12 @@ internal static class FileAwareAgentRunner
                     var inputPayload = await payloadStore.GetInputAsync(workflowRunId, ct);
                     state.WorkflowInputLoaded = true;
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_workflow_input('{workflowRunId}').", ct);
-                    await logs.AppendBlockAsync(workflowRunId, $"Workflow input payload ({phase.Name})", inputPayload.InputPayloadJson, ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {inputPayload.InputPayloadJson.Length}.", ct);
 
-                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR get_workflow_input('{workflowRunId}'):",
+                    currentMessages =
                     [
-                        "--- WORKFLOW INPUT START ---",
-                        inputPayload.InputPayloadJson,
-                        "--- WORKFLOW INPUT END ---"
-                    ]);
-
-                    currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
+                        CreateToolMessage($"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}")
+                    ];
                     continue;
                 }
                 case "read_file":
@@ -265,14 +263,10 @@ internal static class FileAwareAgentRunner
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_file('{fileRead.FullPath}').", ct);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}.", ct);
 
-                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR get_file('{fileRead.FullPath}'):",
+                    currentMessages =
                     [
-                        "--- FILE CONTENT START ---",
-                        fileRead.Content,
-                        "--- FILE CONTENT END ---"
-                    ]);
-
-                    currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
+                        CreateToolMessage($"FILE CONTENT FOR {fileRead.FullPath}\n{fileRead.Content}")
+                    ];
                     continue;
                 }
                 case "list_repo_tree":
@@ -290,9 +284,7 @@ internal static class FileAwareAgentRunner
 
                     var treeResult = FormatRepositoryTree(entries, scope);
                     await logs.AppendBlockAsync(workflowRunId, $"Repository tree ({phase.Name})", treeResult, ct);
-                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR {normalizedAction}('{scope ?? "."}'):", [treeResult]);
-
-                    currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
+                    currentMessages = [CreateToolMessage(treeResult)];
                     continue;
                 }
                 case "search_repo":
@@ -315,41 +307,22 @@ internal static class FileAwareAgentRunner
 
                     var searchResult = FormatSearchHits(toolRequest.Query, hits, scope);
                     await logs.AppendBlockAsync(workflowRunId, $"Repository search ({phase.Name})", searchResult, ct);
-                    AppendToolInteraction(transcript, rawText, $"TOOL RESULT FOR {normalizedAction}(query='{toolRequest.Query}', path='{scope ?? "."}'):", [searchResult]);
-
-                    currentPrompt = BuildPhasePrompt(phase, phaseIndex, totalPhases, transcript.ToString());
+                    currentMessages = [CreateToolMessage(searchResult)];
                     continue;
                 }
                 case "save_workflow_output":
                 {
-                    if (!phase.RequiresSavedOutput)
+                    if (toolRequest.Output is not JsonElement output)
                     {
-                        throw new InvalidOperationException($"Agent attempted to save workflow output during non-final phase '{phase.Name}'.");
-                    }
-
-                    if (toolRequest.Output is null || toolRequest.Output.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
-                    {
-                        throw new InvalidOperationException("Agent requested save_workflow_output without an 'output' object.");
+                        throw new InvalidOperationException("save_workflow_output requires an 'output' object.");
                     }
 
                     await LogIgnoredWorkflowRunIdAsync(toolRequest.WorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
-
-                    EnsureRequiredContextLoaded(
-                        phase.RequireWorkflowInput,
-                        state.WorkflowInputLoaded,
-                        state.ReadPaths,
-                        requiredFrameworkPathSet,
-                        requiredSolutionPathSet,
-                        requireRepositoryEvidence,
-                        state.RepositoryDiscoveryUsed,
-                        requireRepositoryDiscovery);
-
-                    ValidateWorkflowOutputPayload(toolRequest.Output.Value);
-
-                    var outputJson = JsonSerializer.Serialize(toolRequest.Output.Value, JsonOptions);
-                    await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
+                    ValidateWorkflowOutputPayload(output);
+                    var outputJson = output.GetRawText();
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): save_workflow_output('{workflowRunId}').", ct);
-                    await logs.AppendBlockAsync(workflowRunId, "Saved workflow output payload", outputJson, ct);
+                    await logs.AppendBlockAsync(workflowRunId, $"Workflow output payload ({phase.Name})", outputJson, ct);
+                    await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
                     return outputJson;
                 }
                 default:
@@ -357,44 +330,25 @@ internal static class FileAwareAgentRunner
             }
         }
 
-        throw new InvalidOperationException($"Agent exceeded the maximum of {MaxToolCallsPerPhase} tool calls during phase '{phase.Name}'.");
+        throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
     }
 
-    private static async Task LogIgnoredWorkflowRunIdAsync(
-        string? requestedWorkflowRunId,
-        Guid activeWorkflowRunId,
-        string phaseName,
-        string action,
-        IWorkflowRunLogStore logs,
-        CancellationToken ct)
+    private static IReadOnlyList<ChatMessage> BuildPhaseMessages(
+        AgentPhaseDefinition phase,
+        int phaseIndex,
+        int totalPhases,
+        IReadOnlyList<ChatMessage> pendingMessages)
     {
-        if (string.IsNullOrWhiteSpace(requestedWorkflowRunId))
-        {
-            return;
-        }
-
-        if (!Guid.TryParse(requestedWorkflowRunId, out var parsedWorkflowRunId))
-        {
-            await logs.AppendLineAsync(
-                activeWorkflowRunId,
-                $"Tool call ({phaseName}): ignored invalid workflowRunId '{requestedWorkflowRunId}' on {action}; using active workflowRunId '{activeWorkflowRunId}'.",
-                ct);
-            return;
-        }
-
-        if (parsedWorkflowRunId != activeWorkflowRunId)
-        {
-            await logs.AppendLineAsync(
-                activeWorkflowRunId,
-                $"Tool call ({phaseName}): ignored agent workflowRunId '{parsedWorkflowRunId}' on {action}; using active workflowRunId '{activeWorkflowRunId}'.",
-                ct);
-        }
+        var messages = new List<ChatMessage>(pendingMessages.Count + 1);
+        messages.AddRange(pendingMessages);
+        messages.Add(CreateUserMessage(BuildPhasePrompt(phase, phaseIndex, totalPhases)));
+        return messages;
     }
 
     private static void EnsureRequiredContextLoaded(
         bool requireWorkflowInput,
         bool workflowInputLoaded,
-        IReadOnlySet<string> readPaths,
+        IReadOnlyCollection<string> readPaths,
         IReadOnlySet<string> requiredFrameworkPathSet,
         IReadOnlySet<string> requiredSolutionPathSet,
         bool requireRepositoryEvidence,
@@ -403,30 +357,28 @@ internal static class FileAwareAgentRunner
     {
         if (requireWorkflowInput && !workflowInputLoaded)
         {
-            throw new InvalidOperationException("Agent attempted to complete the phase before loading workflow input.");
+            throw new InvalidOperationException("Agent attempted to complete the phase without loading workflow input.");
         }
 
-        var missingFrameworkFiles = requiredFrameworkPathSet
-            .Where(path => !readPaths.Contains(path))
-            .ToList();
-        if (missingFrameworkFiles.Count > 0)
+        foreach (var requiredPath in requiredFrameworkPathSet)
         {
-            throw new InvalidOperationException(
-                $"Agent attempted to complete the phase before loading required framework context. Missing: {string.Join(", ", missingFrameworkFiles)}");
+            if (!readPaths.Contains(requiredPath))
+            {
+                throw new InvalidOperationException($"Agent attempted to complete the phase before reading required framework path '{requiredPath}'.");
+            }
         }
 
-        var missingSolutionFiles = requiredSolutionPathSet
-            .Where(path => !readPaths.Contains(path))
-            .ToList();
-        if (missingSolutionFiles.Count > 0)
+        foreach (var requiredPath in requiredSolutionPathSet)
         {
-            throw new InvalidOperationException(
-                $"Agent attempted to complete the phase before loading required solution context. Missing: {string.Join(", ", missingSolutionFiles)}");
+            if (!readPaths.Contains(requiredPath))
+            {
+                throw new InvalidOperationException($"Agent attempted to complete the phase before reading required solution path '{requiredPath}'.");
+            }
         }
 
         if (requireRepositoryDiscovery && !repositoryDiscoveryUsed)
         {
-            throw new InvalidOperationException("Agent attempted to complete the phase before using repository discovery tools.");
+            throw new InvalidOperationException("Agent attempted to complete the phase without using repository discovery.");
         }
 
         if (requireRepositoryEvidence)
@@ -518,7 +470,8 @@ internal static class FileAwareAgentRunner
 
     private static async Task<string> RunModelWithTimeoutAsync(
         AIAgent agent,
-        string prompt,
+        IReadOnlyList<ChatMessage> messages,
+        AgentSession session,
         int maxModelResponseSeconds,
         CancellationToken ct)
     {
@@ -527,7 +480,7 @@ internal static class FileAwareAgentRunner
 
         try
         {
-            var rawResponse = await agent.RunAsync(prompt, cancellationToken: timeoutCts.Token);
+            var rawResponse = await agent.RunAsync(messages, session: session, cancellationToken: timeoutCts.Token);
             return rawResponse.Text ?? string.Empty;
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
@@ -559,7 +512,7 @@ internal static class FileAwareAgentRunner
         return new FileReadResult(fullPath, NormalizePath(fullPath), File.ReadAllText(fullPath));
     }
 
-    private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, string transcript)
+    private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"PHASE {phaseIndex + 1} OF {totalPhases}: {phase.Name}");
@@ -567,22 +520,12 @@ internal static class FileAwareAgentRunner
         sb.AppendLine(phase.PurposeSummary.Trim());
         sb.AppendLine();
         sb.AppendLine(phase.Prompt.TrimEnd());
-
-        if (!string.IsNullOrWhiteSpace(transcript))
-        {
-            sb.AppendLine();
-            sb.AppendLine("EXECUTION HISTORY:");
-            sb.AppendLine(transcript.TrimEnd());
-        }
-
         sb.AppendLine();
         sb.AppendLine("PHASE RULES:");
         sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
         sb.AppendLine("- Do not include markdown fences.");
         sb.AppendLine("- Keep phase summaries concrete and evidence-based.");
-        sb.AppendLine("- Preserve any useful findings for later phases.");
-
-        sb.AppendLine("- You may request direct file evidence only with get_file using a full physical path from Prompt 2.");
+        sb.AppendLine("- Use get_file only with a full physical path from Prompt 2.");
 
         if (phase.RequiresSavedOutput)
         {
@@ -604,19 +547,9 @@ internal static class FileAwareAgentRunner
         return sb.ToString();
     }
 
-    private static void AppendToolInteraction(StringBuilder transcript, string rawRequest, string resultHeader, IEnumerable<string> resultLines)
-    {
-        transcript.AppendLine("AGENT TOOL REQUEST:");
-        transcript.AppendLine(rawRequest.Trim());
-        transcript.AppendLine();
-        transcript.AppendLine(resultHeader);
-        foreach (var line in resultLines)
-        {
-            transcript.AppendLine(line);
-        }
+    private static ChatMessage CreateUserMessage(string content) => new(ChatRole.User, content);
 
-        transcript.AppendLine();
-    }
+    private static ChatMessage CreateToolMessage(string content) => new(ChatRole.Tool, content);
 
     private static string FormatRepositoryTree(IReadOnlyList<RepositoryEntry> entries, string? scope)
     {
@@ -656,6 +589,24 @@ internal static class FileAwareAgentRunner
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static async Task LogIgnoredWorkflowRunIdAsync(
+        string? requestedWorkflowRunId,
+        Guid activeWorkflowRunId,
+        string phaseName,
+        string actionName,
+        IWorkflowRunLogStore logs,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedWorkflowRunId) &&
+            !string.Equals(requestedWorkflowRunId, activeWorkflowRunId.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            await logs.AppendLineAsync(
+                activeWorkflowRunId,
+                $"Ignored agent-supplied workflowRunId '{requestedWorkflowRunId}' for action '{actionName}' in phase '{phaseName}'. Using active workflow run '{activeWorkflowRunId}'.",
+                ct);
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)

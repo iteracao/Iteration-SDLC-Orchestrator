@@ -113,7 +113,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 _payloadStore,
                 ct,
                 requireRepositoryEvidence: true,
-                requireRepositoryDiscovery: true,
+                requireRepositoryDiscovery: false,
                 discoveryTools: discoveryTools,
                 maxModelResponseSeconds: _maxModelResponseSeconds);
 
