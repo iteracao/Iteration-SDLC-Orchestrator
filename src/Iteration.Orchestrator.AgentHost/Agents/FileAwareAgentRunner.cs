@@ -254,10 +254,9 @@ internal static class FileAwareAgentRunner
                 }
                 case "find_available_files":
                 {
-                    var query = toolRequest.Query?.Trim();
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files(query='{query ?? string.Empty}').", ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files().", ct);
 
-                    var matchingPaths = FindAvailableFiles(availableFileIndex, query);
+                    var matchingPaths = FindAvailableFiles(availableFileIndex);
                     var fileListResult = FormatAvailableFiles(matchingPaths);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
                     if (matchingPaths.Count > 0)
@@ -281,9 +280,8 @@ internal static class FileAwareAgentRunner
 
                     if (fileRead is null)
                     {
-                        var errorResult = $"FILE ERROR\nRequested path is not available for this run or the file does not exist: {requestedPath}\nUse only exact full physical paths returned by find_available_files.";
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File not available for this run.", ct);
-                        currentMessages = [CreateToolMessage(errorResult)];
+                        currentMessages = [CreateToolMessage(string.Empty)];
                         continue;
                     }
 
@@ -292,7 +290,7 @@ internal static class FileAwareAgentRunner
 
                     currentMessages =
                     [
-                        CreateToolMessage($"FILE CONTENT FOR {fileRead.FullPath}\n{fileRead.Content}")
+                        CreateToolMessage(fileRead.Content)
                     ];
                     continue;
                 }
@@ -526,15 +524,9 @@ internal static class FileAwareAgentRunner
         return new FileReadResult(allowedFullPath, NormalizePath(allowedFullPath), File.ReadAllText(allowedFullPath));
     }
 
-    private static List<string> FindAvailableFiles(AvailableFileIndex availableFileIndex, string? query)
+    private static List<string> FindAvailableFiles(AvailableFileIndex availableFileIndex)
     {
-        IEnumerable<string> matches = availableFileIndex.FullPaths;
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            matches = matches.Where(path => path.Contains(query, StringComparison.OrdinalIgnoreCase));
-        }
-
-        return matches
+        return availableFileIndex.FullPaths
             .Take(MaxTreeEntries)
             .ToList();
     }

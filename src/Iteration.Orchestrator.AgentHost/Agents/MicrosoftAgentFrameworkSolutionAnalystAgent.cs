@@ -159,6 +159,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
         sb.AppendLine("- Allowed tool actions are find_available_files and get_file.");
+        sb.AppendLine("- Always call find_available_files first. It has no input parameters and returns the full available physical path list, one path per line.");
+        sb.AppendLine("- Then use get_file with exact full physical paths from that list, as many times as needed within the execution time limit.");
         return sb.ToString().TrimEnd();
     }
 
@@ -202,7 +204,7 @@ Return a very short Markdown note with:
         sb.AppendLine("Purpose: provide repository file access context for the next step.");
         sb.AppendLine();
         sb.AppendLine("Repository source files and target solution documentation are available through the tool `find_available_files`.");
-        sb.AppendLine("That tool returns exact full physical paths for files available in this run.");
+        sb.AppendLine("That tool takes no input parameters and returns the full available file list as exact full physical paths, one per line.");
         sb.AppendLine("No response is required for this step.");
         return sb.ToString().TrimEnd();
     }
@@ -220,8 +222,9 @@ Return a very short Markdown note with:
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- Use `find_available_files` to obtain exact full physical paths available for this run.");
-        sb.AppendLine("- Use `get_file` only with an exact full physical path returned by `find_available_files`.");
+        sb.AppendLine("- First call `find_available_files`. It has no input parameters and returns the full available file list as exact full physical paths, one per line.");
+        sb.AppendLine("- Then use `get_file` only with an exact full physical path returned by `find_available_files`.");
+        sb.AppendLine("- You may call `get_file` as many times as needed within the execution time limit.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
         return sb.ToString().TrimEnd();
     }
