@@ -864,6 +864,31 @@
                                         View report
                                     </MudButton>
                                 }
+
+                                @if (string.Equals(_activeCard.LaneKey, LaneKeys.Requirement, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    @if (CanDeleteRequirement(_activeCard.Requirement))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Disabled="_mutatingRequirementId == _activeCard.Requirement.Id"
+                                                   OnClick="() => DeleteRequirementAsync(_activeCard.Requirement.Id)">
+                                            Delete
+                                        </MudButton>
+                                    }
+
+                                    @if (CanCancelRequirement(_activeCard.Requirement))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Disabled="_mutatingRequirementId == _activeCard.Requirement.Id"
+                                                   OnClick="() => CancelRequirementAsync(_activeCard.Requirement.Id)">
+                                            Cancel Requirement
+                                        </MudButton>
+                                    }
+                                }
                             </MudStack>
                         </MudPaper>
 
@@ -1314,8 +1339,8 @@
             requirement.Title,
             requirement.Description,
             requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
-            HumanizeRequirementStatus(requirement.Status),
-            GetRequirementVisualState(requirement.Status),
+            GetRequirementBadgeLabel(requirement),
+            GetRequirementBadgeVisualState(requirement),
             requirement,
             null,
             null);
@@ -2234,8 +2259,16 @@
     private bool CanCommitRequirement(RequirementRow requirement)
         => false;
 
+    private bool CanDeleteRequirement(RequirementRow requirement)
+        => string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+            && !_runs.Any(x => x.RequirementId == requirement.Id)
+            && !_backlog.Any(x => x.RequirementId == requirement.Id);
+
     private bool CanCancelRequirement(RequirementRow requirement)
-        => false;
+        => !string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(requirement.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(requirement.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
+            && !HasRunningRun(requirement.Id);
 
     private bool ShowRequirementDecisionActions(RequirementStageCard card)
         => false;
@@ -2301,6 +2334,63 @@
 
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
+
+    private string GetRequirementBadgeLabel(RequirementRow requirement)
+    {
+        var normalizedStatus = requirement.Status.Trim();
+        if (string.Equals(normalizedStatus, "Pending", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Pending";
+        }
+
+        var latestRun = _runs
+            .Where(x => x.RequirementId == requirement.Id)
+            .OrderByDescending(x => x.StartedUtc)
+            .FirstOrDefault();
+
+        if (string.Equals(normalizedStatus, "Documentation", StringComparison.OrdinalIgnoreCase)
+            && latestRun is not null
+            && latestRun.Status == 3)
+        {
+            return "Validated";
+        }
+
+        return HumanizeRequirementStatus(normalizedStatus);
+    }
+
+    private VisualState GetRequirementBadgeVisualState(RequirementRow requirement)
+    {
+        var label = GetRequirementBadgeLabel(requirement);
+        if (string.Equals(label, "Validated", StringComparison.OrdinalIgnoreCase))
+        {
+            return VisualStatePalette.Success;
+        }
+
+        return GetRequirementVisualState(requirement.Status);
+    }
+
+    private async Task DeleteRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _loadError = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.DeleteAsync($"api/requirements/{requirementId}");
+            await EnsureSuccessAsync(response);
+            await LoadCockpitAsync();
+            CloseDrawer();
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
+    }
 
     private async Task CommitRequirementAsync(Guid requirementId)
     {
