@@ -48,7 +48,9 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         var yaml = await File.ReadAllTextAsync(Path.Combine(folder, "agent.yaml"), ct);
         var dto = _yaml.Deserialize<AgentYaml>(yaml);
         var prompt = await File.ReadAllTextAsync(Path.Combine(folder, dto.PromptFile), ct);
-        var schema = await File.ReadAllTextAsync(Path.Combine(folder, dto.OutputSchema), ct);
+        var schema = string.IsNullOrWhiteSpace(dto.OutputSchema)
+            ? string.Empty
+            : await File.ReadAllTextAsync(Path.Combine(folder, dto.OutputSchema), ct);
         return new AgentDefinition(dto.Code, dto.Name, dto.Description, dto.AllowedTools ?? [], prompt, schema);
     }
 
@@ -132,7 +134,7 @@ public sealed class FileSystemConfigCatalog : IConfigCatalog
         public string Name { get; set; } = "";
         public string Description { get; set; } = "";
         public List<string>? AllowedTools { get; set; }
-        public string OutputSchema { get; set; } = "output.schema.json";
+        public string OutputSchema { get; set; } = "";
         public string PromptFile { get; set; } = "prompt.md";
     }
 

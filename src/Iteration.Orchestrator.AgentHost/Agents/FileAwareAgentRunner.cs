@@ -35,7 +35,9 @@ internal static class FileAwareAgentRunner
             Prompt: initialPrompt,
             RequiresSavedOutput: true,
             AllowRepositoryDiscovery: false,
-            PurposeSummary: "Run the workflow in a single prompt/tool loop.");
+            PurposeSummary: "Run the workflow in a single prompt/tool loop.",
+            RequireWorkflowInput: true,
+            RequireCompletionValidation: true);
 
         return RunMultiStepAsync(
             endpoint,
@@ -157,6 +159,9 @@ internal static class FileAwareAgentRunner
             }
 
             transcript.AppendLine($"PHASE COMPLETED: {phase.Name}");
+            transcript.AppendLine("--- PHASE PROMPT START ---");
+            transcript.AppendLine(phase.Prompt.Trim());
+            transcript.AppendLine("--- PHASE PROMPT END ---");
             transcript.AppendLine("--- PHASE SUMMARY START ---");
             transcript.AppendLine(phaseResult.Trim());
             transcript.AppendLine("--- PHASE SUMMARY END ---");
@@ -198,6 +203,19 @@ internal static class FileAwareAgentRunner
                 if (phase.RequiresSavedOutput)
                 {
                     throw new InvalidOperationException($"Final phase '{phase.Name}' ended without save_workflow_output.");
+                }
+
+                if (phase.RequireCompletionValidation)
+                {
+                    EnsureRequiredContextLoaded(
+                        phase.RequireWorkflowInput,
+                        state.WorkflowInputLoaded,
+                        state.ReadPaths,
+                        requiredFrameworkPathSet,
+                        requiredSolutionPathSet,
+                        requireRepositoryEvidence,
+                        state.RepositoryDiscoveryUsed,
+                        requireRepositoryDiscovery);
                 }
 
                 return rawText;
@@ -318,6 +336,7 @@ internal static class FileAwareAgentRunner
                     await LogIgnoredWorkflowRunIdAsync(toolRequest.WorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
 
                     EnsureRequiredContextLoaded(
+                        phase.RequireWorkflowInput,
                         state.WorkflowInputLoaded,
                         state.ReadPaths,
                         requiredFrameworkPathSet,
@@ -374,6 +393,7 @@ internal static class FileAwareAgentRunner
     }
 
     private static void EnsureRequiredContextLoaded(
+        bool requireWorkflowInput,
         bool workflowInputLoaded,
         IReadOnlySet<string> readPaths,
         IReadOnlySet<string> requiredFrameworkPathSet,
@@ -382,9 +402,9 @@ internal static class FileAwareAgentRunner
         bool repositoryDiscoveryUsed,
         bool requireRepositoryDiscovery)
     {
-        if (!workflowInputLoaded)
+        if (requireWorkflowInput && !workflowInputLoaded)
         {
-            throw new InvalidOperationException("Agent attempted to save output before loading workflow input.");
+            throw new InvalidOperationException("Agent attempted to complete the phase before loading workflow input.");
         }
 
         var missingFrameworkFiles = requiredFrameworkPathSet
@@ -393,7 +413,7 @@ internal static class FileAwareAgentRunner
         if (missingFrameworkFiles.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Agent attempted to save output before loading required framework context. Missing: {string.Join(", ", missingFrameworkFiles)}");
+                $"Agent attempted to complete the phase before loading required framework context. Missing: {string.Join(", ", missingFrameworkFiles)}");
         }
 
         var missingSolutionFiles = requiredSolutionPathSet
@@ -402,12 +422,12 @@ internal static class FileAwareAgentRunner
         if (missingSolutionFiles.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Agent attempted to save output before loading required solution context. Missing: {string.Join(", ", missingSolutionFiles)}");
+                $"Agent attempted to complete the phase before loading required solution context. Missing: {string.Join(", ", missingSolutionFiles)}");
         }
 
         if (requireRepositoryDiscovery && !repositoryDiscoveryUsed)
         {
-            throw new InvalidOperationException("Agent attempted to save output before using repository discovery tools.");
+            throw new InvalidOperationException("Agent attempted to complete the phase before using repository discovery tools.");
         }
 
         if (requireRepositoryEvidence)
@@ -418,7 +438,7 @@ internal static class FileAwareAgentRunner
 
             if (!repositoryEvidenceRead)
             {
-                throw new InvalidOperationException("Agent attempted to save output before reading repository evidence files.");
+                throw new InvalidOperationException("Agent attempted to complete the phase before reading repository evidence files.");
             }
         }
     }
@@ -572,6 +592,8 @@ internal static class FileAwareAgentRunner
             sb.AppendLine("- You may use discovery tools list_repo_tree and search_repo to explore before reading files.");
         }
 
+        sb.AppendLine("- You may request direct file evidence with read_file or get_file.");
+
         if (phase.RequiresSavedOutput)
         {
             sb.AppendLine("- This is the final phase: you MUST finish by calling save_workflow_output.");
@@ -582,6 +604,11 @@ internal static class FileAwareAgentRunner
         else
         {
             sb.AppendLine("- Do not call save_workflow_output in this phase.");
+
+            if (phase.RequireCompletionValidation)
+            {
+                sb.AppendLine("- Before you finish this phase, gather enough direct evidence to support your final plain-text response.");
+            }
         }
 
         return sb.ToString();
@@ -652,7 +679,9 @@ internal static class FileAwareAgentRunner
         string Prompt,
         bool RequiresSavedOutput,
         bool AllowRepositoryDiscovery,
-        string PurposeSummary);
+        string PurposeSummary,
+        bool RequireWorkflowInput = false,
+        bool RequireCompletionValidation = false);
 
     internal sealed record RepositoryDiscoveryTools(
         Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,

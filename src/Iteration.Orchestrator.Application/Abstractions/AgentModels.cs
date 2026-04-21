@@ -30,7 +30,7 @@ public sealed record SolutionAnalysisResult(
     string DocumentationUpdatesJson,
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
-    string RawJson);
+    string ReportMarkdown);
 
 public sealed record SolutionDesignRequest(
     Guid WorkflowRunId,

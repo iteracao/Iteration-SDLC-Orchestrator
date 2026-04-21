@@ -89,21 +89,16 @@ Trigger and actual inputs:
 
 Execution context gathered before the agent call:
 
-- target repository snapshot
-- repository file list from `src/`
-- repository markdown docs outside `AI/solutions/...`
-- substring search hits for the requirement title
-- up to five sampled file contents from search hits
+- prompt 1 bootstrap context from the current workflow definition, workflow rules, agent definition, agent rules, profile rules, and loaded solution knowledge docs
+- prompt 2 repository structure built from the real repository tree, filtered by `.gitignore`
+- prompt 3 requirement details plus repository inspection instructions and the final Markdown report template
 - target docs from `context`, `business`, `architecture`, `history`, and `analysis/latest-analysis.md`
 - framework workflow metadata and profile rules
 
 Persisted outputs:
 
 - `AnalysisReport`
-- generated derived requirements
-- generated open questions
-- generated decisions
-- saved artifacts: `analysis-request.input.json`, `analysis-report.json`
+- saved artifact: `analysis-report.md`
 - workflow log content in `data/workflow-logs/<workflowRunId>.log`
 
 Requirement state changes:
@@ -117,7 +112,8 @@ Current notes:
 
 - execution is queued/background
 - analysis is requirement-driven
-- output can include generated requirements, questions, decisions, documentation updates, and recommended next workflows
+- the final workflow result is a plain Markdown report, not a JSON workflow output envelope
+- prompts and responses for all three phases are logged, but only the final report is saved as a run artifact
 
 ### 3. Design Solution Change
 

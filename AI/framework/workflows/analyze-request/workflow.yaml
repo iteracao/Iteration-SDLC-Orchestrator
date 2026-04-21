@@ -4,7 +4,8 @@ phase: analysis
 
 purpose: >
   Analyze a requirement or request against current solution knowledge,
-  repository evidence, and SDLC framework guidance.
+  real repository evidence, and SDLC framework guidance, then produce
+  a plain Markdown analysis report.
 
 primaryAgent: solution-analyst
 
@@ -32,27 +33,16 @@ knowledgeReads:
 producedArtifacts:
   - type: analysis-report
     name: Analysis Report
-  - type: impacted-areas
-    name: Impacted Areas
-  - type: risk-list
-    name: Risks
-  - type: assumption-list
-    name: Assumptions
-  - type: open-question-list
-    name: Open Questions
-  - type: next-step-recommendations
-    name: Recommended Next Steps
 
 knowledgeUpdates:
   - analysis/latest-analysis.md
-  - analysis/impacted-areas.md
-  - history/open-questions.md
-  - history/known-gaps.md
 
 executionRules:
+  - Use prompt-driven analysis instead of JSON workflow input or output contracts.
   - Use solution knowledge as current truth unless repository evidence clearly contradicts it.
   - Use repository evidence as proof layer, not as replacement for canonical docs.
-  - Persist open questions discovered during analysis into history/open-questions.md.
+  - Log every prompt and response for the three analysis phases.
+  - Persist only the final Markdown report artifact as analysis-report.md.
   - Keep analysis concise, evidence-based, and structured.
 
 nextWorkflows:
