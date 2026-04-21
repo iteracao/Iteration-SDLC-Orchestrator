@@ -67,7 +67,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Establish analysis behavior and workflow intent only.",
-                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    AllowToolCalls: false),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
                     Prompt: BuildRepositoryStructurePrompt(),
@@ -157,9 +158,13 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Prompt 2 is context only.");
         sb.AppendLine("- Prompt 3 is the analysis step.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
+        sb.AppendLine("- Prompt 1 forbids tool calls and requires a pure Markdown response.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
         sb.AppendLine("- Allowed tool actions are find_available_files and get_file.");
-        sb.AppendLine("- Always call find_available_files first. It has no input parameters and returns the full available physical path list, one path per line.");
+        sb.AppendLine("- find_available_files takes no input parameters and returns the full available physical path list, one path per line.");
+        sb.AppendLine("- get_file requires property name 'path' with one exact full physical path returned by find_available_files.");
+        sb.AppendLine("- Do not use property name 'file_path' in agent responses, even if the runner may tolerate it.");
+        sb.AppendLine("- Always call find_available_files before the first get_file call in Prompt 3.");
         sb.AppendLine("- Then use get_file with exact full physical paths from that list, as many times as needed within the execution time limit.");
         return sb.ToString().TrimEnd();
     }
@@ -191,6 +196,11 @@ Execution flow:
 - Prompt 3: requirement analysis and final report
 
 For this prompt:
+- Do not call any tool.
+- Do not return JSON.
+- Return pure Markdown only.
+- Keep it very short.
+
 Return a very short Markdown note with:
 
 ## Workflow Intent
@@ -224,6 +234,8 @@ Return a very short Markdown note with:
         sb.AppendLine("- Start from the requirement.");
         sb.AppendLine("- First call `find_available_files`. It has no input parameters and returns the full available file list as exact full physical paths, one per line.");
         sb.AppendLine("- Then use `get_file` only with an exact full physical path returned by `find_available_files`.");
+        sb.AppendLine("- For `get_file`, the JSON property name must be `path`.");
+        sb.AppendLine("- Do not use `file_path` in the agent response.");
         sb.AppendLine("- You may call `get_file` as many times as needed within the execution time limit.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
         return sb.ToString().TrimEnd();
