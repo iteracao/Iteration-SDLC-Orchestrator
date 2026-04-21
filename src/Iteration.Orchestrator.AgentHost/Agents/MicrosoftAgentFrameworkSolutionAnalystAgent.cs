@@ -12,8 +12,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
-    private readonly ISolutionBridge _solutionBridge;
-    private readonly IConfigCatalog _config;
     private readonly int _maxModelResponseSeconds;
 
     public MicrosoftAgentFrameworkSolutionAnalystAgent(
@@ -29,8 +27,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
         _payloadStore = payloadStore;
-        _solutionBridge = solutionBridge;
-        _config = config;
         _maxModelResponseSeconds = maxModelResponseSeconds;
     }
 
@@ -48,38 +44,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         try
         {
-            var workflowDefinitionYaml = await LoadRequiredFrameworkTextAsync(
-                request.WorkflowRunId,
-                "AI/framework/workflows/analyze-request/workflow.yaml",
-                () => _config.ReadFrameworkTextAsync("workflows/analyze-request/workflow.yaml", ct),
-                ct);
-
-            var workflowRulesMarkdown = await LoadRequiredFrameworkTextAsync(
-                request.WorkflowRunId,
-                "AI/framework/rules/sdlc/analyze.md",
-                () => _config.ReadFrameworkTextAsync("rules/sdlc/analyze.md", ct),
-                ct);
-
-            var agentDefinitionYaml = await LoadRequiredFrameworkTextAsync(
-                request.WorkflowRunId,
-                "AI/framework/agents/solution-analyst/agent.yaml",
-                () => _config.ReadFrameworkTextAsync("agents/solution-analyst/agent.yaml", ct),
-                ct);
-
-            var agentRulesMarkdown = await LoadRequiredFrameworkTextAsync(
-                request.WorkflowRunId,
-                "AI/framework/agents/solution-analyst/prompt.md",
-                () => Task.FromResult(agentDefinition.PromptText),
-                ct);
-
-            var profile = await LoadRequiredProfileAsync(target.ProfileCode, request.WorkflowRunId, ct);
-            var profileRules = profile.Rules
-                .Where(rule => request.ProfileRuleFiles.Count == 0
-                               || request.ProfileRuleFiles.Any(file => PathsEqual(file.Path, rule.Path)))
-                .OrderBy(rule => rule.Path, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            var domainContextDocuments = await LoadDomainContextDocumentsAsync(request, target, ct);
             var visibleRepositoryFiles = await RepositoryPromptInputDiscovery.LoadVisibleRepositoryFilesAsync(
                 request.RepositoryPath,
                 ct);
@@ -88,31 +52,26 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
             if (repositoryStructureFiles.Count == 0)
             {
-                throw new InvalidOperationException("Repository structure enumeration returned no visible files for analysis.");
+                throw new InvalidOperationException("Repository path enumeration returned no visible files for analysis.");
             }
 
-            var repositoryTree = RepositoryPromptInputDiscovery.FormatRepositoryTree(repositoryStructureFiles);
+            var repositoryPathList = RepositoryPromptInputDiscovery.FormatPhysicalPathList(
+                request.RepositoryPath,
+                repositoryStructureFiles);
             var phases = new[]
             {
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 1",
-                    Prompt: BuildBootstrapPrompt(
-                        request,
-                        workflowDefinitionYaml,
-                        workflowRulesMarkdown,
-                        agentDefinitionYaml,
-                        agentRulesMarkdown,
-                        profileRules,
-                        domainContextDocuments),
+                    Prompt: BuildBootstrapPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Bootstrap the analyst with the current SDLC semantics, agent behavior, workflow definitions, and solution context."),
+                    PurposeSummary: "Establish analysis behavior and workflow intent only."),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
-                    Prompt: BuildRepositoryStructurePrompt(repositoryTree),
+                    Prompt: BuildRepositoryStructurePrompt(repositoryPathList),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Build repository structure awareness from the real gitignored file system index only."),
+                    PurposeSummary: "Provide the deterministic full physical repository path list filtered by .gitignore."),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
@@ -183,68 +142,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         }
     }
 
-    private async Task<ProfileDefinition> LoadRequiredProfileAsync(string profileCode, Guid workflowRunId, CancellationToken ct)
-    {
-        try
-        {
-            return await _config.GetProfileAsync(profileCode, ct);
-        }
-        catch (Exception ex)
-        {
-            var message = $"Required profile guidance could not be loaded for profile '{profileCode}'. {ex.Message}";
-            await _logs.AppendLineAsync(workflowRunId, $"[MISSING REQUIRED CONTEXT] profile '{profileCode}' -> {ex.Message}", ct);
-            throw new InvalidOperationException(message, ex);
-        }
-    }
-
-    private async Task<string> LoadRequiredFrameworkTextAsync(
-        Guid workflowRunId,
-        string displayPath,
-        Func<Task<string>> loadAsync,
-        CancellationToken ct)
-    {
-        try
-        {
-            var content = await loadAsync();
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                throw new InvalidOperationException("Content is empty.");
-            }
-
-            return content;
-        }
-        catch (Exception ex)
-        {
-            var message = $"Required guidance could not be loaded: {displayPath}. {ex.Message}";
-            await _logs.AppendLineAsync(workflowRunId, $"[MISSING REQUIRED CONTEXT] {displayPath} -> {ex.Message}", ct);
-            throw new InvalidOperationException(message, ex);
-        }
-    }
-
-    private async Task<IReadOnlyList<TextDocumentInput>> LoadDomainContextDocumentsAsync(
-        SolutionAnalysisRequest request,
-        SolutionTarget target,
-        CancellationToken ct)
-    {
-        var documents = new List<TextDocumentInput>();
-
-        foreach (var file in request.SolutionKnowledgeFiles
-                     .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var content = await _solutionBridge.ReadFileAsync(target, file.Path, ct);
-                documents.Add(new TextDocumentInput(file.Path, content));
-            }
-            catch (Exception ex)
-            {
-                await _logs.AppendLineAsync(request.WorkflowRunId, $"[SKIP] {file.Path} -> {ex.Message}", ct);
-            }
-        }
-
-        return documents;
-    }
-
     private static string BuildInstructions(AgentDefinition agentDefinition)
     {
         var sb = new StringBuilder();
@@ -263,83 +160,62 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildBootstrapPrompt(
-        SolutionAnalysisRequest request,
-        string workflowDefinitionYaml,
-        string workflowRulesMarkdown,
-        string agentDefinitionYaml,
-        string agentRulesMarkdown,
-        IReadOnlyList<TextDocumentInput> profileRules,
-        IReadOnlyList<TextDocumentInput> domainContextDocuments)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 1 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: bootstrap the agent with SDLC meaning, workflow semantics, agent behavior, and current domain context.");
-        sb.AppendLine("Do not inspect repository files yet.");
-        sb.AppendLine("Do not analyze the requirement yet.");
-        sb.AppendLine("Return a short Markdown note with these sections only:");
-        sb.AppendLine("- `## Workflow Intent`");
-        sb.AppendLine("- `## Boundaries To Preserve`");
-        sb.AppendLine("- `## Domain Anchors`");
-        sb.AppendLine();
-        sb.AppendLine("WORKFLOW METADATA");
-        sb.AppendLine($"- Code: {request.WorkflowCode}");
-        sb.AppendLine($"- Name: {request.WorkflowName}");
-        sb.AppendLine($"- Purpose: {request.WorkflowPurpose}");
-        sb.AppendLine();
-        AppendDocumentBlock(sb, "SDLC framework context", "AI/framework/workflows/analyze-request/workflow.yaml", workflowDefinitionYaml);
-        AppendDocumentBlock(sb, "Current workflow rules", "AI/framework/rules/sdlc/analyze.md", workflowRulesMarkdown);
-        AppendDocumentBlock(sb, "Current agent definition", "AI/framework/agents/solution-analyst/agent.yaml", agentDefinitionYaml);
-        AppendDocumentBlock(sb, "Current agent rules", "AI/framework/agents/solution-analyst/prompt.md", agentRulesMarkdown);
+    private static string BuildBootstrapPrompt()
+        => """
+This is Prompt 1 of 3 for analyze-request.
 
-        if (profileRules.Count > 0)
-        {
-            sb.AppendLine("PROFILE RULES");
-            foreach (var rule in profileRules)
-            {
-                AppendDocumentBlock(sb, "Profile rule", rule.Path, rule.Content);
-            }
-        }
+Purpose:
+Establish analysis behavior and workflow intent.
 
-        if (domainContextDocuments.Count > 0)
-        {
-            sb.AppendLine("RELEVANT DOMAIN CONTEXT");
-            foreach (var document in domainContextDocuments)
-            {
-                AppendDocumentBlock(sb, "Domain context", document.Path, document.Content);
-            }
-        }
-        else
-        {
-            sb.AppendLine("RELEVANT DOMAIN CONTEXT");
-            sb.AppendLine("- No solution knowledge documents were available.");
-        }
+You are the Solution Analyst.
 
-        return sb.ToString().TrimEnd();
-    }
+This is an analysis workflow.
+You must understand the requirement and the current system.
+Do NOT design a solution.
+Do NOT propose implementation steps.
+Do NOT create backlog items.
 
-    private static string BuildRepositoryStructurePrompt(string repositoryTree)
+You will:
+- Use solution documentation as intended behavior/context
+- Use repository source files as implementation evidence
+- Prefer explicit unknowns over guessing
+- Clearly separate facts, assumptions, and unknowns
+
+Execution flow:
+- Prompt 1: behavior only (this prompt)
+- Prompt 2: repository and documentation awareness
+- Prompt 3: requirement analysis and final report
+
+Final output (Prompt 3 only):
+- A plain Markdown analysis report
+- Suitable to be saved directly as analysis-report.md
+
+For this prompt:
+Return a very short Markdown note with:
+
+## Workflow Intent
+## Boundaries To Preserve
+""";
+
+    private static string BuildRepositoryStructurePrompt(string repositoryPathList)
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: provide structure awareness from the real repository file system shape only.");
-        sb.AppendLine("This is a structure/tree/index prompt only.");
+        sb.AppendLine("Purpose: provide repository and documentation awareness from the real repository file list only.");
+        sb.AppendLine("This is a full physical path list prompt only.");
         sb.AppendLine("Do not infer code behavior from file names alone.");
         sb.AppendLine("Do not request file contents in this prompt.");
-        sb.AppendLine("The tree below is a deterministic repository enumeration filtered by .gitignore.");
-        sb.AppendLine("Additional exclusions applied for this structure prompt:");
-        sb.AppendLine("- `AI/contracts/**`");
-        sb.AppendLine("- `AI/framework/**`");
+        sb.AppendLine("The list below is a deterministic enumeration of full physical repository paths from disk, filtered by .gitignore.");
+        sb.AppendLine("Additional exclusions applied for this path-list prompt:");
+        sb.AppendLine("- `AI\\Contracts\\**`");
+        sb.AppendLine("- `AI\\Framework\\**`");
         sb.AppendLine();
         sb.AppendLine("Return a short Markdown note with these sections only:");
         sb.AppendLine("- `## Likely Areas To Inspect`");
         sb.AppendLine("- `## Search Starting Points`");
-        sb.AppendLine("- `## Structure-Only Caveats`");
+        sb.AppendLine("- `## Path-List Caveats`");
         sb.AppendLine();
-        sb.AppendLine("REAL REPOSITORY STRUCTURE");
-        sb.AppendLine("```text");
-        sb.AppendLine(repositoryTree);
-        sb.AppendLine("```");
+        sb.AppendLine(repositoryPathList);
         return sb.ToString().TrimEnd();
     }
 
@@ -412,16 +288,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("## Evidence Reviewed");
         sb.AppendLine("- <file path>");
         return sb.ToString().TrimEnd();
-    }
-
-    private static void AppendDocumentBlock(StringBuilder sb, string title, string path, string content)
-    {
-        sb.AppendLine(title.ToUpperInvariant());
-        sb.AppendLine($"Path: {path}");
-        sb.AppendLine("```text");
-        sb.AppendLine(content.Trim());
-        sb.AppendLine("```");
-        sb.AppendLine();
     }
 
     private static string NormalizeMarkdown(string raw)
@@ -536,12 +402,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
         return normalized.Length > 0 ? normalized : Array.Empty<string>();
     }
-
-    private static bool PathsEqual(string left, string right)
-        => NormalizePath(left).Equals(NormalizePath(right), StringComparison.OrdinalIgnoreCase);
-
-    private static string NormalizePath(string path)
-        => path.Replace('\\', '/').Trim();
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

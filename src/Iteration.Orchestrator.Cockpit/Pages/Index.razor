@@ -895,9 +895,12 @@
                                         <MudText Typo="Typo.body2">Recorded result: @_activeWorkflowRunDetails.Report.Summary</MudText>
                                     }
 
-                                    <MudText Typo="Typo.body2">Output payload stored: @(_activeWorkflowRunDetails.HasOutputPayload ? "Yes" : "No")</MudText>
+                                    @if (!IsAnalyzeRequestWorkflow(_activeCard.WorkflowRun))
+                                    {
+                                        <MudText Typo="Typo.body2">Output payload stored: @(_activeWorkflowRunDetails.HasOutputPayload ? "Yes" : "No")</MudText>
+                                    }
 
-                                    @if (_activeWorkflowRunDetails.ArtifactFiles.Count > 0)
+                                    @if (!IsAnalyzeRequestWorkflow(_activeCard.WorkflowRun) && _activeWorkflowRunDetails.ArtifactFiles.Count > 0)
                                     {
                                         <MudText Typo="Typo.body2" Class="mt-2 mb-1">Generated artifacts</MudText>
                                         <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
@@ -934,21 +937,36 @@
                                 }
 
                                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Class="mt-2">
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowPromptAsync(_activeCard.WorkflowRun.Id)">
-                                        View prompt
-                                    </MudButton>
-                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowInputAsync(_activeCard.WorkflowRun.Id)">
-                                        View JSON input payload
-                                    </MudButton>
-                                    <MudButton Size="Size.Small"
-                                               Variant="Variant.Outlined"
-                                               Disabled="_activeWorkflowRunDetailsLoading || !CanViewWorkflowOutput(_activeWorkflowRunDetails)"
-                                               OnClick="() => OpenWorkflowOutputAsync(_activeCard.WorkflowRun.Id)">
-                                        View JSON output payload
-                                    </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
-                                        View log
-                                    </MudButton>
+                                    @if (IsAnalyzeRequestWorkflow(_activeCard.WorkflowRun))
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
+                                            View log
+                                        </MudButton>
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Disabled="@(_activeWorkflowRunDetailsLoading || !HasWorkflowArtifact(_activeWorkflowRunDetails, "analysis-report.md"))"
+                                                   OnClick='() => OpenWorkflowArtifactAsync(_activeCard.WorkflowRun.Id, "analysis-report.md")'>
+                                            View Analysis Report
+                                        </MudButton>
+                                    }
+                                    else
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowPromptAsync(_activeCard.WorkflowRun.Id)">
+                                            View prompt
+                                        </MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowInputAsync(_activeCard.WorkflowRun.Id)">
+                                            View JSON input payload
+                                        </MudButton>
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Disabled="_activeWorkflowRunDetailsLoading || !CanViewWorkflowOutput(_activeWorkflowRunDetails)"
+                                                   OnClick="() => OpenWorkflowOutputAsync(_activeCard.WorkflowRun.Id)">
+                                            View JSON output payload
+                                        </MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
+                                            View log
+                                        </MudButton>
+                                    }
                                 </MudStack>
                             }
 
@@ -1417,7 +1435,7 @@
             laneKey,
             laneTitle,
             requirement.Title,
-            requirement.Description,
+            $"{laneTitle} workflow run recorded for this requirement.",
             run.StartedUtc.ToLocalTime().ToString("dd MMM"),
             HumanizeWorkflowStatus(run.Status),
             GetWorkflowVisualState(run.Status),
@@ -2220,6 +2238,12 @@
 
     private static bool CanViewWorkflowOutput(WorkflowRunDetail? detail)
         => detail?.HasOutputPayload == true;
+
+    private static bool IsAnalyzeRequestWorkflow(WorkflowRunRow? run)
+        => string.Equals(run?.WorkflowCode, "analyze-request", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasWorkflowArtifact(WorkflowRunDetail? detail, string fileName)
+        => detail?.ArtifactFiles.Any(x => string.Equals(x, fileName, StringComparison.OrdinalIgnoreCase)) == true;
 
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;

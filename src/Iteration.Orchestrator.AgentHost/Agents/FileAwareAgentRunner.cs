@@ -9,7 +9,6 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 internal static class FileAwareAgentRunner
 {
     private const int MaxToolCallsPerPhase = 16;
-    private const int MaxFileCharacters = 8000;
     private const int MaxTreeEntries = 120;
     private const int MaxSearchHits = 12;
 
@@ -111,9 +110,6 @@ internal static class FileAwareAgentRunner
 
         var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
         AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
-        var allowedPathSet = allowedPaths
-            .Select(NormalizePath)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var responseTimeoutSeconds = maxModelResponseSeconds;
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
@@ -139,7 +135,6 @@ internal static class FileAwareAgentRunner
                 phaseIndex,
                 phases.Count,
                 repositoryRoot,
-                allowedPathSet,
                 workflowRunId,
                 logs,
                 payloadStore,
@@ -177,7 +172,6 @@ internal static class FileAwareAgentRunner
         int phaseIndex,
         int totalPhases,
         string repositoryRoot,
-        IReadOnlySet<string> allowedPathSet,
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
@@ -256,11 +250,6 @@ internal static class FileAwareAgentRunner
                     }
 
                     var normalizedPath = NormalizePath(toolRequest.Path);
-                    if (!allowedPathSet.Contains(normalizedPath))
-                    {
-                        throw new InvalidOperationException($"Agent requested file outside allowed scope: {normalizedPath}");
-                    }
-
                     var fileContent = ReadFile(repositoryRoot, normalizedPath);
                     state.ReadPaths.Add(normalizedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): {normalizedAction}('{normalizedPath}').", ct);
@@ -542,10 +531,12 @@ internal static class FileAwareAgentRunner
 
     private static string ReadFile(string repositoryRoot, string relativePath)
     {
-        var fullRoot = Path.GetFullPath(repositoryRoot);
+        var fullRoot = Path.GetFullPath(repositoryRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        var rootPrefix = fullRoot + Path.DirectorySeparatorChar;
 
-        if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+        if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"Invalid path requested: {relativePath}");
         }
@@ -555,13 +546,7 @@ internal static class FileAwareAgentRunner
             throw new InvalidOperationException($"Requested file does not exist: {relativePath}");
         }
 
-        var text = File.ReadAllText(fullPath);
-        if (text.Length <= MaxFileCharacters)
-        {
-            return text;
-        }
-
-        return text[..MaxFileCharacters] + $"\n\n[TRUNCATED BY SERVER: file content exceeded {MaxFileCharacters} characters]";
+        return File.ReadAllText(fullPath);
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, string transcript)

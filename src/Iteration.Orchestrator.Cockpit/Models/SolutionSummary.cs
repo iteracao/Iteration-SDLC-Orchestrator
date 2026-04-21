@@ -22,5 +22,5 @@ public sealed class SolutionTargetSummary
     public bool IsActive { get; set; }
     public DateTime CreatedUtc { get; set; }
 
-    public string DisplayName => string.IsNullOrWhiteSpace(TargetCode) ? StorageCode : TargetCode;
+    public string DisplayName => string.IsNullOrWhiteSpace(StorageCode) ? TargetCode : StorageCode;
 }

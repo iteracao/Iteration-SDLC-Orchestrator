@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Domain.Solutions;
 
@@ -102,27 +101,22 @@ public static class RepositoryPromptInputDiscovery
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    public static string FormatRepositoryTree(IReadOnlyList<string> visibleFiles)
+    public static string FormatPhysicalPathList(string repositoryPath, IReadOnlyList<string> visibleFiles)
     {
-        var root = new TreeNode(string.Empty, isDirectory: true);
-
-        foreach (var path in visibleFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(repositoryPath))
         {
-            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            var current = root;
-
-            for (var i = 0; i < segments.Length; i++)
-            {
-                var segment = segments[i];
-                var isDirectory = i < segments.Length - 1;
-                current = current.GetOrAddChild(segment, isDirectory);
-            }
+            return string.Empty;
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine(".");
-        AppendTree(sb, root, string.Empty);
-        return sb.ToString().TrimEnd();
+        var fullRepositoryPath = Path.GetFullPath(repositoryPath);
+
+        return string.Join(
+            Environment.NewLine,
+            visibleFiles
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(path => Path.GetFullPath(Path.Combine(
+                    fullRepositoryPath,
+                    path.Replace('/', Path.DirectorySeparatorChar)))));
     }
 
     public static IReadOnlyList<RepositoryEntry> ListVisibleRepositoryTreeEntries(
@@ -294,35 +288,11 @@ public static class RepositoryPromptInputDiscovery
         }
     }
 
-    private static void AppendTree(StringBuilder sb, TreeNode node, string indent)
-    {
-        var orderedChildren = node.Children
-            .OrderByDescending(child => child.IsDirectory)
-            .ThenBy(child => child.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        for (var i = 0; i < orderedChildren.Length; i++)
-        {
-            var child = orderedChildren[i];
-            var isLast = i == orderedChildren.Length - 1;
-            var marker = isLast ? "\\-- " : "|-- ";
-
-            sb.Append(indent);
-            sb.Append(marker);
-            sb.AppendLine(child.Name);
-
-            if (child.IsDirectory)
-            {
-                AppendTree(sb, child, indent + (isLast ? "    " : "|   "));
-            }
-        }
-    }
-
     private static bool IsStructureExcluded(string path)
     {
         var normalized = NormalizePath(path);
-        return normalized.StartsWith("AI/contracts/", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("AI/framework/", StringComparison.OrdinalIgnoreCase);
+        return normalized.StartsWith("AI/Contracts/", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("AI/Framework/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizePath(string path)
@@ -367,32 +337,5 @@ public static class RepositoryPromptInputDiscovery
 
         return path.StartsWith(scope + "/", StringComparison.OrdinalIgnoreCase)
                || path.Equals(scope, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private sealed class TreeNode
-    {
-        private readonly Dictionary<string, TreeNode> _children = new(StringComparer.OrdinalIgnoreCase);
-
-        public TreeNode(string name, bool isDirectory)
-        {
-            Name = name;
-            IsDirectory = isDirectory;
-        }
-
-        public string Name { get; }
-        public bool IsDirectory { get; }
-        public IEnumerable<TreeNode> Children => _children.Values;
-
-        public TreeNode GetOrAddChild(string name, bool isDirectory)
-        {
-            if (_children.TryGetValue(name, out var existing))
-            {
-                return existing;
-            }
-
-            var child = new TreeNode(name, isDirectory);
-            _children[name] = child;
-            return child;
-        }
     }
 }

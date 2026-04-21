@@ -49,7 +49,7 @@
                 <MudDivider Class="my-4" />
                 <MudText Typo="Typo.subtitle1" Class="mb-2">Latest setup log</MudText>
                 <MudText Typo="Typo.body2">Workflow run: @_setupResult.Id</MudText>
-                <MudText Typo="Typo.body2">Target: @_setupResult.TargetCode</MudText>
+                <MudText Typo="Typo.body2">Target: @_setupResult.TargetStorageCode</MudText>
                 <MudText Typo="Typo.body2">Knowledge root: @_setupResult.KnowledgeRoot</MudText>
                 <MudText Typo="Typo.body2">Repository created: @BoolLabel(_setupResult.RepositoryCreated)</MudText>
                 <MudText Typo="Typo.body2">Git initialized: @BoolLabel(_setupResult.GitInitialized)</MudText>
@@ -509,6 +509,7 @@
         public Guid Id { get; set; }
         public Guid SolutionId { get; set; }
         public string KnowledgeRoot { get; set; } = string.Empty;
+        public string TargetStorageCode { get; set; } = string.Empty;
         public string TargetCode { get; set; } = string.Empty;
         public bool RepositoryCreated { get; set; }
         public bool GitInitialized { get; set; }
