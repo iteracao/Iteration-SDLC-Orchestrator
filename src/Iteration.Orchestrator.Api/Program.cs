@@ -33,6 +33,8 @@ builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
 builder.Services.AddScoped<CreateRequirementHandler>();
+builder.Services.AddScoped<UpdateRequirementHandler>();
+builder.Services.AddScoped<DeleteRequirementHandler>();
 builder.Services.AddScoped<CommitRequirementHandler>();
 builder.Services.AddScoped<CancelRequirementHandler>();
 builder.Services.AddScoped<CreateBacklogItemHandler>();

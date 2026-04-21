@@ -35,6 +35,50 @@ public sealed class RequirementsController : ControllerBase
         }
     }
 
+    [HttpPut("api/requirements/{requirementId:guid}")]
+    public async Task<IActionResult> Update(
+        Guid requirementId,
+        [FromBody] UpdateRequirementRequest request,
+        [FromServices] UpdateRequirementHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(
+                new UpdateRequirementCommand(
+                    requirementId,
+                    request.Title,
+                    request.Description,
+                    request.RequirementType,
+                    request.Source,
+                    request.Priority),
+                ct);
+
+            return Ok(new { id = requirementId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("api/requirements/{requirementId:guid}")]
+    public async Task<IActionResult> Delete(
+        Guid requirementId,
+        [FromServices] DeleteRequirementHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            await handler.HandleAsync(new DeleteRequirementCommand(requirementId), ct);
+            return Ok(new { id = requirementId });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("api/requirements/{requirementId:guid}/commit")]
     public async Task<IActionResult> Commit(
         Guid requirementId,

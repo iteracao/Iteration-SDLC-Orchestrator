@@ -111,18 +111,6 @@ public sealed class StartAnalyzeSolutionRunHandler
 
         var solutionKnowledgeDocuments = await LoadSolutionKnowledgeDocumentsAsync(solution, ct);
 
-        await _logs.AppendSectionAsync(run.Id, "Input summary", ct);
-        await _logs.AppendKeyValuesAsync(run.Id, "Input summary", new Dictionary<string, string?>
-        {
-            ["Requirement"] = WorkflowInputTextNormalizer.NormalizeSingleLine(requirement.Title),
-            ["Target"] = solution.Code,
-            ["Profile rules available"] = profile.Rules.Count.ToString(),
-            ["Solution docs available"] = solutionKnowledgeDocuments.Count.ToString(),
-            ["Repository files available"] = repositoryFiles.Count.ToString(),
-            ["Repository docs available"] = repositoryDocumentationFiles.Count.ToString(),
-            ["Search hits"] = hits.Count.ToString()
-        }, ct);
-
         var request = new SolutionAnalysisRequest(
             run.Id,
             solution.Id,
@@ -144,7 +132,6 @@ public sealed class StartAnalyzeSolutionRunHandler
             solution.RepositoryPath);
 
         var inputJson = JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });
-        await _logs.AppendLineAsync(run.Id, "Workflow request prepared.", ct);
 
         var taskRun = new AgentTaskRun(run.Id, agentDef.Code, inputJson);
         taskRun.Start();

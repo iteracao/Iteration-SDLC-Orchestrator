@@ -82,6 +82,21 @@ public sealed class Requirement
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
+    public void UpdateDetails(
+        string title,
+        string description,
+        string requirementType,
+        string source,
+        string priority)
+    {
+        Title = title.Trim();
+        Description = description.Trim();
+        RequirementType = string.IsNullOrWhiteSpace(requirementType) ? RequirementType : requirementType.Trim();
+        Source = string.IsNullOrWhiteSpace(source) ? Source : source.Trim();
+        Priority = string.IsNullOrWhiteSpace(priority) ? Priority : priority.Trim().ToLowerInvariant();
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
+
     public void AdvanceLifecycle(Guid workflowRunId, string status)
     {
         WorkflowRunId = workflowRunId;

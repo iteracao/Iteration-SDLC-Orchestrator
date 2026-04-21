@@ -1,5 +1,6 @@
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Application.Workflows;
+using Iteration.Orchestrator.Domain.Workflows;
 using Iteration.Orchestrator.Domain.Backlog;
 using Iteration.Orchestrator.Domain.Requirements;
 using Microsoft.EntityFrameworkCore;
@@ -34,6 +35,16 @@ public sealed class CancelRequirementHandler
         if (await _workflowLifecycle.HasBlockingRunsAsync(requirement.Id, ct))
         {
             throw new InvalidOperationException("Requirement cannot be cancelled while it has pending, running, or awaiting-validation workflow runs.");
+        }
+
+        var hasCompletedWorkflowWork = await _db.WorkflowRuns.AnyAsync(
+            x => x.RequirementId == requirement.Id
+                 && (x.Status == WorkflowRunStatus.CompletedAwaitingValidation
+                     || x.Status == WorkflowRunStatus.CompletedValidated),
+            ct);
+        if (!hasCompletedWorkflowWork)
+        {
+            throw new InvalidOperationException("Requirement cannot be cancelled before completed workflow work exists.");
         }
 
         await using var transaction = await _db.BeginTransactionAsync(ct);
