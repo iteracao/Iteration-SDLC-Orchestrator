@@ -175,7 +175,7 @@ internal static class FileAwareAgentRunner
             }
         }
 
-        throw new InvalidOperationException("Multi-step agent execution finished without saving a final workflow output.");
+        throw new InvalidOperationException("Multi-step agent execution finished without producing a final workflow output.");
     }
 
     private static async Task<string> ExecutePhaseAsync(
@@ -209,11 +209,6 @@ internal static class FileAwareAgentRunner
 
             if (!TryParseToolRequest(rawText, out var toolRequest))
             {
-                if (phase.RequiresSavedOutput)
-                {
-                    throw new InvalidOperationException($"Final phase '{phase.Name}' ended without save_workflow_output.");
-                }
-
                 if (phase.RequireCompletionValidation)
                 {
                     EnsureRequiredContextLoaded(
@@ -242,20 +237,6 @@ internal static class FileAwareAgentRunner
                 currentMessages =
                 [
                     CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.")
-                ];
-                continue;
-            }
-
-            if (phase.RequiresSavedOutput && normalizedAction != "save_workflow_output")
-            {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Tool call blocked ({phase.Name}): final phase only allows save_workflow_output, but agent requested '{toolRequest.ResolvedAction}'.",
-                    ct);
-
-                currentMessages =
-                [
-                    CreateUserMessage("FINAL PHASE RULE VIOLATION. Return exactly one JSON object using action='save_workflow_output'. Do not call any other tool.")
                 ];
                 continue;
             }
@@ -633,10 +614,9 @@ internal static class FileAwareAgentRunner
 
         if (phase.RequiresSavedOutput)
         {
-            sb.AppendLine("- This is the final phase: you MUST finish by calling save_workflow_output.");
-            sb.AppendLine("- In the final phase, do not call get_workflow_input or get_file.");
-            sb.AppendLine("- Return exactly one JSON object with properties action, workflowRunId, and output.");
-            sb.AppendLine("- Use property name 'action', not 'tool'.");
+            sb.AppendLine("- This is the final phase: finish with the final plain-text result for the workflow.");
+            sb.AppendLine("- You may use allowed tools earlier in this phase if needed before the final response.");
+            sb.AppendLine("- Do not call save_workflow_output unless a workflow explicitly asks for it.");
         }
         else
         {
