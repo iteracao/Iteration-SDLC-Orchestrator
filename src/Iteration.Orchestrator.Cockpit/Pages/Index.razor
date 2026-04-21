@@ -1442,19 +1442,20 @@
             return new RequirementPipelineStep(definition.Key, definition.Title, definition.Icon, existing, false);
         }
 
-        var placeholder = CreatePlaceholderCard(definition, requirement, backlogItem);
-        return new RequirementPipelineStep(definition.Key, definition.Title, definition.Icon, placeholder, true);
+        var isEnabled = IsPipelineStageEnabled(definition.Key, requirement, backlogItem);
+        var placeholder = CreatePlaceholderCard(definition, requirement, backlogItem, isEnabled);
+        return new RequirementPipelineStep(definition.Key, definition.Title, definition.Icon, placeholder, !isEnabled);
     }
 
-    private static RequirementStageCard CreatePlaceholderCard(PipelineDefinition definition, RequirementRow requirement, BacklogRow? backlogItem)
+    private RequirementStageCard CreatePlaceholderCard(PipelineDefinition definition, RequirementRow requirement, BacklogRow? backlogItem, bool isEnabled)
         => new(
             definition.Key,
             definition.Title,
             requirement.Title,
             BuildPlaceholderDescription(definition.Key),
             requirement.CreatedAtUtc.ToLocalTime().ToString("dd MMM"),
-            "Unavailable",
-            VisualStatePalette.Default,
+            isEnabled ? "Available" : "Unavailable",
+            isEnabled ? VisualStatePalette.Waiting : VisualStatePalette.Default,
             requirement,
             definition.Key == LaneKeys.Implementation || definition.Key == LaneKeys.Test ? backlogItem : null,
             null);
@@ -1471,6 +1472,18 @@
             LaneKeys.Review => "Review is not available in the current workflow slice.",
             LaneKeys.Deliver => "Delivery is not available in the current workflow slice.",
             _ => "This workflow step is not available."
+        };
+
+    private bool IsPipelineStageEnabled(string laneKey, RequirementRow requirement, BacklogRow? backlogItem)
+        => laneKey switch
+        {
+            LaneKeys.Requirement => true,
+            LaneKeys.Analysis => CanAnalyze(requirement),
+            LaneKeys.Design => CanDesign(requirement),
+            LaneKeys.Planning => CanPlan(requirement),
+            LaneKeys.Implementation => backlogItem is not null && CanImplement(backlogItem),
+            LaneKeys.Test => false,
+            _ => false
         };
 
     private static string BuildPipelineTooltip(RequirementPipelineStep step)

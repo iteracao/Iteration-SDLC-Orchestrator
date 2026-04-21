@@ -67,7 +67,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Establish analysis behavior and workflow intent only.",
-                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    AllowToolCalls: false),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
                     Prompt: BuildRepositoryStructurePrompt(),
@@ -78,7 +79,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
-                    RequiresSavedOutput: true,
+                    RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Read relevant files by full physical path and produce the final Markdown analysis report.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
@@ -157,54 +158,50 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("- Prompt 2 is context only.");
         sb.AppendLine("- Prompt 3 is the analysis step.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
+        sb.AppendLine("- Prompt 1 forbids tool calls and requires a pure Markdown response.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
         sb.AppendLine("- Allowed tool actions are find_available_files and get_file.");
-        sb.AppendLine("- Always call find_available_files first. It has no input parameters and returns the full available physical path list, one path per line.");
-        sb.AppendLine("- Then use get_file with exact full physical paths from that list, as many times as needed within the execution time limit.");
+        sb.AppendLine("- Tool contract for find_available_files:");
+        sb.AppendLine("  { \"action\": \"find_available_files\" }");
+        sb.AppendLine("- find_available_files takes no input parameters.");
+        sb.AppendLine("- Call find_available_files once at the start of Prompt 3. Do not repeat it after a successful result.");
+        sb.AppendLine("- Tool contract for get_file:");
+        sb.AppendLine("  { \"action\": \"get_file\", \"path\": \"C:\\\\full\\\\physical\\\\path\\\\file.cs\" }");
+        sb.AppendLine("- get_file requires the JSON property name 'path'.");
+        sb.AppendLine("- The value of 'path' must be one exact full physical path previously returned by find_available_files.");
+        sb.AppendLine("- Do not use property name 'file_path' in agent responses.");
+        sb.AppendLine("- Never invent file names. If an expected file is missing from the available list, treat that as an evidence gap and continue the analysis.");
+        sb.AppendLine("- After you have enough evidence, stop calling tools and return the final Markdown report.");
         return sb.ToString().TrimEnd();
     }
 
     private static string BuildBootstrapPrompt()
         => """
-This is Prompt 1 of 3 for analyze-request.
-
-Purpose:
-Establish analysis behavior and workflow intent.
-
 You are the Solution Analyst.
 
-This is an analysis workflow.
-You must understand the requirement and the current system.
-Do NOT design a solution.
-Do NOT propose implementation steps.
+Analyze the requirement against the current system.
 
-You will:
-- Use solution documentation as intended behavior/context
+Rules:
+- Use solution documentation as intended behavior
 - Use repository source files as implementation evidence
 - Prefer explicit unknowns over guessing
-- Clearly separate facts, assumptions, and unknowns
+- Separate facts, assumptions, and unknowns
+- Do not design a solution
+- Do not propose implementation steps
+- Tools are not allowed in this step
 
-Execution flow:
-- Prompt 1: behavior only (this prompt)
-- Prompt 2: repository and documentation awareness
-- Prompt 3: requirement analysis and final report
-
-For this prompt:
 Return a very short Markdown note with:
 
 ## Workflow Intent
-## Boundaries To Preserve
+## Boundaries
 """;
 
     private static string BuildRepositoryStructurePrompt()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: provide repository file access context for the next step.");
-        sb.AppendLine();
-        sb.AppendLine("Repository source files and target solution documentation are available through the tool `find_available_files`.");
-        sb.AppendLine("That tool takes no input parameters and returns the full available file list as exact full physical paths, one per line.");
-        sb.AppendLine("No response is required for this step.");
+        sb.AppendLine("Repository source files and target solution documentation will be available in the next step through the tool `find_available_files`.");
+        sb.AppendLine("That tool takes no input parameters and returns the exact full physical path list for this run, one path per line.");
+        sb.AppendLine("No response is required in this step.");
         return sb.ToString().TrimEnd();
     }
 
@@ -221,10 +218,19 @@ Return a very short Markdown note with:
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- First call `find_available_files`. It has no input parameters and returns the full available file list as exact full physical paths, one per line.");
-        sb.AppendLine("- Then use `get_file` only with an exact full physical path returned by `find_available_files`.");
-        sb.AppendLine("- You may call `get_file` as many times as needed within the execution time limit.");
-        sb.AppendLine("- After you finish reading evidence, end with the final analysis report as plain Markdown.");
+        sb.AppendLine("- First call `find_available_files` once.");
+        sb.AppendLine("- Tool call shape for `find_available_files`:");
+        sb.AppendLine("  { \"action\": \"find_available_files\" }");
+        sb.AppendLine("- `find_available_files` takes no input parameters and returns the exact full available file list for this run, one path per line.");
+        sb.AppendLine("- Then use `get_file` only with one exact full physical path returned earlier by `find_available_files`.");
+        sb.AppendLine("- Tool call shape for `get_file`:");
+        sb.AppendLine("  { \"action\": \"get_file\", \"path\": \"C:\\\\full\\\\physical\\\\path\\\\file.cs\" }");
+        sb.AppendLine("- The JSON property name must be `path`.");
+        sb.AppendLine("- Do not use `file_path` in the agent response.");
+        sb.AppendLine("- Do not invent file names.");
+        sb.AppendLine("- If an expected file is not present in the available list, treat that as an evidence gap and continue the analysis.");
+        sb.AppendLine("- Do not call `find_available_files` again after the first successful call.");
+        sb.AppendLine("- After you finish reading enough evidence, stop calling tools and return the final analysis report as plain Markdown.");
         sb.AppendLine("- Do not call save_workflow_output. The final Markdown response is the workflow output for analysis.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
         return sb.ToString().TrimEnd();
