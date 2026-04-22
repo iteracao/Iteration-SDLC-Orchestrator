@@ -1,0 +1,24 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+<MudPaper Class="cockpit-board" Elevation="0">
+    @if (Pipelines.Count == 0)
+    {
+        <div class="board-empty">No requirements exist yet for the selected solution.</div>
+    }
+    else
+    {
+        <div class="pipeline-card-list">
+            @foreach (var pipeline in Pipelines)
+            {
+                <RequirementPipelineCard Pipeline="pipeline" BuildPipelineTooltip="BuildPipelineTooltip" GetConnectorColor="GetConnectorColor" OpenCard="OpenCard" />
+            }
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public IReadOnlyList<RequirementPipelineViewModel> Pipelines { get; set; } = [];
+    [Parameter, EditorRequired] public Func<RequirementPipelineStep, string> BuildPipelineTooltip { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<VisualState, VisualState, string> GetConnectorColor { get; set; } = default!;
+    [Parameter] public EventCallback<RequirementStageCard> OpenCard { get; set; }
+}

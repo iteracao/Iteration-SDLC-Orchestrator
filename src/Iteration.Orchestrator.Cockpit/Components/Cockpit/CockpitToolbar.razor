@@ -1,0 +1,63 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+<MudPaper Class="cockpit-toolbar" Elevation="0">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="cockpit-toolbar-row">
+        <div class="toolbar-select-host">
+            <MudSelect T="Guid?" Value="SelectedTargetId" ValueChanged="SelectedTargetChanged" Label="Solution / target" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" FullWidth="true" Disabled="@IsTargetSelectionLocked">
+                @foreach (var option in SolutionTargetOptions)
+                {
+                    <MudSelectItem T="Guid?" Value="@option.TargetId">@option.Label</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+        <MudTooltip Text="Create solution" ShowOnHover="true" ShowOnFocus="false" ShowOnClick="false">
+            <MudIconButton Icon="@Icons.Material.Filled.Add" Size="Size.Small" Class="@($"toolbar-action-button toolbar-action-primary{(CanOpenSolutionPanel ? string.Empty : " toolbar-action-disabled")}")" Disabled="!CanOpenSolutionPanel || IsTargetSelectionLocked" OnClick="OpenCreateSolution" aria-label="Create solution" />
+        </MudTooltip>
+        <MudMenu Dense="true" Disabled="CurrentSolution is null || DocumentsLoading || IsTargetSelectionLocked">
+            <ActivatorContent>
+                <MudTooltip Text="Documentation">
+                    <MudIconButton Icon="@Icons.Material.Filled.Description" Size="Size.Small" Class="@($"toolbar-action-button{(CurrentSolution is null || DocumentsLoading || IsTargetSelectionLocked ? " toolbar-action-disabled" : string.Empty)}")" Disabled="CurrentSolution is null || DocumentsLoading || IsTargetSelectionLocked" aria-label="Documentation" />
+                </MudTooltip>
+            </ActivatorContent>
+            <ChildContent>
+                @if (DocumentsLoading)
+                {
+                    <MudMenuItem Disabled="true">Loading documents...</MudMenuItem>
+                }
+                else if (Documents.Count == 0)
+                {
+                    <MudMenuItem Disabled="true">No SDLC documents found</MudMenuItem>
+                }
+                else
+                {
+                    @foreach (var document in Documents)
+                    {
+                        <MudMenuItem OnClick="() => OpenDocument.InvokeAsync(document)">@document.Name</MudMenuItem>
+                    }
+                }
+            </ChildContent>
+        </MudMenu>
+        <MudSpacer />
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Outlined" Class="toolbar-requirement-button toolbar-documentation-button" StartIcon="@Icons.Material.Filled.Sync" Disabled="!CanOpenDocumentationWorkflowModal" OnClick="OpenDocumentationWorkflow">Update documentation</MudButton>
+            <MudButton Variant="Variant.Outlined" Class="toolbar-requirement-button" Disabled="!CanOpenRequirementPanel || IsTargetSelectionLocked" OnClick="OpenCreateRequirement">+ requirement</MudButton>
+        </MudStack>
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter] public Guid? SelectedTargetId { get; set; }
+    [Parameter] public IReadOnlyList<SolutionTargetOption> SolutionTargetOptions { get; set; } = [];
+    [Parameter] public EventCallback<Guid?> SelectedTargetChanged { get; set; }
+    [Parameter] public SolutionSummary? CurrentSolution { get; set; }
+    [Parameter] public bool IsTargetSelectionLocked { get; set; }
+    [Parameter] public bool CanOpenSolutionPanel { get; set; }
+    [Parameter] public EventCallback OpenCreateSolution { get; set; }
+    [Parameter] public bool DocumentsLoading { get; set; }
+    [Parameter] public IReadOnlyList<SolutionDocumentSummary> Documents { get; set; } = [];
+    [Parameter] public EventCallback<SolutionDocumentSummary> OpenDocument { get; set; }
+    [Parameter] public bool CanOpenDocumentationWorkflowModal { get; set; }
+    [Parameter] public EventCallback OpenDocumentationWorkflow { get; set; }
+    [Parameter] public bool CanOpenRequirementPanel { get; set; }
+    [Parameter] public EventCallback OpenCreateRequirement { get; set; }
+}

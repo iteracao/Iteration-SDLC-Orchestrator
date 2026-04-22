@@ -1,0 +1,38 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+<MudPaper Class="create-panel" Elevation="0">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="create-panel-header">
+        <MudText Class="create-panel-title">Create requirement</MudText>
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Class="create-panel-close" OnClick="Cancel" />
+    </MudStack>
+    @if (!string.IsNullOrWhiteSpace(Message))
+    {
+        <MudAlert Severity="@MessageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">@Message</MudAlert>
+    }
+    <MudForm @ref="_form">
+        <MudGrid Class="create-panel-form-grid" Spacing="1">
+            <MudItem xs="12" md="8"><MudTextField T="string" Label="Title" HelperText=" " @bind-Value="Model.Title" Required="true" RequiredError="Title is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="4"><MudTextField T="string" Label="Target" HelperText=" " Value="SelectedTargetLabel" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12"><MudTextField T="string" Label="Description" HelperText=" " @bind-Value="Model.Description" Lines="4" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="4"><MudSelect T="string" Label="Type" HelperText=" " @bind-Value="Model.RequirementType" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined"><MudSelectItem T="string" Value="@("functional")">Functional</MudSelectItem><MudSelectItem T="string" Value="@("non-functional")">Non-functional</MudSelectItem><MudSelectItem T="string" Value="@("technical")">Technical</MudSelectItem><MudSelectItem T="string" Value="@("business")">Business</MudSelectItem></MudSelect></MudItem>
+            <MudItem xs="12" md="4"><MudSelect T="string" Label="Source" HelperText=" " @bind-Value="Model.Source" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined"><MudSelectItem T="string" Value="@("user")">User</MudSelectItem><MudSelectItem T="string" Value="@("system")">System</MudSelectItem><MudSelectItem T="string" Value="@("backlog")">Backlog</MudSelectItem></MudSelect></MudItem>
+            <MudItem xs="12" md="4"><MudSelect T="string" Label="Priority" HelperText=" " @bind-Value="Model.Priority" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined"><MudSelectItem T="string" Value="@("low")">Low</MudSelectItem><MudSelectItem T="string" Value="@("medium")">Medium</MudSelectItem><MudSelectItem T="string" Value="@("high")">High</MudSelectItem><MudSelectItem T="string" Value="@("critical")">Critical</MudSelectItem></MudSelect></MudItem>
+        </MudGrid>
+    </MudForm>
+    <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="create-panel-actions">
+        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="Saving" OnClick="SubmitAsync">Create requirement</MudButton>
+    </MudStack>
+</MudPaper>
+
+@code {
+    private MudForm? _form;
+    [Parameter, EditorRequired] public CreateRequirementModel Model { get; set; } = new();
+    [Parameter] public string SelectedTargetLabel { get; set; } = string.Empty;
+    [Parameter] public bool Saving { get; set; }
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public Severity MessageSeverity { get; set; } = Severity.Info;
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback Submit { get; set; }
+    private async Task SubmitAsync() { if (_form is not null) { await _form.Validate(); if (!_form.IsValid) return; } await Submit.InvokeAsync(); }
+}

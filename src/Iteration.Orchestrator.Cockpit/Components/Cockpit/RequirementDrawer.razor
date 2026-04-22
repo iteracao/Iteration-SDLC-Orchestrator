@@ -1,0 +1,130 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+@if (IsOpen && (ActiveDocument is not null || ActiveCard is not null))
+{
+    <div class="overlay-backdrop" @onclick="Close"></div>
+    <div class="overlay-shell">
+        <MudPaper Class="overlay-panel" Elevation="6">
+            <MudStack Class="pa-4 drawer-shell">
+                @if (ActiveDocument is not null)
+                {
+                    <MudStack Class="overlay-header" Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                        <MudStack Spacing="0"><MudText Typo="Typo.h6">@ActiveDocument.Name</MudText><MudText Typo="Typo.caption">@ActiveDocument.RelativePath</MudText></MudStack>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="Close" />
+                    </MudStack>
+                    <div class="overlay-body"><MudPaper Class="drawer-content-block" Elevation="0"><MudText Typo="Typo.caption" Class="mb-2">Updated @ActiveDocument.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText><pre class="doc-pre">@ActiveDocument.Content</pre></MudPaper></div>
+                }
+                else if (ActiveCard is not null)
+                {
+                    <MudStack Class="overlay-header" Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                        <MudStack Spacing="0"><MudText Typo="Typo.h6">@ActiveCard.Title</MudText><MudText Typo="Typo.caption">@ActiveCard.LaneTitle</MudText></MudStack>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="Close" />
+                    </MudStack>
+                    <div class="overlay-body">
+                        <MudPaper Class="drawer-content-block" Elevation="0"><MudText Typo="Typo.caption" Class="mb-1">@ActiveCard.DisplayDate</MudText><MudChip T="string" Variant="Variant.Outlined" Size="Size.Small">@ActiveCard.StatusLabel</MudChip><MudText Typo="Typo.body2" Class="mt-3">@ActiveCard.Description</MudText></MudPaper>
+                        <MudPaper Class="drawer-content-block" Elevation="0">
+                            <MudText Typo="Typo.subtitle2" Class="mb-2">Actions</MudText>
+                            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                                @if (ShowRunButton) { <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="RunBusy" OnClick="Run">Run</MudButton> }
+                                @if (ShowValidateButton) { <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="ValidateBusy" OnClick="Validate">Validate</MudButton> }
+                                @if (ShowCancelWorkflowButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="CancelWorkflowBusy" OnClick="CancelWorkflow">Cancel</MudButton> }
+                                @if (ShowViewLogButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ViewLog">View Log</MudButton> }
+                                @if (ShowViewReportButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="ViewReportDisabled" OnClick="ViewReport">View Report</MudButton> }
+                                @if (ShowDeleteRequirementButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="RequirementMutationBusy" OnClick="DeleteRequirement">Delete</MudButton> }
+                                @if (ShowCancelRequirementButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="RequirementMutationBusy" OnClick="CancelRequirement">Cancel Requirement</MudButton> }
+                            </MudStack>
+                        </MudPaper>
+                        <MudPaper Class="drawer-content-block" Elevation="0">
+                            <MudText Typo="Typo.subtitle2" Class="mb-2">Workflow snapshot</MudText>
+                            <MudText Typo="Typo.body2">Requirement lifecycle: @RequirementStatusText</MudText>
+                            <MudText Typo="Typo.body2">Priority: @RequirementPriority</MudText>
+                            @if (ActiveCard.WorkflowRun is not null)
+                            {
+                                <MudText Typo="Typo.body2">Workflow: @ActiveCard.WorkflowRun.WorkflowCode</MudText>
+                                <MudText Typo="Typo.body2">Run stage: @ActiveCard.WorkflowRun.CurrentStage</MudText>
+                                <MudText Typo="Typo.body2">Run status: @WorkflowRunStatusText</MudText>
+                                @if (ActiveWorkflowRunDetailsLoading) { <MudText Typo="Typo.caption" Class="mt-2">Loading workflow result details...</MudText> }
+                                else if (ActiveWorkflowRunDetails is not null)
+                                {
+                                    @if (ActiveWorkflowRunDetails.Report is not null) { <MudText Typo="Typo.body2">Recorded result: @ActiveWorkflowRunDetails.Report.Summary</MudText> }
+                                    @if (CanViewOutputPayload) { <MudText Typo="Typo.body2">Output payload stored: Yes</MudText> }
+                                    @if (ActiveWorkflowRunDetails.ArtifactFiles.Count > 0)
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mt-2 mb-1">Generated artifacts</MudText>
+                                        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                                            @foreach (var artifactFile in ActiveWorkflowRunDetails.ArtifactFiles)
+                                            {
+                                                <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small" OnClick="() => OpenArtifact.InvokeAsync(artifactFile)">@artifactFile</MudChip>
+                                            }
+                                        </MudStack>
+                                    }
+                                    @if (RecordedDocumentationUpdates.Count > 0 || RecordedKnowledgeUpdates.Count > 0)
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mt-2">Recorded update intent</MudText>
+                                        @foreach (var update in RecordedDocumentationUpdates) { <MudText Typo="Typo.caption">Doc: @update</MudText> }
+                                        @foreach (var update in RecordedKnowledgeUpdates) { <MudText Typo="Typo.caption">Knowledge: @update</MudText> }
+                                        <MudText Typo="Typo.caption" Class="mt-1">These entries are recorded from the workflow report payload when available.</MudText>
+                                    }
+                                }
+                                @if (!string.IsNullOrWhiteSpace(ActiveCard.WorkflowRun.FailureReason)) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@ActiveCard.WorkflowRun.FailureReason</MudAlert> }
+                            }
+                            @if (ActiveCard.BacklogItem is not null)
+                            {
+                                <MudText Typo="Typo.body2">Backlog order: @ActiveCard.BacklogItem.PlanningOrder</MudText>
+                                <MudText Typo="Typo.body2">Backlog status: @ActiveCard.BacklogItem.Status</MudText>
+                            }
+                        </MudPaper>
+                        @if (ShowRequirementDecisionActions)
+                        {
+                            <MudPaper Class="drawer-content-block" Elevation="0">
+                                <MudText Typo="Typo.subtitle2" Class="mb-2">Requirement decision</MudText>
+                                <MudText Typo="Typo.body2" Class="mb-2">Implementation is validated but the requirement still needs an explicit decision to commit or roll back the whole change.</MudText>
+                                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="RequirementMutationBusy" OnClick="CommitRequirement">Commit Requirement</MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="RequirementMutationBusy" OnClick="CancelRequirement">Cancel Requirement</MudButton>
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </div>
+                }
+            </MudStack>
+        </MudPaper>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public SolutionDocumentContent? ActiveDocument { get; set; }
+    [Parameter] public RequirementStageCard? ActiveCard { get; set; }
+    [Parameter] public WorkflowRunDetail? ActiveWorkflowRunDetails { get; set; }
+    [Parameter] public bool ActiveWorkflowRunDetailsLoading { get; set; }
+    [Parameter] public string RequirementStatusText { get; set; } = string.Empty;
+    [Parameter] public string RequirementPriority { get; set; } = string.Empty;
+    [Parameter] public string WorkflowRunStatusText { get; set; } = string.Empty;
+    [Parameter] public bool CanViewOutputPayload { get; set; }
+    [Parameter] public IReadOnlyList<string> RecordedDocumentationUpdates { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> RecordedKnowledgeUpdates { get; set; } = [];
+    [Parameter] public bool ShowRunButton { get; set; }
+    [Parameter] public bool RunBusy { get; set; }
+    [Parameter] public EventCallback Run { get; set; }
+    [Parameter] public bool ShowValidateButton { get; set; }
+    [Parameter] public bool ValidateBusy { get; set; }
+    [Parameter] public EventCallback Validate { get; set; }
+    [Parameter] public bool ShowCancelWorkflowButton { get; set; }
+    [Parameter] public bool CancelWorkflowBusy { get; set; }
+    [Parameter] public EventCallback CancelWorkflow { get; set; }
+    [Parameter] public bool ShowViewLogButton { get; set; }
+    [Parameter] public EventCallback ViewLog { get; set; }
+    [Parameter] public bool ShowViewReportButton { get; set; }
+    [Parameter] public bool ViewReportDisabled { get; set; }
+    [Parameter] public EventCallback ViewReport { get; set; }
+    [Parameter] public bool ShowDeleteRequirementButton { get; set; }
+    [Parameter] public bool RequirementMutationBusy { get; set; }
+    [Parameter] public EventCallback DeleteRequirement { get; set; }
+    [Parameter] public bool ShowCancelRequirementButton { get; set; }
+    [Parameter] public EventCallback CancelRequirement { get; set; }
+    [Parameter] public bool ShowRequirementDecisionActions { get; set; }
+    [Parameter] public EventCallback CommitRequirement { get; set; }
+    [Parameter] public EventCallback<string> OpenArtifact { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+}

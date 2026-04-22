@@ -1,0 +1,57 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+@if (IsOpen)
+{
+    <div class="inspect-backdrop" @onclick="Close"></div>
+    <div class="inspect-shell">
+        <MudPaper Class="documentation-modal-panel" Elevation="8">
+            <div class="documentation-modal-header">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h6">Setup Documentation</MudText>
+                    <MudText Typo="Typo.caption" Class="inspect-meta">Review stable documentation and run the manual setup/update workflow for the selected target.</MudText>
+                    @if (!string.IsNullOrWhiteSpace(SelectedTargetLabel)) { <MudText Typo="Typo.caption" Class="inspect-meta">@SelectedTargetLabel</MudText> }
+                </MudStack>
+                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="Close" />
+            </div>
+            <div class="documentation-modal-body">
+                @if (!string.IsNullOrWhiteSpace(Message)) { <MudAlert Severity="@MessageSeverity" Variant="Variant.Outlined" Dense="true">@Message</MudAlert> }
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.body2">Workflow name: Setup Documentation</MudText>
+                    @if (LatestRun is not null)
+                    {
+                        <MudText Typo="Typo.body2">Latest run: @LatestRun.Id</MudText>
+                        <MudText Typo="Typo.body2">Status: @LatestRunStatusText</MudText>
+                        <MudText Typo="Typo.body2">Started: @LatestRun.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                    }
+                    else { <MudText Typo="Typo.body2">Latest run: none yet</MudText> }
+                </MudStack>
+                <div class="documentation-modal-log">
+                    @if (LogLoading) { <MudProgressCircular Indeterminate="true" Size="Size.Small" /> }
+                    else if (Log is null) { <p class="inspect-message">No workflow log loaded.</p> }
+                    else if (Log.IsUnavailable && !string.IsNullOrWhiteSpace(Log.Message)) { <p class="inspect-message">@Log.Message</p> }
+                    else { <pre class="doc-pre">@Log.Content</pre> }
+                </div>
+                <div class="documentation-modal-actions">
+                    <MudButton Variant="Variant.Outlined" Disabled="LatestRun is null || LogLoading" OnClick="LoadLog">Log</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="RunDisabled" OnClick="RunWorkflow">Run</MudButton>
+                    <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
+                </div>
+            </div>
+        </MudPaper>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public WorkflowRunRow? LatestRun { get; set; }
+    [Parameter] public string LatestRunStatusText { get; set; } = string.Empty;
+    [Parameter] public string SelectedTargetLabel { get; set; } = string.Empty;
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public Severity MessageSeverity { get; set; } = Severity.Info;
+    [Parameter] public WorkflowLogContent? Log { get; set; }
+    [Parameter] public bool LogLoading { get; set; }
+    [Parameter] public bool RunDisabled { get; set; }
+    [Parameter] public EventCallback LoadLog { get; set; }
+    [Parameter] public EventCallback RunWorkflow { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+}

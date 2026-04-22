@@ -1,0 +1,49 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+<MudPaper Class="create-panel" Elevation="0">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="create-panel-header">
+        <MudText Class="create-panel-title">Create / setup solution</MudText>
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Class="create-panel-close" OnClick="Cancel" />
+    </MudStack>
+    @if (!string.IsNullOrWhiteSpace(Message))
+    {
+        <MudAlert Severity="@MessageSeverity" Variant="Variant.Outlined" Dense="true" Class="mb-3">@Message</MudAlert>
+    }
+    <MudForm @ref="_form">
+        <MudGrid Class="create-panel-form-grid" Spacing="1">
+            <MudItem xs="12" md="6"><MudTextField T="string" Label="Solution name" HelperText=" " @bind-Value="Model.Name" Required="true" RequiredError="Name is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="6"><MudTextField T="string" Label="Profile" HelperText=" " Value="@Model.ProfileCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12"><MudTextField T="string" Label="Description" HelperText=" " @bind-Value="Model.Description" Lines="3" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12"><MudTextField T="string" Label="Repository folder" HelperText=" " @bind-Value="Model.RepositoryPath" Required="true" RequiredError="Repository path is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="6"><MudTextField T="string" Label="Main solution file" HelperText=" " @bind-Value="Model.MainSolutionFile" Required="true" RequiredError="Main solution file is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="3"><MudTextField T="string" Label="Target" HelperText=" " Value="@Model.TargetCode" ReadOnly="true" Disabled="true" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+            <MudItem xs="12" md="3">
+                <MudSelect T="Guid?" Label="Overlay source" HelperText=" " Value="Model.OverlayTargetId" ValueChanged="OverlayTargetChanged" Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">(none)</MudSelectItem>
+                    @foreach (var overlayOption in OverlayOptions)
+                    {
+                        <MudSelectItem T="Guid?" Value="@overlayOption.Target.Id">@overlayOption.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12"><MudTextField T="string" Label="GitHub repository URL" HelperText="Required. Must exist on GitHub. If the repository is private, configure GITHUB_TOKEN in environment variables." @bind-Value="Model.RemoteRepositoryUrl" Required="true" RequiredError="GitHub repository URL is required." Margin="Margin.Dense" Dense="true" Variant="Variant.Outlined" /></MudItem>
+        </MudGrid>
+    </MudForm>
+    <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="create-panel-actions">
+        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="Saving" OnClick="SubmitAsync">Create solution</MudButton>
+    </MudStack>
+</MudPaper>
+
+@code {
+    private MudForm? _form;
+    [Parameter, EditorRequired] public SetupSolutionModel Model { get; set; } = new();
+    [Parameter] public IEnumerable<OverlayOption> OverlayOptions { get; set; } = Enumerable.Empty<OverlayOption>();
+    [Parameter] public EventCallback<Guid?> OverlayTargetChanged { get; set; }
+    [Parameter] public bool Saving { get; set; }
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public Severity MessageSeverity { get; set; } = Severity.Info;
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback Submit { get; set; }
+    private async Task SubmitAsync() { if (_form is not null) { await _form.Validate(); if (!_form.IsValid) return; } await Submit.InvokeAsync(); }
+}

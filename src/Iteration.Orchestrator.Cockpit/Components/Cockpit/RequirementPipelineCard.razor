@@ -1,0 +1,41 @@
+@using Iteration.Orchestrator.Cockpit.Models
+
+<div class="requirement-pipeline-card" style="@($"--pipeline-color:{Pipeline.RequirementState.Color};")">
+    <div class="pipeline-card-header">
+        <div class="pipeline-card-meta">
+            <MudChip T="string" Class="pipeline-requirement-chip" Variant="Variant.Outlined" Size="Size.Small">@Pipeline.Requirement.Title</MudChip>
+            <MudChip T="string" Class="pipeline-status-chip" Variant="Variant.Outlined" Size="Size.Small">@Pipeline.RequirementState.Label</MudChip>
+        </div>
+        <div class="pipeline-card-date">Created @Pipeline.Requirement.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd")</div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Pipeline.Requirement.Description))
+    {
+        <p class="pipeline-card-description">@Pipeline.Requirement.Description</p>
+    }
+    <div class="pipeline-flow">
+        @for (var index = 0; index < Pipeline.Steps.Count; index++)
+        {
+            var step = Pipeline.Steps[index];
+            <div class="pipeline-step-shell">
+                <div class="pipeline-step">
+                    <MudTooltip Text="@BuildPipelineTooltip(step)">
+                        <MudIconButton Icon="@step.Icon" Size="Size.Medium" Disabled="@step.Disabled" Class="@($"pipeline-step-button {step.State.CssClass}")" Style="@($"--step-color:{step.State.Color};")" aria-label="@step.LaneTitle" @onclick="() => OpenCard.InvokeAsync(step.Card)" />
+                    </MudTooltip>
+                    <span class="pipeline-step-dot" style="@($"--step-color:{step.State.Color};")"></span>
+                </div>
+                @if (index < Pipeline.Steps.Count - 1)
+                {
+                    var connectorColor = GetConnectorColor(step.State, Pipeline.Steps[index + 1].State);
+                    <div class="pipeline-step-connector" style="@($"--line-color:{connectorColor};")"></div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RequirementPipelineViewModel Pipeline { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<RequirementPipelineStep, string> BuildPipelineTooltip { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<VisualState, VisualState, string> GetConnectorColor { get; set; } = default!;
+    [Parameter] public EventCallback<RequirementStageCard> OpenCard { get; set; }
+}
