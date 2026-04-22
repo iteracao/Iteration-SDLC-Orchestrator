@@ -11,6 +11,7 @@ public static class RequirementLifecycleStatus
     public const string Review = "Review";
     public const string Deliver = "Deliver";
     public const string Documentation = "Documentation";
+    public const string AwaitingDecision = "AwaitingDecision";
     public const string Completed = "Completed";
     public const string Cancelled = "Cancelled";
 
@@ -50,7 +51,9 @@ public static class RequirementLifecycleStatus
             var current when current.Equals("documented", StringComparison.OrdinalIgnoreCase) => Completed,
             var current when current.Equals("documentation", StringComparison.OrdinalIgnoreCase) => Documentation,
             var current when current.Equals("validatedcommitted", StringComparison.OrdinalIgnoreCase) => Completed,
-            var current when current.Equals("pendingcommit", StringComparison.OrdinalIgnoreCase) => Documentation,
+            var current when current.Equals("pendingcommit", StringComparison.OrdinalIgnoreCase) => AwaitingDecision,
+            var current when current.Equals("awaitingdecision", StringComparison.OrdinalIgnoreCase) => AwaitingDecision,
+            var current when current.Equals("readytocommit", StringComparison.OrdinalIgnoreCase) => AwaitingDecision,
             var current when current.Equals("cancelledrolledback", StringComparison.OrdinalIgnoreCase) => Cancelled,
             var current when current.Equals("canceled", StringComparison.OrdinalIgnoreCase) => Cancelled,
             var current when current.Equals("cancelled", StringComparison.OrdinalIgnoreCase) => Cancelled,
@@ -63,6 +66,7 @@ public static class RequirementLifecycleStatus
             var current when current.Equals(Review, StringComparison.OrdinalIgnoreCase) => Review,
             var current when current.Equals(Deliver, StringComparison.OrdinalIgnoreCase) => Deliver,
             var current when current.Equals(Documentation, StringComparison.OrdinalIgnoreCase) => Documentation,
+            var current when current.Equals(AwaitingDecision, StringComparison.OrdinalIgnoreCase) => AwaitingDecision,
             var current when current.Equals(Completed, StringComparison.OrdinalIgnoreCase) => Completed,
             var current when current.Equals(Cancelled, StringComparison.OrdinalIgnoreCase) => Cancelled,
             _ => Pending

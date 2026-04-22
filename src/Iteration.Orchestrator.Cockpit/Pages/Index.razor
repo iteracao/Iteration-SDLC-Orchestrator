@@ -849,19 +849,22 @@
                                     </MudButton>
                                 }
 
-                                @if (_activeCard.WorkflowRun is not null)
+                                @if (_activeCard.WorkflowRun is not null && CanViewWorkflowLog(_activeCard.WorkflowRun))
                                 {
                                     <MudButton Size="Size.Small"
                                                Variant="Variant.Outlined"
                                                OnClick="() => OpenWorkflowLogAsync(_activeCard.WorkflowRun.Id)">
-                                        View log
+                                        View Log
                                     </MudButton>
+                                }
 
+                                @if (_activeCard.WorkflowRun is not null && CanViewWorkflowReport(_activeCard.WorkflowRun, _activeCard.Requirement))
+                                {
                                     <MudButton Size="Size.Small"
                                                Variant="Variant.Outlined"
                                                Disabled="!CanViewWorkflowReport(_activeWorkflowRunDetails)"
                                                OnClick="() => OpenWorkflowReportAsync(_activeCard.WorkflowRun.Id)">
-                                        View report
+                                        View Report
                                     </MudButton>
                                 }
 
@@ -969,7 +972,7 @@
                             <MudPaper Class="drawer-content-block" Elevation="0">
                                 <MudText Typo="Typo.subtitle2" Class="mb-2">Requirement decision</MudText>
                                 <MudText Typo="Typo.body2" Class="mb-2">
-                                    Documentation is validated. A final requirement decision is still needed to complete or roll back this requirement.
+                                    The final workflow is validated. A final requirement decision is still needed to complete or cancel this requirement.
                                 </MudText>
                                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
                                     <MudButton Size="Size.Small"
@@ -2257,31 +2260,29 @@
     }
 
     private bool CanAnalyze(RequirementRow requirement)
-        => (string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(requirement.Status, "Analyze", StringComparison.OrdinalIgnoreCase))
+        => (string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(requirement.Status), CockpitLifecycleRules.Pending, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(requirement.Status), CockpitLifecycleRules.Analyze, StringComparison.OrdinalIgnoreCase))
            && !HasBlockingRun(requirement.Id, null, "analyze-request");
 
     private bool CanDesign(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Design", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(requirement.Status), CockpitLifecycleRules.Design, StringComparison.OrdinalIgnoreCase)
            && !HasBlockingRun(requirement.Id, null, "design-solution-change");
 
     private bool CanPlan(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Plan", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(requirement.Status), CockpitLifecycleRules.Plan, StringComparison.OrdinalIgnoreCase)
            && !HasBlockingRun(requirement.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow requirement)
-        => IsAwaitingRequirementDecision(requirement);
+        => CockpitLifecycleRules.CanCommitRequirement(requirement.Status);
 
     private bool CanDeleteRequirement(RequirementRow requirement)
-        => string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
-            && !_runs.Any(x => x.RequirementId == requirement.Id)
-            && !_backlog.Any(x => x.RequirementId == requirement.Id);
+        => CockpitLifecycleRules.CanDeleteRequirement(
+            requirement.Status,
+            _runs.Any(x => x.RequirementId == requirement.Id),
+            _backlog.Any(x => x.RequirementId == requirement.Id));
 
     private bool CanCancelRequirement(RequirementRow requirement)
-        => !string.Equals(requirement.Status, "Pending", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(requirement.Status, "Completed", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(requirement.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
-            && !HasRunningRun(requirement.Id);
+        => CockpitLifecycleRules.CanCancelRequirement(requirement.Status, HasRunningRun(requirement.Id));
 
     private bool ShowRequirementDecisionActions(RequirementStageCard card)
         => string.Equals(card.LaneKey, LaneKeys.Requirement, StringComparison.OrdinalIgnoreCase)
@@ -2290,7 +2291,7 @@
     private bool CanImplement(BacklogRow backlogItem)
     {
         if (backlogItem.RequirementId.HasValue
-            && !string.Equals(GetRequirementStatus(backlogItem.RequirementId), "Implement", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(GetRequirementStatus(backlogItem.RequirementId)), CockpitLifecycleRules.Implement, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -2316,26 +2317,26 @@
     }
 
     private static bool CanValidate(WorkflowRunRow run)
-        => run.Status == 6;
+        => CockpitLifecycleRules.CanValidateWorkflowRun(run.Status);
 
     private static bool CanCancel(WorkflowRunRow run)
-        => run.Status == 4;
+        => CockpitLifecycleRules.CanCancelWorkflowRun(run.Status);
 
     private static bool IsExecutingWorkflowStatus(int status)
-        => status is 1 or 2;
+        => CockpitLifecycleRules.IsBlockingWorkflowStatus(status);
 
     private bool HasBlockingRun(Guid? requirementId, Guid? backlogItemId, string workflowCode)
         => _runs.Any(x =>
             x.RequirementId == requirementId
             && x.BacklogItemId == backlogItemId
             && string.Equals(x.WorkflowCode, workflowCode, StringComparison.OrdinalIgnoreCase)
-            && x.Status is 1 or 2 or 6);
+            && CockpitLifecycleRules.IsBlockingWorkflowStatus(x.Status));
 
     private bool HasAnyBlockingRun(Guid requirementId)
-        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+        => _runs.Any(x => x.RequirementId == requirementId && CockpitLifecycleRules.IsBlockingWorkflowStatus(x.Status));
 
     private bool HasRunningRun(Guid requirementId)
-        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 2);
+        => _runs.Any(x => x.RequirementId == requirementId && CockpitLifecycleRules.IsRunningWorkflowStatus(x.Status));
 
     private static bool CanViewWorkflowOutput(WorkflowRunDetail? detail)
         => detail?.HasOutputPayload == true;
@@ -2350,49 +2351,27 @@
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
 
     private string GetRequirementBadgeLabel(RequirementRow requirement)
-    {
-        var normalizedStatus = requirement.Status.Trim();
-        if (string.Equals(normalizedStatus, "Pending", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Pending";
-        }
-
-        if (IsAwaitingRequirementDecision(requirement))
-        {
-            return "Awaiting Validation";
-        }
-
-        return HumanizeRequirementStatus(normalizedStatus);
-    }
+        => CockpitLifecycleRules.GetRequirementBadgeLabel(requirement.Status);
 
     private VisualState GetRequirementBadgeVisualState(RequirementRow requirement)
-    {
-        var label = GetRequirementBadgeLabel(requirement);
-        if (string.Equals(label, "Validated", StringComparison.OrdinalIgnoreCase))
-        {
-            return VisualStatePalette.Success;
-        }
-
-        if (string.Equals(label, "Awaiting Validation", StringComparison.OrdinalIgnoreCase))
-        {
-            return VisualStatePalette.Waiting;
-        }
-
-        return GetRequirementVisualState(requirement.Status);
-    }
+        => GetRequirementVisualState(requirement.Status);
 
     private bool IsAwaitingRequirementDecision(RequirementRow requirement)
-    {
-        if (!string.Equals(requirement.Status, "Documentation", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
+        => CockpitLifecycleRules.IsAwaitingDecision(requirement.Status);
 
-        var latestRun = GetLatestRequirementRun(requirement.Id);
-        return latestRun is not null
-            && string.Equals(latestRun.WorkflowCode, "update-solution-history", StringComparison.OrdinalIgnoreCase)
-            && latestRun.Status == 3;
-    }
+    private bool IsFinalDecisionRun(WorkflowRunRow run, RequirementRow requirement)
+        => run.Status == 3
+            && string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(requirement.Status), CockpitLifecycleRules.AwaitingDecision, StringComparison.OrdinalIgnoreCase);
+
+    private bool CanViewWorkflowLog(WorkflowRunRow run)
+        => CanViewWorkflowLog(run, _activeCard?.Requirement ?? _requirements.FirstOrDefault(x => x.Id == run.RequirementId));
+
+    private bool CanViewWorkflowLog(WorkflowRunRow run, RequirementRow? requirement)
+        => CockpitLifecycleRules.CanViewWorkflowArtifacts(run.Status, requirement is not null && IsFinalDecisionRun(run, requirement));
+
+    private bool CanViewWorkflowReport(WorkflowRunRow run, RequirementRow requirement)
+        => CanViewWorkflowLog(run, requirement) && CanViewWorkflowReport(_activeWorkflowRunDetails);
 
     private WorkflowRunRow? GetLatestRequirementRun(Guid requirementId)
         => _runs
@@ -2502,7 +2481,7 @@
             var response = await client.PostAsJsonAsync("api/workflow-runs/cancel", new
             {
                 WorkflowRunId = workflowRunId,
-                TerminateRequirementLifecycle = true,
+                TerminateRequirementLifecycle = false,
                 Reason = "Cancelled from cockpit"
             });
 
@@ -2535,13 +2514,7 @@
         };
 
     private static string HumanizeRequirementStatus(string status)
-        => status.Trim() switch
-        {
-            var value when string.Equals(value, "Documentation", StringComparison.OrdinalIgnoreCase) => "Documentation",
-            var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => "Completed",
-            var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => "Cancelled",
-            _ => string.Concat(status.Select((ch, index) => index > 0 && char.IsUpper(ch) ? $" {ch}" : ch.ToString())).Trim()
-        };
+        => CockpitLifecycleRules.HumanizeRequirementStatus(status);
 
     private static string HumanizeBacklogStatus(string status)
         => status switch
@@ -2556,20 +2529,21 @@
 
     private static VisualState GetRequirementVisualState(string status)
     {
-        return status.Trim() switch
+        return CockpitLifecycleRules.NormalizeRequirementStatus(status) switch
         {
-            var value when string.Equals(value, "Pending", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Analyze", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Design", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Plan", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Implement", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.Pending, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.Analyze, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.Design, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.Plan, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.Implement, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
+            var value when string.Equals(value, CockpitLifecycleRules.AwaitingDecision, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Test", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Review", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Deliver", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
             var value when string.Equals(value, "Documentation", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Waiting,
-            var value when string.Equals(value, "Completed", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
+            var value when string.Equals(value, CockpitLifecycleRules.Completed, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Success,
             var value when string.Equals(value, "Canceled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
-            var value when string.Equals(value, "Cancelled", StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
+            var value when string.Equals(value, CockpitLifecycleRules.Cancelled, StringComparison.OrdinalIgnoreCase) => VisualStatePalette.Error,
             _ => VisualStatePalette.Default
         };
     }

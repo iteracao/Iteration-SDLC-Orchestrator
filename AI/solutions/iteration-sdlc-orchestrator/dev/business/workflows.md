@@ -103,9 +103,9 @@ Persisted outputs:
 
 Requirement state changes:
 
-- run start: requirement stays `Pending`
-- run success: workflow run becomes `CompletedAwaitingValidation`
-- validation: requirement becomes `Analyzed`
+- run start: requirement becomes `Analyze`
+- run success: workflow run becomes `Completed`
+- validation: requirement becomes `Design`
 - run failure: workflow run becomes `Error`; requirement stays `Pending`
 
 Current notes:
@@ -124,7 +124,7 @@ Source:
 
 Precondition:
 
-- requirement must already be `analyzed`
+- requirement must already be in `Design`
 
 Trigger and actual inputs:
 
@@ -147,10 +147,10 @@ Persisted outputs:
 
 Requirement state changes:
 
-- run start: requirement stays `Analyzed`
-- run success: workflow run becomes `CompletedAwaitingValidation`
-- validation: requirement becomes `Designed`
-- run failure: workflow run becomes `Error`; requirement stays `Analyzed`
+- run start: requirement stays `Design`
+- run success: workflow run becomes `Completed`
+- validation: requirement becomes `Plan`
+- run failure: workflow run becomes `Error`; requirement stays `Design`
 
 Current notes:
 
@@ -190,10 +190,10 @@ Persisted outputs:
 
 Requirement state changes:
 
-- run start: requirement stays `Designed`
-- run success: workflow run becomes `CompletedAwaitingValidation`
-- validation: requirement becomes `Planned`
-- run failure: workflow run becomes `Error`; requirement stays `Designed`
+- run start: requirement stays `Plan`
+- run success: workflow run becomes `Completed`
+- validation: requirement becomes `Implement`
+- run failure: workflow run becomes `Error`; requirement stays `Plan`
 
 Current notes:
 
@@ -238,12 +238,12 @@ Persisted outputs:
 
 Backlog and requirement state changes:
 
-- requirement start: requirement stays `Planned`
+- requirement start: requirement stays `Implement`
 - backlog success: `AwaitingValidation`
-- workflow success: run becomes `CompletedAwaitingValidation`
-- validation: backlog becomes `Validated`, requirement becomes `Implemented`
+- workflow success: run becomes `Completed`
+- validation: backlog becomes `Validated`, requirement becomes `AwaitingDecision`
 - backlog failure: `ImplementationError`
-- workflow failure: run becomes `Error`; requirement stays `Planned`
+- workflow failure: run becomes `Error`; requirement stays `Implement`
 
 Important current gap:
 
@@ -252,17 +252,18 @@ Important current gap:
 
 ## Shared Lifecycle Rules
 
-- Workflow run states are normalized to `Pending`, `Running`, `CompletedAwaitingValidation`, `CompletedValidated`, `Error`, and `Cancelled`.
-- Requirement lifecycle states are normalized to `Pending`, `Analyzed`, `Designed`, `Planned`, `Implemented`, `Tested`, `Reviewed`, `Delivered`, `Documented`, `ValidatedCommitted`, and `CancelledRolledBack`.
+- The authoritative lifecycle model lives in `dev/business/requirement-workflow-lifecycle.md`.
+- Current runtime workflow run states are `Pending`, `Running`, `Completed`, `Error`, `Validated`, and `Cancelled`.
+- Current runtime requirement states are `Pending`, `Analyze`, `Design`, `Plan`, `Implement`, `AwaitingDecision`, `Completed`, and `Cancelled`.
 - Requirement progression happens only when the corresponding workflow run is explicitly validated.
-- There is no retry action. A later attempt must be a new workflow run.
-- A stage stays blocked while the latest run for that stage is `Pending`, `Running`, or `CompletedAwaitingValidation`.
-- Generic validation and cancellation API actions exist for workflow runs even though validation is not yet a dedicated executor-backed workflow stage.
+- Validating the last executable workflow moves the requirement to `AwaitingDecision`; it does not auto-complete the requirement.
+- A stage stays blocked while the latest run for that stage is `Pending`, `Running`, or `Completed`.
+- Generic validation and cancellation API actions exist for workflow runs, and a workflow cancellation only terminates the requirement lifecycle when explicitly requested.
 
 ## Cockpit Refresh
 
 - The cockpit refreshes immediately after run, validate, and cancel actions.
-- Polling remains active while the selected target has runs in `Pending`, `Running`, or `CompletedAwaitingValidation`.
+- Polling remains active while the selected target has runs in `Pending`, `Running`, or `Completed`.
 - Polling is snapshot-based for requirement, backlog, and workflow-run status fields, so unchanged polls do not trigger UI updates.
 
 ## Intended Later Stages
@@ -278,6 +279,7 @@ Current runtime status:
 
 - framework YAML exists for these later stages
 - cockpit shows placeholder Test, Review, Deliver, and Documentation lanes
+- current executable lifecycle still ends at implementation validation and then enters `AwaitingDecision`
 - there are no application handlers, executor branches, or first-class persistence/report flows for these stages yet
 
 ## Exceptions

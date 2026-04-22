@@ -104,15 +104,38 @@ public sealed class Requirement
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
+    public void EnterAwaitingDecision(Guid workflowRunId)
+    {
+        WorkflowRunId = workflowRunId;
+        Status = RequirementLifecycleStatus.AwaitingDecision;
+        UpdatedAtUtc = DateTime.UtcNow;
+    }
 
     public void Commit()
     {
+        if (!string.Equals(Status, RequirementLifecycleStatus.AwaitingDecision, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Requirement must be awaiting a final decision before it can be completed.");
+        }
+
         Status = RequirementLifecycleStatus.Completed;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
     public void Cancel()
     {
+        var normalizedStatus = RequirementLifecycleStatus.Normalize(Status);
+        if (string.Equals(normalizedStatus, RequirementLifecycleStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Pending requirements cannot be cancelled.");
+        }
+
+        if (string.Equals(normalizedStatus, RequirementLifecycleStatus.Completed, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalizedStatus, RequirementLifecycleStatus.Cancelled, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Requirement is already finalized.");
+        }
+
         Status = RequirementLifecycleStatus.Cancelled;
         UpdatedAtUtc = DateTime.UtcNow;
     }

@@ -37,9 +37,9 @@ public sealed class ValidateWorkflowRunHandler
             var nextStatus = WorkflowLifecycleCatalog.GetNextRequirementStatusAfterValidation(run.WorkflowCode);
             if (!string.IsNullOrWhiteSpace(nextStatus))
             {
-                if (string.Equals(nextStatus, RequirementLifecycleStatus.Completed, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(nextStatus, RequirementLifecycleStatus.AwaitingDecision, StringComparison.OrdinalIgnoreCase))
                 {
-                    requirement.Commit();
+                    requirement.EnterAwaitingDecision(run.Id);
                 }
                 else
                 {

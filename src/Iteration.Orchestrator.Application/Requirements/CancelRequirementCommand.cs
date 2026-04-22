@@ -26,6 +26,11 @@ public sealed class CancelRequirementHandler
             ?? throw new InvalidOperationException("Requirement not found.");
 
         var normalizedStatus = RequirementLifecycleStatus.Normalize(requirement.Status);
+        if (string.Equals(normalizedStatus, RequirementLifecycleStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Pending requirements cannot be cancelled.");
+        }
+
         if (string.Equals(normalizedStatus, RequirementLifecycleStatus.Completed, StringComparison.OrdinalIgnoreCase)
             || string.Equals(normalizedStatus, RequirementLifecycleStatus.Cancelled, StringComparison.OrdinalIgnoreCase))
         {

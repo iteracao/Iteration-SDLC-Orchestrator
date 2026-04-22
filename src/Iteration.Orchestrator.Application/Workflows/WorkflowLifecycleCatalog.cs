@@ -52,11 +52,7 @@ public static class WorkflowLifecycleCatalog
             "analyze-request" => RequirementLifecycleStatus.Design,
             "design-solution-change" => RequirementLifecycleStatus.Plan,
             "plan-implementation" => RequirementLifecycleStatus.Implement,
-            "implement-solution-change" => RequirementLifecycleStatus.Test,
-            "test-solution-change" => RequirementLifecycleStatus.Review,
-            "review-implementation" => RequirementLifecycleStatus.Deliver,
-            "deliver-solution-change" => RequirementLifecycleStatus.Documentation,
-            "update-solution-history" => RequirementLifecycleStatus.Completed,
+            "implement-solution-change" => RequirementLifecycleStatus.AwaitingDecision,
             _ => null
         };
 

@@ -23,9 +23,9 @@ public sealed class CommitRequirementHandler
         var requirement = await _db.Requirements.FirstOrDefaultAsync(x => x.Id == command.RequirementId, ct)
             ?? throw new InvalidOperationException("Requirement not found.");
 
-        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.Documentation, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(requirement.Status, RequirementLifecycleStatus.AwaitingDecision, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Requirement must be in 'Documentation' status before it can be committed.");
+            throw new InvalidOperationException("Requirement must be awaiting a final decision before it can be completed.");
         }
 
         if (await _workflowLifecycle.HasBlockingRunsAsync(requirement.Id, ct))

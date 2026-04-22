@@ -79,26 +79,61 @@ else
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd DataLabel="Title">@context.Title</MudTd>
-                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Variant="Variant.Outlined"
+                                         Color="@GetRequirementStatusColor(context)">
+                                    @GetRequirementBadgeLabel(context)
+                                </MudChip>
+                            </MudTd>
                             <MudTd DataLabel="Priority">@context.Priority</MudTd>
                             <MudTd DataLabel="Created">@context.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
                             <MudTd DataLabel="Action">
                                 <MudStack Row="true" Spacing="1">
-                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="_runningRequirementId == context.Id || !CanAnalyze(context)" OnClick="() => StartAnalyzeAsync(context.Id)">
-                                        Analyze
-                                    </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" Disabled="_runningRequirementId == context.Id || !CanDesign(context)" OnClick="() => StartDesignAsync(context.Id)">
-                                        Design
-                                    </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Info" Disabled="_runningRequirementId == context.Id || !CanPlan(context)" OnClick="() => StartPlanAsync(context.Id)">
-                                        Plan
-                                    </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="_mutatingRequirementId == context.Id || !CanCommitRequirement(context)" OnClick="() => CommitRequirementAsync(context.Id)">
-                                        Validate
-                                    </MudButton>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="_mutatingRequirementId == context.Id || !CanCancelRequirement(context)" OnClick="() => CancelRequirementAsync(context.Id)">
-                                        Cancel
-                                    </MudButton>
+                                    @if (CanRunRequirement(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Primary"
+                                                   Disabled="_runningRequirementId == context.Id"
+                                                   OnClick="() => RunRequirementAsync(context)">
+                                            Run
+                                        </MudButton>
+                                    }
+
+                                    @if (CanCommitRequirement(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Success"
+                                                   Disabled="_mutatingRequirementId == context.Id"
+                                                   OnClick="() => CommitRequirementAsync(context.Id)">
+                                            Validate Requirement
+                                        </MudButton>
+                                    }
+
+                                    @if (CanCancelRequirement(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Disabled="_mutatingRequirementId == context.Id"
+                                                   OnClick="() => CancelRequirementAsync(context.Id)">
+                                            Cancel Requirement
+                                        </MudButton>
+                                    }
+
+                                    @if (CanDeleteRequirement(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Disabled="_mutatingRequirementId == context.Id"
+                                                   OnClick="() => DeleteRequirementAsync(context.Id)">
+                                            Delete
+                                        </MudButton>
+                                    }
                                 </MudStack>
                             </MudTd>
                         </RowTemplate>
@@ -164,20 +199,58 @@ else
                             <MudTd DataLabel="Started">@context.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
                             <MudTd DataLabel="Action">
                                 <MudStack Row="true" Spacing="1">
-                                    <MudButton Size="Size.Small"
-                                               Variant="Variant.Filled"
-                                               Color="Color.Warning"
-                                               Disabled="!CanValidate(context) || _mutatingWorkflowRunId == context.Id"
-                                               OnClick="() => ValidateWorkflowRunAsync(context.Id)">
-                                        Validate
-                                    </MudButton>
-                                    <MudButton Size="Size.Small"
-                                               Variant="Variant.Outlined"
-                                               Color="Color.Error"
-                                               Disabled="!CanCancel(context) || _mutatingWorkflowRunId == context.Id"
-                                               OnClick="() => CancelWorkflowRunAsync(context.Id)">
-                                        Cancel
-                                    </MudButton>
+                                    @if (CanRunWorkflow(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Primary"
+                                                   Disabled="@IsWorkflowBusy(context)"
+                                                   OnClick="() => RunWorkflowAsync(context)">
+                                            Run
+                                        </MudButton>
+                                    }
+
+                                    @if (CanValidate(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Warning"
+                                                   Disabled="_mutatingWorkflowRunId == context.Id"
+                                                   OnClick="() => ValidateWorkflowRunAsync(context.Id)">
+                                            Validate
+                                        </MudButton>
+                                    }
+
+                                    @if (CanCancel(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Disabled="_mutatingWorkflowRunId == context.Id"
+                                                   OnClick="() => CancelWorkflowRunAsync(context.Id)">
+                                            Cancel
+                                        </MudButton>
+                                    }
+
+                                    @if (CanViewWorkflowLog(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Href="@BuildWorkflowLogUrl(context.Id)"
+                                                   Target="_blank">
+                                            View Log
+                                        </MudButton>
+                                    }
+
+                                    @if (CanViewWorkflowReport(context))
+                                    {
+                                        <MudButton Size="Size.Small"
+                                                   Variant="Variant.Outlined"
+                                                   Href="@BuildWorkflowReportUrl(context)"
+                                                   Target="_blank">
+                                            View Report
+                                        </MudButton>
+                                    }
                                 </MudStack>
                             </MudTd>
                         </RowTemplate>
@@ -334,7 +407,7 @@ else
 
     private void EnsurePollingState()
     {
-        if (_runs.Any(x => x.Status is 1 or 2 or 6))
+        if (_runs.Any(x => CockpitLifecycleRules.IsBlockingWorkflowStatus(x.Status)))
         {
             StartPolling();
             return;
@@ -571,31 +644,55 @@ else
         }
     }
 
+    private bool CanRunRequirement(RequirementRow row)
+        => CanAnalyze(row) || CanDesign(row) || CanPlan(row);
+
+    private async Task RunRequirementAsync(RequirementRow row)
+    {
+        if (CanAnalyze(row))
+        {
+            await StartAnalyzeAsync(row.Id);
+            return;
+        }
+
+        if (CanDesign(row))
+        {
+            await StartDesignAsync(row.Id);
+            return;
+        }
+
+        if (CanPlan(row))
+        {
+            await StartPlanAsync(row.Id);
+        }
+    }
+
     private bool CanAnalyze(RequirementRow row)
-        => (string.Equals(row.Status, "Pending", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(row.Status, "Analyze", StringComparison.OrdinalIgnoreCase))
+        => (string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(row.Status), CockpitLifecycleRules.Pending, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(row.Status), CockpitLifecycleRules.Analyze, StringComparison.OrdinalIgnoreCase))
             && !HasBlockingRun(row.Id, null, "analyze-request");
 
     private bool CanDesign(RequirementRow row)
-        => string.Equals(row.Status, "Design", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(row.Status), CockpitLifecycleRules.Design, StringComparison.OrdinalIgnoreCase)
             && !HasBlockingRun(row.Id, null, "design-solution-change");
 
     private bool CanPlan(RequirementRow row)
-        => string.Equals(row.Status, "Plan", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(row.Status), CockpitLifecycleRules.Plan, StringComparison.OrdinalIgnoreCase)
             && !HasBlockingRun(row.Id, null, "plan-implementation");
 
     private bool CanCommitRequirement(RequirementRow row)
-        => IsAwaitingRequirementDecision(row);
+        => CockpitLifecycleRules.CanCommitRequirement(row.Status);
 
     private bool CanCancelRequirement(RequirementRow row)
-        => !string.Equals(row.Status, "Completed", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(row.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
-            && !HasRunningRun(row.Id);
+        => CockpitLifecycleRules.CanCancelRequirement(row.Status, HasRunningRun(row.Id));
+
+    private bool CanDeleteRequirement(RequirementRow row)
+        => CockpitLifecycleRules.CanDeleteRequirement(row.Status, _runs.Any(x => x.RequirementId == row.Id), _backlog.Any(x => x.RequirementId == row.Id));
 
     private bool CanImplement(BacklogRow row)
     {
         if (row.RequirementId.HasValue
-            && !string.Equals(GetRequirementStatus(row.RequirementId), "Implement", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(CockpitLifecycleRules.NormalizeRequirementStatus(GetRequirementStatus(row.RequirementId)), CockpitLifecycleRules.Implement, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -615,43 +712,148 @@ else
             && !HasBlockingRun(row.RequirementId, row.Id, "implement-solution-change");
     }
 
+    private bool CanRunWorkflow(WorkflowRunRow run)
+    {
+        if (run.Status != 4)
+        {
+            return false;
+        }
+
+        if (string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase))
+        {
+            var backlogItem = _backlog.FirstOrDefault(x => x.Id == run.BacklogItemId);
+            return backlogItem is not null && CanImplement(backlogItem);
+        }
+
+        var requirement = _requirements.FirstOrDefault(x => x.Id == run.RequirementId);
+        return requirement is not null && CanRunRequirement(requirement);
+    }
+
+    private bool IsWorkflowBusy(WorkflowRunRow run)
+    {
+        if (string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase) && run.BacklogItemId.HasValue)
+        {
+            return _runningBacklogItemId == run.BacklogItemId.Value;
+        }
+
+        return run.RequirementId.HasValue && _runningRequirementId == run.RequirementId.Value;
+    }
+
+    private async Task RunWorkflowAsync(WorkflowRunRow run)
+    {
+        if (string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase) && run.BacklogItemId.HasValue)
+        {
+            await StartImplementationAsync(run.BacklogItemId.Value);
+            return;
+        }
+
+        if (!run.RequirementId.HasValue)
+        {
+            return;
+        }
+
+        switch (run.WorkflowCode)
+        {
+            case "analyze-request":
+                await StartAnalyzeAsync(run.RequirementId.Value);
+                break;
+            case "design-solution-change":
+                await StartDesignAsync(run.RequirementId.Value);
+                break;
+            case "plan-implementation":
+                await StartPlanAsync(run.RequirementId.Value);
+                break;
+        }
+    }
+
     private static bool CanValidate(WorkflowRunRow run)
-        => run.Status == 6;
+        => CockpitLifecycleRules.CanValidateWorkflowRun(run.Status);
 
     private static bool CanCancel(WorkflowRunRow run)
-        => run.Status is 1 or 4 or 6;
+        => CockpitLifecycleRules.CanCancelWorkflowRun(run.Status);
 
     private bool HasBlockingRun(Guid? requirementId, Guid? backlogItemId, string workflowCode)
         => _runs.Any(x =>
             x.RequirementId == requirementId
             && x.BacklogItemId == backlogItemId
             && string.Equals(x.WorkflowCode, workflowCode, StringComparison.OrdinalIgnoreCase)
-            && x.Status is 1 or 2 or 6);
+            && CockpitLifecycleRules.IsBlockingWorkflowStatus(x.Status));
 
     private bool HasAnyBlockingRun(Guid requirementId)
-        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 1 or 2 or 6);
+        => _runs.Any(x => x.RequirementId == requirementId && CockpitLifecycleRules.IsBlockingWorkflowStatus(x.Status));
 
     private bool HasRunningRun(Guid requirementId)
-        => _runs.Any(x => x.RequirementId == requirementId && x.Status is 2);
+        => _runs.Any(x => x.RequirementId == requirementId && CockpitLifecycleRules.IsRunningWorkflowStatus(x.Status));
 
     private string GetRequirementStatus(Guid? requirementId)
         => _requirements.FirstOrDefault(x => x.Id == requirementId)?.Status ?? string.Empty;
 
-    private bool IsAwaitingRequirementDecision(RequirementRow row)
-    {
-        if (!string.Equals(row.Status, "Documentation", StringComparison.OrdinalIgnoreCase))
+    private string GetRequirementBadgeLabel(RequirementRow row)
+        => CockpitLifecycleRules.GetRequirementBadgeLabel(row.Status);
+
+    private static Color GetRequirementStatusColor(RequirementRow row)
+        => CockpitLifecycleRules.NormalizeRequirementStatus(row.Status) switch
         {
-            return false;
+            CockpitLifecycleRules.AwaitingDecision => Color.Warning,
+            CockpitLifecycleRules.Completed => Color.Success,
+            CockpitLifecycleRules.Cancelled => Color.Error,
+            _ => Color.Info
+        };
+
+    private bool IsFinalDecisionRun(WorkflowRunRow run)
+        => run.Status == 3
+            && string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase)
+            && run.RequirementId.HasValue
+            && CockpitLifecycleRules.IsAwaitingDecision(GetRequirementStatus(run.RequirementId));
+
+    private bool CanViewWorkflowLog(WorkflowRunRow run)
+        => CockpitLifecycleRules.CanViewWorkflowArtifacts(run.Status, IsFinalDecisionRun(run));
+
+    private bool CanViewWorkflowReport(WorkflowRunRow run)
+        => CanViewWorkflowLog(run) && !string.IsNullOrWhiteSpace(GetWorkflowReportFileName(run));
+
+    private string BuildWorkflowLogUrl(Guid workflowRunId)
+        => new Uri(HttpClientFactory.CreateClient("api").BaseAddress!, $"api/workflow-runs/{workflowRunId}/log").ToString();
+
+    private string BuildWorkflowReportUrl(WorkflowRunRow run)
+        => new Uri(
+            HttpClientFactory.CreateClient("api").BaseAddress!,
+            $"api/workflow-runs/{run.Id}/artifacts/{Uri.EscapeDataString(GetWorkflowReportFileName(run)!)}").ToString();
+
+    private static string? GetWorkflowReportFileName(WorkflowRunRow run)
+        => run.WorkflowCode switch
+        {
+            "analyze-request" => "analysis-report.md",
+            "design-solution-change" => "design-report.json",
+            "plan-implementation" => "implementation-plan.json",
+            "implement-solution-change" => "implementation-result.json",
+            _ => null
+        };
+
+    private async Task DeleteRequirementAsync(Guid requirementId)
+    {
+        _mutatingRequirementId = requirementId;
+        _formMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.DeleteAsync($"api/requirements/{requirementId}");
+            response.EnsureSuccessStatusCode();
+
+            _formSeverity = Severity.Success;
+            _formMessage = "Requirement deleted.";
+            await LoadAsync();
         }
-
-        var latestRun = _runs
-            .Where(x => x.RequirementId == row.Id)
-            .OrderByDescending(x => x.StartedUtc)
-            .FirstOrDefault();
-
-        return latestRun is not null
-            && string.Equals(latestRun.WorkflowCode, "update-solution-history", StringComparison.OrdinalIgnoreCase)
-            && latestRun.Status == 3;
+        catch (Exception ex)
+        {
+            _formSeverity = Severity.Error;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _mutatingRequirementId = null;
+        }
     }
 
     private async Task CommitRequirementAsync(Guid requirementId)
@@ -743,7 +945,7 @@ else
             var response = await client.PostAsJsonAsync("api/workflow-runs/cancel", new
             {
                 WorkflowRunId = workflowRunId,
-                TerminateRequirementLifecycle = true,
+                TerminateRequirementLifecycle = false,
                 Reason = "Cancelled from cockpit"
             });
             response.EnsureSuccessStatusCode();
