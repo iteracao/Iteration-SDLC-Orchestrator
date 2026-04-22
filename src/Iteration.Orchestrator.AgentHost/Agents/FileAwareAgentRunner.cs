@@ -315,10 +315,6 @@ internal static class FileAwareAgentRunner
                     state.FilesAlreadyListed = true;
                     state.AvailableFilesPayload = fileListResult;
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
-                    if (matchingPaths.Count > 0)
-                    {
-                        await logs.AppendBlockAsync(workflowRunId, $"Available files ({phase.Name})", fileListResult, ct);
-                    }
                     currentMessages = [CreateToolMessage(fileListResult)];
                     continue;
                 }
@@ -338,11 +334,6 @@ internal static class FileAwareAgentRunner
                         workflowRunId,
                         $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
                         ct);
-
-                    if (batch.Files.Count > 0)
-                    {
-                        await logs.AppendBlockAsync(workflowRunId, $"File batch ({phase.Name})", batch.Payload, ct);
-                    }
 
                     currentMessages = [CreateToolMessage(batch.Payload)];
                     continue;
@@ -794,9 +785,10 @@ internal static class FileAwareAgentRunner
         if (phase.AllowToolCalls)
         {
             sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
-            sb.AppendLine("- Use find_available_files to obtain exact full physical paths for this run.");
-            sb.AppendLine("- Use get_next_file_batch to review the allowed file set in controlled server-sized batches.");
+            sb.AppendLine("- Use find_available_files first to obtain the allowed full physical paths for this run.");
+            sb.AppendLine("- find_available_files takes no parameters and returns only file paths, one per line.");
             sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
+            sb.AppendLine("- get_file returns file content to the model only. File content is not copied into prompts and should not be echoed into logs.");
             if (writableFiles is not null && writableFiles.Count > 0)
             {
                 sb.AppendLine("- Use write_file only with one approved stable documentation path exactly as listed in the prompt.");

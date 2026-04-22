@@ -4,7 +4,6 @@ description: Maintains the stable solution documentation set using tool-driven r
 
 allowedTools:
   - find_available_files
-  - get_next_file_batch
   - get_file
   - write_file
 promptFile: prompt.md

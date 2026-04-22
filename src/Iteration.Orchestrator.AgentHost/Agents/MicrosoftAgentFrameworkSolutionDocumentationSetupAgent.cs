@@ -74,12 +74,11 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Prompt: BuildDocumentationContextPrompt(request),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Review the full allowed stable-doc, repo-doc, and source context.",
+                    PurposeSummary: "Review the allowed stable-doc, repo-doc, and source context using targeted evidence reads.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
                     SavedMarkdownArtifactFileName: DocumentationContextArtifactFileName,
-                    InjectSavedMarkdownIntoNextPhase: true,
-                    RequireAllAvailableFilesRead: true),
+                    InjectSavedMarkdownIntoNextPhase: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalOutputPrompt(request),
@@ -147,11 +146,12 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine("- Prompt 3 must decide the final documentation state, use write_file for approved doc changes, and return the final Markdown report only.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed read tool actions are find_available_files, get_next_file_batch, and get_file.");
+        sb.AppendLine("- Allowed read tool actions are find_available_files and get_file.");
         sb.AppendLine("- Allowed write tool action is write_file.");
-        sb.AppendLine("- Always call find_available_files first before targeted get_file calls.");
-        sb.AppendLine("- In Prompt 2, repeatedly call get_next_file_batch until all allowed context has been reviewed.");
-        sb.AppendLine("- Use get_file only with exact full physical paths returned by find_available_files.");
+        sb.AppendLine("- Always call find_available_files first.");
+        sb.AppendLine("- find_available_files takes no parameters and returns only the allowed full physical file paths for this run, one path per line.");
+        sb.AppendLine("- get_file requires an exact full physical path previously returned by find_available_files.");
+        sb.AppendLine("- get_file returns file content to the model only. File content is not injected into prompts and must not be copied into logs.");
         sb.AppendLine("- Use write_file only for approved stable documentation files listed below.");
         sb.AppendLine("Approved stable documentation targets:");
         foreach (var path in request.StableDocumentTargets)
@@ -200,8 +200,9 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine();
         sb.AppendLine("REQUIRED TOOL FLOW");
         sb.AppendLine("- First call `find_available_files`.");
-        sb.AppendLine("- Then repeatedly call `get_next_file_batch` until the full allowed context has been reviewed.");
-        sb.AppendLine("- Use `get_file` only for targeted follow-up reads when a specific file needs closer confirmation.");
+        sb.AppendLine("- Review the returned allowed file list and choose targeted evidence reads.");
+        sb.AppendLine("- Use `get_file` only with an exact full physical path returned by `find_available_files`.");
+        sb.AppendLine("- Read only the files needed to ground the documentation context and final decision.");
         sb.AppendLine();
         sb.AppendLine("Return Markdown using exactly this structure:");
         sb.AppendLine("# Documentation Context");
@@ -235,7 +236,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         }
         sb.AppendLine("- Never write any other path.");
         sb.AppendLine("- Stable docs must stay concise, structured, long-lived, and grounded in source code.");
-        sb.AppendLine("- Do not include workflow logs, analysis narratives, or transient run details in document content.");
+        sb.AppendLine("- Do not include workflow logs, analysis narratives, transient run details, or raw file dumps in document content.");
         sb.AppendLine();
         sb.AppendLine("FINAL REPORT FORMAT");
         sb.AppendLine("Return Markdown only using exactly these sections:");

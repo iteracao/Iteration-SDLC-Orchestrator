@@ -37,8 +37,9 @@ TOOL USAGE RULES
 
 - Use tools to load repository context; do not rely on inline repository content.
 - Start with find_available_files.
-- Use get_next_file_batch until the full allowed context set has been reviewed.
-- Use get_file only for targeted follow-up confirmation.
+- find_available_files takes no parameters and returns only the allowed full physical file paths for this run, one path per line.
+- Use get_file only for targeted follow-up confirmation with an exact full physical path returned by find_available_files.
+- get_file returns file content to the model only. Do not rely on file content being copied into logs or injected into later prompts.
 - Use write_file only for approved stable documentation files explicitly listed in the prompt.
 - Do not attempt repository discovery outside the allowed context set.
 - Never use excluded areas as evidence.
