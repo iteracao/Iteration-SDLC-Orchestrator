@@ -53,7 +53,7 @@ public partial class Index : ComponentBase, IDisposable
     private bool _documentationWorkflowModalOpen;
     private bool _savingSolution;
     private bool _savingRequirement;
-    private bool _runningDocumentationWorkflow;
+    private bool _startingDocumentationWorkflow;
     private bool _documentationWorkflowLogLoading;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
@@ -137,6 +137,9 @@ public partial class Index : ComponentBase, IDisposable
     private bool ActiveCardCanViewLog => _activeCard?.WorkflowRun is not null && CanViewWorkflowLog(_activeCard.WorkflowRun);
 
     private bool ActiveCardCanViewReport => _activeCard?.WorkflowRun is not null && CanViewWorkflowReport(_activeCard.WorkflowRun, _activeCard.Requirement);
+
+    private bool DocumentationWorkflowRunDisabled
+        => _startingDocumentationWorkflow || IsDocumentationWorkflowInProgress(CurrentDocumentationWorkflowRun);
 
     private bool ActiveCardCanDeleteRequirement
         => _activeCard is not null
@@ -296,10 +299,9 @@ public partial class Index : ComponentBase, IDisposable
                 shouldRender = true;
             }
 
-            if (_documentationWorkflowModalOpen && _currentDocumentationWorkflowRunId.HasValue)
+            if (_documentationWorkflowModalOpen && _currentDocumentationWorkflowRunId.HasValue && IsDocumentationWorkflowInProgress(CurrentDocumentationWorkflowRun))
             {
-                await LoadDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId);
-                shouldRender = true;
+                shouldRender = await RefreshDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId, showLoadingIndicator: false) || shouldRender;
             }
 
             if (!string.Equals(previousLoadError, _loadError, StringComparison.Ordinal))
@@ -738,7 +740,7 @@ public partial class Index : ComponentBase, IDisposable
         _documentationWorkflowMessage = null;
         _documentationWorkflowLog = null;
         _documentationWorkflowLogLoading = false;
-        _runningDocumentationWorkflow = false;
+        _startingDocumentationWorkflow = false;
         _currentDocumentationWorkflowRunId = null;
     }
 
@@ -754,25 +756,42 @@ public partial class Index : ComponentBase, IDisposable
 
     private async Task LoadDocumentationWorkflowLogAsync(Guid? workflowRunId)
     {
+        await RefreshDocumentationWorkflowLogAsync(workflowRunId, showLoadingIndicator: true);
+    }
+
+    private async Task<bool> RefreshDocumentationWorkflowLogAsync(Guid? workflowRunId, bool showLoadingIndicator)
+    {
         if (!workflowRunId.HasValue)
         {
+            var hadLogState = _documentationWorkflowLog is not null || _documentationWorkflowLogLoading;
             _documentationWorkflowLog = null;
             _documentationWorkflowLogLoading = false;
-            return;
+            return hadLogState;
         }
 
-        _documentationWorkflowLogLoading = true;
-        StateHasChanged();
+        if (showLoadingIndicator && !_documentationWorkflowLogLoading)
+        {
+            _documentationWorkflowLogLoading = true;
+            StateHasChanged();
+        }
 
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            _documentationWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId.Value, $"api/workflow-runs/{workflowRunId.Value}/log");
+            var latestLog = await GetWorkflowLogContentAsync(client, workflowRunId.Value, $"api/workflow-runs/{workflowRunId.Value}/log");
+            var changed = !AreWorkflowLogsEquivalent(_documentationWorkflowLog, latestLog);
+            _documentationWorkflowLog = latestLog;
+            return changed;
         }
         finally
         {
+            var wasLoading = _documentationWorkflowLogLoading;
             _documentationWorkflowLogLoading = false;
-            StateHasChanged();
+
+            if (showLoadingIndicator && wasLoading)
+            {
+                StateHasChanged();
+            }
         }
     }
 
@@ -1202,7 +1221,7 @@ public partial class Index : ComponentBase, IDisposable
             return;
         }
 
-        _runningDocumentationWorkflow = true;
+        _startingDocumentationWorkflow = true;
         _documentationWorkflowMessage = null;
         _documentationWorkflowLog = null;
         _documentationWorkflowLogLoading = true;
@@ -1232,12 +1251,30 @@ public partial class Index : ComponentBase, IDisposable
         {
             _documentationWorkflowMessageSeverity = Severity.Error;
             _documentationWorkflowMessage = ex.Message;
-            _documentationWorkflowLogLoading = false;
         }
         finally
         {
-            _runningDocumentationWorkflow = false;
+            _startingDocumentationWorkflow = false;
         }
+    }
+
+    private static bool AreWorkflowLogsEquivalent(WorkflowLogContent? left, WorkflowLogContent? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return left.WorkflowRunId == right.WorkflowRunId
+            && string.Equals(left.FileName, right.FileName, StringComparison.Ordinal)
+            && left.IsUnavailable == right.IsUnavailable
+            && string.Equals(left.Message, right.Message, StringComparison.Ordinal)
+            && string.Equals(left.Content, right.Content, StringComparison.Ordinal);
     }
 
 
@@ -1461,7 +1498,7 @@ public partial class Index : ComponentBase, IDisposable
 
     private async Task MonitorWorkflowChangesAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(6));
 
         try
         {
@@ -1560,6 +1597,10 @@ public partial class Index : ComponentBase, IDisposable
             || string.Equals(x.Status, "Canceled", StringComparison.OrdinalIgnoreCase))
             && !HasBlockingRun(backlogItem.RequirementId, backlogItem.Id, "implement-solution-change");
     }
+
+
+    private static bool IsDocumentationWorkflowInProgress(WorkflowRunRow? run)
+        => run is not null && (run.Status == 1 || run.Status == 2);
 
     private static bool CanValidate(WorkflowRunRow run)
         => CockpitLifecycleRules.CanValidateWorkflowRun(run.Status);

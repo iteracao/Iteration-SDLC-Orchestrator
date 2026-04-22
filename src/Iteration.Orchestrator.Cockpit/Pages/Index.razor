@@ -116,9 +116,8 @@
                              MessageSeverity="@_documentationWorkflowMessageSeverity"
                              Log="@_documentationWorkflowLog"
                              LogLoading="@_documentationWorkflowLogLoading"
-                             RunDisabled="@(_runningDocumentationWorkflow || SelectedSolutionState.CurrentTarget is null)"
-                             RunWorkflow="RunDocumentationWorkflowAsync"
-                             Close="CloseDocumentationWorkflowModal" />
+                             RunDisabled="@(DocumentationWorkflowRunDisabled || SelectedSolutionState.CurrentTarget is null)"
+                             RunWorkflow="RunDocumentationWorkflowAsync" />
 
 <WorkflowViewerDialog IsOpen="_viewerOpen"
                       ActiveWorkflowArtifact="_activeWorkflowArtifact"
