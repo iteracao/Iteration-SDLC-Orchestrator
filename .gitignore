@@ -121,3 +121,4 @@ secrets.json
 *.temp
 /src/Iteration.Orchestrator.Api/orchestrator.db-wal
 /src/Iteration.Orchestrator.Api/orchestrator.db-shm
+/OPEN_AI.key
