@@ -98,6 +98,56 @@
         background: #f6f8fa;
     }
 
+    .toolbar-documentation-button {
+        min-width: 196px;
+        margin-right: 8px;
+    }
+
+    .documentation-modal-panel {
+        width: min(920px, calc(100vw - 40px));
+        max-height: min(80vh, calc(100vh - 40px));
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #ffffff;
+        pointer-events: auto;
+    }
+
+    .documentation-modal-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid #d8dee4;
+    }
+
+    .documentation-modal-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 16px 18px 18px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .documentation-modal-log {
+        min-height: 220px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
+        padding: 12px;
+        background: #ffffff;
+        overflow: auto;
+    }
+
+    .documentation-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
     .create-panel {
         background: transparent;
         border: 0;
@@ -525,12 +575,22 @@
 
             <MudSpacer />
 
-            <MudButton Variant="Variant.Outlined"
-                       Class="toolbar-requirement-button"
-                       Disabled="!CanOpenRequirementPanel || IsTargetSelectionLocked"
-                       OnClick="OpenCreateRequirementPanel">
-                + requirement
-            </MudButton>
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Outlined"
+                           Class="toolbar-requirement-button toolbar-documentation-button"
+                           StartIcon="@Icons.Material.Filled.Sync"
+                           Disabled="!CanOpenDocumentationWorkflowModal"
+                           OnClick="OpenDocumentationWorkflowModalAsync">
+                    Update documentation
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           Class="toolbar-requirement-button"
+                           Disabled="!CanOpenRequirementPanel || IsTargetSelectionLocked"
+                           OnClick="OpenCreateRequirementPanel">
+                    + requirement
+                </MudButton>
+            </MudStack>
         </MudStack>
     </MudPaper>
 
@@ -1000,6 +1060,85 @@
     </div>
 }
 
+@if (_documentationWorkflowModalOpen)
+{
+    <div class="inspect-backdrop" @onclick="CloseDocumentationWorkflowModal"></div>
+    <div class="inspect-shell">
+        <MudPaper Class="documentation-modal-panel" Elevation="8">
+            <div class="documentation-modal-header">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h6">Setup Documentation</MudText>
+                    <MudText Typo="Typo.caption" Class="inspect-meta">
+                        Workflow: `setup-documentation`
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(SelectedTargetLabel))
+                    {
+                        <MudText Typo="Typo.caption" Class="inspect-meta">@SelectedTargetLabel</MudText>
+                    }
+                </MudStack>
+                <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDocumentationWorkflowModal" />
+            </div>
+
+            <div class="documentation-modal-body">
+                @if (!string.IsNullOrWhiteSpace(_documentationWorkflowMessage))
+                {
+                    <MudAlert Severity="@_documentationWorkflowMessageSeverity" Variant="Variant.Outlined" Dense="true">
+                        @_documentationWorkflowMessage
+                    </MudAlert>
+                }
+
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.body2">Workflow name: Setup Documentation</MudText>
+                    @if (GetLatestDocumentationWorkflowRun() is { } latestDocumentationRun)
+                    {
+                        <MudText Typo="Typo.body2">Latest run: @latestDocumentationRun.Id</MudText>
+                        <MudText Typo="Typo.body2">Status: @HumanizeWorkflowStatus(latestDocumentationRun.Status)</MudText>
+                        <MudText Typo="Typo.body2">Started: @latestDocumentationRun.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">Latest run: none yet</MudText>
+                    }
+                </MudStack>
+
+                <div class="documentation-modal-log">
+                    @if (_documentationWorkflowLogLoading)
+                    {
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                    }
+                    else if (_documentationWorkflowLog is null)
+                    {
+                        <p class="inspect-message">No workflow log loaded.</p>
+                    }
+                    else if (_documentationWorkflowLog.IsUnavailable && !string.IsNullOrWhiteSpace(_documentationWorkflowLog.Message))
+                    {
+                        <p class="inspect-message">@_documentationWorkflowLog.Message</p>
+                    }
+                    else
+                    {
+                        <pre class="doc-pre">@_documentationWorkflowLog.Content</pre>
+                    }
+                </div>
+
+                <div class="documentation-modal-actions">
+                    <MudButton Variant="Variant.Outlined"
+                               Disabled="GetLatestDocumentationWorkflowRun() is null || _documentationWorkflowLogLoading"
+                               OnClick="LoadLatestDocumentationWorkflowLogAsync">
+                        Log
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Disabled="_runningDocumentationWorkflow || SelectedSolutionState.CurrentTarget is null"
+                               OnClick="RunDocumentationWorkflowAsync">
+                        Run
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" OnClick="CloseDocumentationWorkflowModal">Close</MudButton>
+                </div>
+            </div>
+        </MudPaper>
+    </div>
+}
+
 
 @if (_viewerOpen && (_activeWorkflowArtifact is not null || _activeWorkflowLog is not null))
 {
@@ -1093,8 +1232,11 @@
     private bool _documentsLoading;
     private bool _createSolutionPanelOpen;
     private bool _createRequirementPanelOpen;
+    private bool _documentationWorkflowModalOpen;
     private bool _savingSolution;
     private bool _savingRequirement;
+    private bool _runningDocumentationWorkflow;
+    private bool _documentationWorkflowLogLoading;
     private Guid? _runningRequirementId;
     private Guid? _runningBacklogItemId;
     private Guid? _mutatingWorkflowRunId;
@@ -1109,9 +1251,12 @@
     private Severity _createSolutionMessageSeverity = Severity.Info;
     private string? _createRequirementMessage;
     private Severity _createRequirementMessageSeverity = Severity.Info;
+    private string? _documentationWorkflowMessage;
+    private Severity _documentationWorkflowMessageSeverity = Severity.Info;
     private RequirementStageCard? _activeCard;
     private SolutionDocumentContent? _activeDocument;
     private WorkflowLogContent? _activeWorkflowLog;
+    private WorkflowLogContent? _documentationWorkflowLog;
     private WorkflowArtifactContent? _activeWorkflowArtifact;
     private WorkflowRunDetail? _activeWorkflowRunDetails;
     private bool _activeWorkflowRunDetailsLoading;
@@ -1132,6 +1277,13 @@
            && !_savingSolution
            && !_savingRequirement
            && !HasActiveWorkflowRuns();
+
+    private bool CanOpenDocumentationWorkflowModal
+        => SelectedSolutionState.CurrentTarget is not null
+           && !_createSolutionPanelOpen
+           && !_createRequirementPanelOpen
+           && !_savingSolution
+           && !_savingRequirement;
 
     private bool IsTargetSelectionLocked
         => _createSolutionPanelOpen
@@ -1162,6 +1314,7 @@
     private async void HandleSolutionChanged()
     {
         _selectedTargetId = SelectedSolutionState.CurrentTarget?.Id;
+        ResetDocumentationWorkflowModalState();
         StopWorkflowPolling();
         await InvokeAsync(async () =>
         {
@@ -1199,6 +1352,7 @@
     {
         _selectedTargetId = targetId;
         var selected = _solutions.FirstOrDefault(x => x.Targets.Any(t => t.Id == targetId));
+        ResetDocumentationWorkflowModalState();
         SelectedSolutionState.SetCurrent(selected, targetId);
         return Task.CompletedTask;
     }
@@ -1579,6 +1733,70 @@
         _activeWorkflowArtifact = await GetWorkflowArtifactContentAsync(client, workflowRunId, endpoint, fileName, preferJson);
         _activeWorkflowLog = null;
         _viewerOpen = true;
+    }
+
+    private async Task OpenDocumentationWorkflowModalAsync()
+    {
+        if (!CanOpenDocumentationWorkflowModal)
+        {
+            return;
+        }
+
+        _documentationWorkflowModalOpen = true;
+        _documentationWorkflowMessage = null;
+        _documentationWorkflowLog = null;
+
+        if (GetLatestDocumentationWorkflowRun() is not null)
+        {
+            await LoadLatestDocumentationWorkflowLogAsync();
+        }
+    }
+
+    private void CloseDocumentationWorkflowModal()
+    {
+        _documentationWorkflowModalOpen = false;
+        _documentationWorkflowMessage = null;
+    }
+
+    private void ResetDocumentationWorkflowModalState()
+    {
+        _documentationWorkflowModalOpen = false;
+        _documentationWorkflowMessage = null;
+        _documentationWorkflowLog = null;
+        _documentationWorkflowLogLoading = false;
+        _runningDocumentationWorkflow = false;
+    }
+
+    private WorkflowRunRow? GetLatestDocumentationWorkflowRun()
+        => _runs
+            .Where(x => string.Equals(x.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase)
+                && x.RequirementId is null
+                && x.BacklogItemId is null)
+            .OrderByDescending(x => x.StartedUtc)
+            .FirstOrDefault();
+
+    private async Task LoadLatestDocumentationWorkflowLogAsync()
+    {
+        var latestRun = GetLatestDocumentationWorkflowRun();
+        if (latestRun is null)
+        {
+            _documentationWorkflowLog = null;
+            return;
+        }
+
+        _documentationWorkflowLogLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            _documentationWorkflowLog = await GetWorkflowLogContentAsync(client, latestRun.Id, $"api/workflow-runs/{latestRun.Id}/log");
+        }
+        finally
+        {
+            _documentationWorkflowLogLoading = false;
+            StateHasChanged();
+        }
     }
 
     private void CloseDrawer()
@@ -1992,6 +2210,47 @@
         finally
         {
             _savingRequirement = false;
+        }
+    }
+
+    private async Task RunDocumentationWorkflowAsync()
+    {
+        if (SelectedSolutionState.CurrentTarget is null)
+        {
+            return;
+        }
+
+        _runningDocumentationWorkflow = true;
+        _documentationWorkflowMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var response = await client.PostAsJsonAsync("api/workflow-runs/setup-documentation", new
+            {
+                TargetSolutionId = SelectedSolutionState.CurrentTarget.Id,
+                RequestedBy = "rui"
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            }
+
+            _documentationWorkflowMessageSeverity = Severity.Success;
+            _documentationWorkflowMessage = "Documentation workflow completed.";
+            await LoadDocumentsAsync();
+            await LoadCockpitAsync(showLoading: false);
+            await LoadLatestDocumentationWorkflowLogAsync();
+        }
+        catch (Exception ex)
+        {
+            _documentationWorkflowMessageSeverity = Severity.Error;
+            _documentationWorkflowMessage = ex.Message;
+        }
+        finally
+        {
+            _runningDocumentationWorkflow = false;
         }
     }
 

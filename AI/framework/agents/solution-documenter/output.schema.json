@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "required": [
+    "mode",
+    "summary",
+    "stableDocsFound",
+    "repoDocsReviewed",
+    "sourceAreasReviewed",
+    "driftFindings",
+    "documents",
+    "openQuestions"
+  ],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["bootstrap", "update", "aligned"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "stableDocsFound": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "repoDocsReviewed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "sourceAreasReviewed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "driftFindings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "action"],
+        "properties": {
+          "path": { "type": "string" },
+          "action": {
+            "type": "string",
+            "enum": ["create", "update", "unchanged"]
+          },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

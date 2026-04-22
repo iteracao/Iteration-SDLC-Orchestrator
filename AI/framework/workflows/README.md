@@ -3,14 +3,15 @@
 This package contains one workflow definition per file for the first end-to-end SDLC backbone:
 
 1. setup-solution
-2. analyze-request
-3. design-solution-change
-4. plan-implementation
-5. implement-solution-change
-6. test-solution-change
-7. review-implementation
-8. deliver-solution-change
-9. update-solution-history
+2. setup-documentation
+3. analyze-request
+4. design-solution-change
+5. plan-implementation
+6. implement-solution-change
+7. test-solution-change
+8. review-implementation
+9. deliver-solution-change
+10. update-solution-history
 
 Each workflow file defines:
 - purpose
@@ -26,6 +27,7 @@ Each workflow file defines:
 The intended ownership model is:
 
 - `setup-solution` acts on the solution
+- `setup-documentation` acts on the solution target independently from requirement lifecycle
 - `analyze-request` acts on a requirement
 - design and planning workflows act on a requirement
 - implementation, test, review, and delivery workflows act on backlog items produced by planning

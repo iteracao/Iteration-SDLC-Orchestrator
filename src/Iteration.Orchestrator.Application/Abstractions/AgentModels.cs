@@ -153,3 +153,37 @@ public sealed record SolutionImplementationResult(
     string KnowledgeUpdatesJson,
     string RecommendedNextWorkflowCodesJson,
     string RawJson);
+
+public sealed record DocumentationFileDraft(
+    string Path,
+    string Action,
+    string Content);
+
+public sealed record SolutionDocumentationSetupRequest(
+    Guid WorkflowRunId,
+    Guid TargetSolutionId,
+    string WorkflowCode,
+    string WorkflowName,
+    string WorkflowPurpose,
+    string SolutionName,
+    string SolutionDescription,
+    string SolutionCode,
+    string ProfileSummary,
+    IReadOnlyList<WorkflowFileReference> ProfileRuleFiles,
+    IReadOnlyList<string> StableDocumentTargets,
+    IReadOnlyList<string> ExistingStableDocumentPaths,
+    IReadOnlyList<string> LocalRepositoryDocumentationFiles,
+    IReadOnlyList<string> RepositorySourceFiles,
+    IReadOnlyList<string> AllowedContextFiles,
+    string RepositoryPath);
+
+public sealed record SolutionDocumentationSetupResult(
+    string Mode,
+    string Summary,
+    IReadOnlyList<string> StableDocsFound,
+    IReadOnlyList<string> RepoDocsReviewed,
+    IReadOnlyList<string> SourceAreasReviewed,
+    IReadOnlyList<string> DriftFindings,
+    IReadOnlyList<DocumentationFileDraft> Documents,
+    IReadOnlyList<string> OpenQuestions,
+    string RawJson);

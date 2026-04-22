@@ -1,0 +1,11 @@
+code: solution-documenter
+name: Solution Documenter
+description: Maintains the stable solution documentation set using tool-driven repository context and drift detection.
+
+allowedTools:
+  - find_available_files
+  - get_next_file_batch
+  - get_file
+
+outputSchema: output.schema.json
+promptFile: prompt.md

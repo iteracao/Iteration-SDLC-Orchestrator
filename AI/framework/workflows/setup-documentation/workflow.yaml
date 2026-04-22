@@ -1,0 +1,46 @@
+code: setup-documentation
+name: Setup Documentation
+phase: setup
+
+purpose: >
+  Bootstrap or refresh the stable solution documentation set for a target
+  repository using tool-driven context loading and drift detection against
+  repository reality.
+
+primaryAgent: solution-documenter
+
+requiredInputs:
+  - name: targetSolutionId
+    type: guid
+    required: true
+
+knowledgeReads:
+  - context/overview.md
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+
+producedArtifacts:
+  - type: setup-documentation-report
+    name: Setup Documentation Report
+  - type: setup-documentation-output
+    name: Setup Documentation Output
+
+knowledgeUpdates:
+  - context/overview.md
+  - business/business-rules.md
+  - business/workflows.md
+  - architecture/architecture-overview.md
+  - architecture/module-map.md
+
+executionRules:
+  - Run independently from requirement lifecycle and only when triggered manually.
+  - Use the existing repository-visible file universe and tool-based context loading.
+  - Manage only the stable documentation set under context, business, and architecture.
+  - Exclude AI, analysis, history, artifacts, and runs content from drift detection input.
+  - Bootstrap all canonical stable docs when missing.
+  - Update only affected stable docs when drift is detected.
+  - When stable docs are aligned with repository reality, produce only the report and do not rewrite files.
+
+nextWorkflows: []

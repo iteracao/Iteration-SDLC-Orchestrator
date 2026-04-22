@@ -235,6 +235,21 @@ public static class RepositoryPromptInputDiscovery
     public static IReadOnlyList<string> GetSolutionDocumentationFiles(string repositoryPath, string targetCode)
         => GetMarkdownFilesUnder(repositoryPath, Path.Combine("AI", "solutions", targetCode));
 
+    public static IReadOnlyList<string> GetLocalRepositoryDocumentationFiles(IReadOnlyList<string> visibleFiles)
+        => visibleFiles
+            .Select(NormalizePath)
+            .Where(path => path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !IsDocumentationWorkflowExcluded(path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    public static IReadOnlyList<string> GetRepositorySourceContextFiles(IReadOnlyList<string> visibleFiles)
+        => GetInspectableTextFiles(visibleFiles)
+            .Where(path => !path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !IsDocumentationWorkflowExcluded(path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     private static IReadOnlyList<string> GetMarkdownFilesUnder(string repositoryPath, string relativeRoot)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
@@ -309,6 +324,16 @@ public static class RepositoryPromptInputDiscovery
         var normalized = NormalizePath(path);
         return normalized.StartsWith("AI/Contracts/", StringComparison.OrdinalIgnoreCase)
                || normalized.StartsWith("AI/Framework/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDocumentationWorkflowExcluded(string path)
+    {
+        var normalized = NormalizePath(path);
+        return normalized.StartsWith("AI/", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("analysis/", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("history/", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("artifacts/", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("runs/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizePath(string path)

@@ -32,6 +32,7 @@ builder.Services.AddHttpClient<IGitHubRepositoryMetadataService, GitHubRepositor
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
+builder.Services.AddScoped<SetupDocumentationHandler>();
 builder.Services.AddScoped<CreateRequirementHandler>();
 builder.Services.AddScoped<UpdateRequirementHandler>();
 builder.Services.AddScoped<DeleteRequirementHandler>();
@@ -84,6 +85,14 @@ builder.Services.AddScoped<ISolutionDesignerAgent>(sp =>
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
+        agentResponseTimeoutSeconds));
+builder.Services.AddScoped<ISolutionDocumentationSetupAgent>(sp =>
+    new MicrosoftAgentFrameworkSolutionDocumentationSetupAgent(
+        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
+        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+        sp.GetRequiredService<IWorkflowRunLogStore>(),
+        sp.GetRequiredService<IWorkflowPayloadStore>(),
+        sp.GetRequiredService<IArtifactStore>(),
         agentResponseTimeoutSeconds));
 builder.Services.AddScoped<ISolutionPlannerAgent>(sp =>
     new MicrosoftAgentFrameworkImplementationPlannerAgent(

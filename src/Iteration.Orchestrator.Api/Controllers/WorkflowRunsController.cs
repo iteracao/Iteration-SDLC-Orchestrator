@@ -63,6 +63,38 @@ public sealed class WorkflowRunsController : ControllerBase
         }
     }
 
+    [HttpPost("setup-documentation")]
+    public async Task<IActionResult> SetupDocumentation(
+        [FromBody] SetupDocumentationRequest request,
+        [FromServices] SetupDocumentationHandler handler,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await handler.HandleAsync(
+                new SetupDocumentationCommand(
+                    request.TargetSolutionId,
+                    request.RequestedBy),
+                ct);
+
+            return Ok(new
+            {
+                id = result.WorkflowRunId,
+                result.Mode,
+                result.StableDocsFound,
+                result.DriftFindings,
+                result.DocumentsCreated,
+                result.DocumentsUpdated,
+                result.DocumentsUnchanged,
+                result.OpenQuestions
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("analyze-request")]
     public async Task<IActionResult> StartAnalyze(
         [FromBody] StartAnalyzeRunRequest request,
