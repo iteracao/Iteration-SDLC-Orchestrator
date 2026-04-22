@@ -32,7 +32,6 @@
                     else { <pre class="doc-pre">@Log.Content</pre> }
                 </div>
                 <div class="documentation-modal-actions">
-                    <MudButton Variant="Variant.Outlined" Disabled="LatestRun is null || LogLoading" OnClick="LoadLog">Log</MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="RunDisabled" OnClick="RunWorkflow">Run</MudButton>
                     <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
                 </div>
@@ -51,7 +50,6 @@
     [Parameter] public WorkflowLogContent? Log { get; set; }
     [Parameter] public bool LogLoading { get; set; }
     [Parameter] public bool RunDisabled { get; set; }
-    [Parameter] public EventCallback LoadLog { get; set; }
     [Parameter] public EventCallback RunWorkflow { get; set; }
     [Parameter] public EventCallback Close { get; set; }
 }

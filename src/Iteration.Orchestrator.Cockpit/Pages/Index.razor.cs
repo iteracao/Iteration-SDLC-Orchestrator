@@ -713,12 +713,7 @@ public partial class Index : ComponentBase, IDisposable
 
         _documentationWorkflowModalOpen = true;
         _documentationWorkflowMessage = null;
-        _documentationWorkflowLog = null;
-
-        if (GetLatestDocumentationWorkflowRun() is not null)
-        {
-            await LoadLatestDocumentationWorkflowLogAsync();
-        }
+        await LoadLatestDocumentationWorkflowLogAsync();
     }
 
     private void CloseDocumentationWorkflowModal()
@@ -1189,7 +1184,7 @@ public partial class Index : ComponentBase, IDisposable
             }
 
             _documentationWorkflowMessageSeverity = Severity.Success;
-            _documentationWorkflowMessage = "Documentation workflow completed.";
+            _documentationWorkflowMessage = "Documentation workflow started.";
             await LoadDocumentsAsync();
             await LoadCockpitAsync(showLoading: false);
             await LoadLatestDocumentationWorkflowLogAsync();
