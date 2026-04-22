@@ -74,6 +74,7 @@ builder.Services.AddScoped<ISolutionAnalystAgent>(sp =>
         builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
+        sp.GetRequiredService<IArtifactStore>(),
         sp.GetRequiredService<ISolutionBridge>(),
         sp.GetRequiredService<IConfigCatalog>(),
         agentResponseTimeoutSeconds));

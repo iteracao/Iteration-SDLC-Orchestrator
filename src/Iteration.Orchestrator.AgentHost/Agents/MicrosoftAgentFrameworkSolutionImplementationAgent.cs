@@ -52,6 +52,7 @@ public sealed class MicrosoftAgentFrameworkSolutionImplementationAgent : ISoluti
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
+                null,
                 ct,
                 maxModelResponseSeconds: _maxModelResponseSeconds);
 

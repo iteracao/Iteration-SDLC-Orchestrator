@@ -9,7 +9,9 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 internal static class FileAwareAgentRunner
 {
     private const int MaxToolCallsPerPhase = 16;
-    private const int MaxTreeEntries = 120;
+    private const int MaxListedFiles = 512;
+    private const int MaxBatchCharacters = 90000;
+    private const int MaxFileCharactersPerBatchItem = 12000;
     private const int MaxSearchHits = 12;
 
     public static Task<string> RunAsync(
@@ -23,6 +25,7 @@ internal static class FileAwareAgentRunner
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
+        IArtifactStore? artifacts,
         CancellationToken ct,
         IReadOnlyCollection<string>? requiredFrameworkPaths = null,
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
@@ -50,6 +53,7 @@ internal static class FileAwareAgentRunner
             workflowRunId,
             logs,
             payloadStore,
+            artifacts,
             ct,
             requiredFrameworkPaths,
             requiredSolutionPaths,
@@ -102,6 +106,7 @@ internal static class FileAwareAgentRunner
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
+        IArtifactStore? artifacts,
         CancellationToken ct,
         IReadOnlyCollection<string>? requiredFrameworkPaths = null,
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
@@ -157,6 +162,7 @@ internal static class FileAwareAgentRunner
                     workflowRunId,
                     logs,
                     payloadStore,
+                    artifacts,
                     discoveryTools,
                     availableFileIndex,
                     pendingMessages,
@@ -188,6 +194,7 @@ internal static class FileAwareAgentRunner
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
+        IArtifactStore? artifacts,
         RepositoryDiscoveryTools? discoveryTools,
         AvailableFileIndex availableFileIndex,
         List<ChatMessage> pendingMessages,
@@ -201,6 +208,7 @@ internal static class FileAwareAgentRunner
     {
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages);
         pendingMessages.Clear();
+        var nextUnreadFileIndex = 0;
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
@@ -218,8 +226,29 @@ internal static class FileAwareAgentRunner
                         requiredFrameworkPathSet,
                         requiredSolutionPathSet,
                         requireRepositoryEvidence,
+                        phase.RequireAllAvailableFilesRead,
+                        availableFileIndex,
                         state.RepositoryDiscoveryUsed,
                         requireRepositoryDiscovery);
+                }
+
+                if (!string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
+                {
+                    if (artifacts is null)
+                    {
+                        throw new InvalidOperationException($"Phase '{phase.Name}' requires artifact persistence, but no artifact store is configured.");
+                    }
+
+                    await artifacts.SaveTextAsync(workflowRunId, phase.SavedMarkdownArtifactFileName, rawText, ct);
+                    await logs.AppendLineAsync(
+                        workflowRunId,
+                        $"Result ({phase.Name}): Markdown response saved to artifact '{phase.SavedMarkdownArtifactFileName}'.",
+                        ct);
+
+                    if (phase.InjectSavedMarkdownIntoNextPhase)
+                    {
+                        pendingMessages.Add(CreateUserMessage(BuildSavedMarkdownContextMessage(phase.SavedMarkdownArtifactFileName, rawText)));
+                    }
                 }
 
                 if (phase.RequiresSavedOutput)
@@ -286,6 +315,31 @@ internal static class FileAwareAgentRunner
                         await logs.AppendBlockAsync(workflowRunId, $"Available files ({phase.Name})", fileListResult, ct);
                     }
                     currentMessages = [CreateToolMessage(fileListResult)];
+                    continue;
+                }
+                case "get_next_file_batch":
+                {
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_next_file_batch().", ct);
+
+                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+                    nextUnreadFileIndex = batch.NextUnreadFileIndex;
+
+                    foreach (var file in batch.Files)
+                    {
+                        state.ReadPaths.Add(file.NormalizedPath);
+                    }
+
+                    await logs.AppendLineAsync(
+                        workflowRunId,
+                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
+                        ct);
+
+                    if (batch.Files.Count > 0)
+                    {
+                        await logs.AppendBlockAsync(workflowRunId, $"File batch ({phase.Name})", batch.Payload, ct);
+                    }
+
+                    currentMessages = [CreateToolMessage(batch.Payload)];
                     continue;
                 }
                 case "read_file":
@@ -389,6 +443,8 @@ internal static class FileAwareAgentRunner
         IReadOnlySet<string> requiredFrameworkPathSet,
         IReadOnlySet<string> requiredSolutionPathSet,
         bool requireRepositoryEvidence,
+        bool requireAllAvailableFilesRead,
+        AvailableFileIndex availableFileIndex,
         bool repositoryDiscoveryUsed,
         bool requireRepositoryDiscovery)
     {
@@ -427,6 +483,15 @@ internal static class FileAwareAgentRunner
             if (!repositoryEvidenceRead)
             {
                 throw new InvalidOperationException("Agent attempted to complete the phase before reading repository evidence files.");
+            }
+        }
+
+        if (requireAllAvailableFilesRead)
+        {
+            var missingCount = availableFileIndex.NormalizedFullPaths.Keys.Count(path => !readPaths.Contains(path));
+            if (missingCount > 0)
+            {
+                throw new InvalidOperationException($"Agent attempted to complete the phase before reviewing all required repository context files. Missing file count: {missingCount}.");
             }
         }
     }
@@ -578,11 +643,7 @@ internal static class FileAwareAgentRunner
     }
 
     private static List<string> FindAvailableFiles(AvailableFileIndex availableFileIndex)
-    {
-        return availableFileIndex.FullPaths
-            .Take(MaxTreeEntries)
-            .ToList();
-    }
+        => availableFileIndex.FullPaths.ToList();
 
     private static string FormatAvailableFiles(IReadOnlyList<string> fullPaths)
     {
@@ -592,6 +653,86 @@ internal static class FileAwareAgentRunner
         }
 
         return string.Join(Environment.NewLine, fullPaths);
+    }
+
+    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
+    {
+        if (nextUnreadFileIndex < 0)
+        {
+            nextUnreadFileIndex = 0;
+        }
+
+        if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
+        {
+            var emptyPayload = "END OF FILE BATCHES";
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
+        }
+
+        var files = new List<FileReadResult>();
+        var payload = new StringBuilder();
+        var accumulatedCharacters = 0;
+        var currentIndex = nextUnreadFileIndex;
+
+        while (currentIndex < availableFileIndex.FullPaths.Count)
+        {
+            var fullPath = availableFileIndex.FullPaths[currentIndex];
+            currentIndex++;
+
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            var originalContent = File.ReadAllText(fullPath);
+            var content = originalContent;
+            var wasTruncated = false;
+
+            if (content.Length > MaxFileCharactersPerBatchItem)
+            {
+                content = content[..MaxFileCharactersPerBatchItem]
+                    + $"{Environment.NewLine}{Environment.NewLine}[TRUNCATED BY SERVER: file content exceeded {MaxFileCharactersPerBatchItem} characters]";
+                wasTruncated = true;
+            }
+
+            var normalizedPath = NormalizePath(fullPath);
+            var block = new StringBuilder();
+            block.AppendLine($"FILE: {fullPath}");
+            block.AppendLine($"NORMALIZED PATH: {normalizedPath}");
+            block.AppendLine($"TRUNCATED: {(wasTruncated ? "yes" : "no")}");
+            block.AppendLine("CONTENT:");
+            block.AppendLine(content);
+            block.AppendLine("--- END FILE ---");
+
+            var blockText = block.ToString().TrimEnd();
+            if (files.Count > 0 && accumulatedCharacters + blockText.Length > MaxBatchCharacters)
+            {
+                currentIndex--;
+                break;
+            }
+
+            files.Add(new FileReadResult(fullPath, normalizedPath, originalContent));
+            if (payload.Length > 0)
+            {
+                payload.AppendLine();
+                payload.AppendLine();
+            }
+
+            payload.Append(blockText);
+            accumulatedCharacters += blockText.Length;
+        }
+
+        var totalBatchesEstimate = Math.Max(1, (int)Math.Ceiling((double)availableFileIndex.FullPaths.Count / Math.Max(1, files.Count)));
+        var batchNumber = files.Count == 0
+            ? 0
+            : (nextUnreadFileIndex / Math.Max(1, files.Count)) + 1;
+
+        return new FileBatchResult(
+            files,
+            payload.Length == 0 ? "END OF FILE BATCHES" : payload.ToString(),
+            currentIndex,
+            currentIndex < availableFileIndex.FullPaths.Count,
+            batchNumber,
+            totalBatchesEstimate);
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases)
@@ -608,6 +749,7 @@ internal static class FileAwareAgentRunner
         {
             sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
             sb.AppendLine("- Use find_available_files to obtain exact full physical paths for this run.");
+            sb.AppendLine("- Use get_next_file_batch to review the allowed file set in controlled server-sized batches.");
             sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
         }
         else
@@ -636,7 +778,26 @@ internal static class FileAwareAgentRunner
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
+        {
+            sb.AppendLine($"- When you finish this phase, return only the Markdown artifact content. The system will save it as '{phase.SavedMarkdownArtifactFileName}'.");
+        }
+
+        if (phase.RequireAllAvailableFilesRead)
+        {
+            sb.AppendLine("- This phase must review the complete allowed repository context set before it can finish.");
+        }
+
         return sb.ToString();
+    }
+
+    private static string BuildSavedMarkdownContextMessage(string fileName, string content)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE: {fileName}");
+        sb.AppendLine();
+        sb.AppendLine(content.Trim());
+        return sb.ToString().TrimEnd();
     }
 
     private static ChatMessage CreateUserMessage(string content) => new(ChatRole.User, content);
@@ -649,14 +810,14 @@ internal static class FileAwareAgentRunner
         sb.AppendLine($"SCOPE: {scope ?? "."}");
         sb.AppendLine($"ENTRY COUNT: {entries.Count}");
 
-        foreach (var entry in entries.Take(MaxTreeEntries))
+        foreach (var entry in entries.Take(MaxListedFiles))
         {
             sb.AppendLine($"- {(entry.IsDirectory ? "[dir]" : "[file]")} {entry.RelativePath}");
         }
 
-        if (entries.Count > MaxTreeEntries)
+        if (entries.Count > MaxListedFiles)
         {
-            sb.AppendLine($"... truncated to first {MaxTreeEntries} entries ...");
+            sb.AppendLine($"... truncated to first {MaxListedFiles} entries ...");
         }
 
         return sb.ToString().TrimEnd();
@@ -722,7 +883,10 @@ internal static class FileAwareAgentRunner
         AgentPhaseMode Mode = AgentPhaseMode.Interactive,
         bool RequireWorkflowInput = false,
         bool RequireCompletionValidation = false,
-        bool AllowToolCalls = true);
+        bool AllowToolCalls = true,
+        string? SavedMarkdownArtifactFileName = null,
+        bool InjectSavedMarkdownIntoNextPhase = false,
+        bool RequireAllAvailableFilesRead = false);
 
     internal sealed record RepositoryDiscoveryTools(
         Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,
@@ -738,6 +902,14 @@ internal static class FileAwareAgentRunner
     }
 
     private sealed record FileReadResult(string FullPath, string NormalizedPath, string Content);
+
+    private sealed record FileBatchResult(
+        IReadOnlyList<FileReadResult> Files,
+        string Payload,
+        int NextUnreadFileIndex,
+        bool HasMore,
+        int BatchNumber,
+        int TotalBatchesEstimate);
 
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,

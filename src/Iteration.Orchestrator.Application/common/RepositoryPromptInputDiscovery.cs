@@ -107,15 +107,11 @@ public static class RepositoryPromptInputDiscovery
         string targetCode,
         IReadOnlyList<string> visibleFiles)
     {
-        var srcFiles = visibleFiles
-            .Where(path => path.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetCode);
 
-        var solutionDocs = GetSolutionDocumentationFiles(repositoryPath, targetCode)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
-
-        return srcFiles
-            .Concat(solutionDocs)
+        return visibleFiles
+            .Where(path => path.StartsWith("src/", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();

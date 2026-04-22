@@ -52,6 +52,7 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
+                null,
                 ct,
                 maxModelResponseSeconds: _maxModelResponseSeconds);
 

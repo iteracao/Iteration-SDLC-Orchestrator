@@ -8,10 +8,13 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnalystAgent
 {
+    private const string RepositoryStateArtifactFileName = "repository-state.md";
+
     private readonly string _endpoint;
     private readonly string _model;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
+    private readonly IArtifactStore _artifacts;
     private readonly int _maxModelResponseSeconds;
 
     public MicrosoftAgentFrameworkSolutionAnalystAgent(
@@ -19,6 +22,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         string model,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
+        IArtifactStore artifacts,
         ISolutionBridge solutionBridge,
         IConfigCatalog config,
         int maxModelResponseSeconds)
@@ -27,6 +31,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
         _logs = logs;
         _payloadStore = payloadStore;
+        _artifacts = artifacts;
         _maxModelResponseSeconds = maxModelResponseSeconds;
     }
 
@@ -47,8 +52,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
             var visibleRepositoryFiles = await RepositoryPromptInputDiscovery.LoadVisibleRepositoryFilesAsync(
                 request.RepositoryPath,
                 ct);
-            var repositoryStructureFiles = RepositoryPromptInputDiscovery.FilterExcludedStructurePaths(visibleRepositoryFiles);
-            var inspectableFiles = RepositoryPromptInputDiscovery.GetInspectableTextFiles(visibleRepositoryFiles);
             var promptContextFiles = RepositoryPromptInputDiscovery.GetPromptContextFiles(
                 request.RepositoryPath,
                 target.Code,
@@ -73,8 +76,12 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     Prompt: BuildRepositoryStructurePrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Provide the deterministic full physical path list for source files and solution documentation.",
-                    Mode: FileAwareAgentRunner.AgentPhaseMode.ContextOnly),
+                    PurposeSummary: "Review the full repository documentation and source tree, then generate the saved repository-state Markdown.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: true,
+                    SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
+                    InjectSavedMarkdownIntoNextPhase: true,
+                    RequireAllAvailableFilesRead: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
@@ -85,16 +92,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     RequireWorkflowInput: false,
                     RequireCompletionValidation: true)
             };
-
-            var discoveryTools = new FileAwareAgentRunner.RepositoryDiscoveryTools(
-                (scope, token) => Task.FromResult<IReadOnlyList<RepositoryEntry>>(
-                    RepositoryPromptInputDiscovery.ListVisibleRepositoryTreeEntries(repositoryStructureFiles, scope)),
-                (query, scope, token) => RepositoryPromptInputDiscovery.SearchVisibleRepositoryFilesAsync(
-                    request.RepositoryPath,
-                    inspectableFiles,
-                    query,
-                    scope,
-                    token));
 
             var instructions = BuildInstructions(agentDefinition);
             var reportMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
@@ -108,10 +105,11 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 request.WorkflowRunId,
                 _logs,
                 _payloadStore,
+                _artifacts,
                 ct,
                 requireRepositoryEvidence: true,
                 requireRepositoryDiscovery: false,
-                discoveryTools: discoveryTools,
+                discoveryTools: null,
                 maxModelResponseSeconds: _maxModelResponseSeconds);
 
             var normalizedReportMarkdown = NormalizeMarkdown(reportMarkdown);
@@ -154,13 +152,15 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine("Execution mode:");
         sb.AppendLine("- This analyze workflow runs as a three-prompt sequence.");
         sb.AppendLine("- Prompt 1 is behavior only.");
-        sb.AppendLine("- Prompt 2 is context only.");
-        sb.AppendLine("- Prompt 3 is the terminal analysis step.");
+        sb.AppendLine("- Prompt 2 is the repository understanding step.");
+        sb.AppendLine($"- Prompt 2 must review the full allowed repository context and produce Markdown that is saved as {RepositoryStateArtifactFileName}.");
+        sb.AppendLine("- Prompt 3 is the terminal requirement analysis step and must use the repository understanding produced in Prompt 2.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed tool actions are find_available_files and get_file.");
-        sb.AppendLine("- Always call find_available_files first. It has no input parameters and returns the full available physical path list, one path per line.");
-        sb.AppendLine("- Then use get_file with exact full physical paths from that list, as many times as needed within the execution time limit.");
+        sb.AppendLine("- Allowed tool actions are find_available_files, get_next_file_batch, and get_file.");
+        sb.AppendLine("- Always call find_available_files first. It returns the allowed full physical path list for this run.");
+        sb.AppendLine("- In Prompt 2, repeatedly call get_next_file_batch until all repository context batches are reviewed.");
+        sb.AppendLine("- Use get_file only with exact full physical paths from find_available_files when you need targeted follow-up evidence.");
         return sb.ToString().TrimEnd();
     }
 
@@ -200,11 +200,31 @@ Return a very short Markdown note with:
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
-        sb.AppendLine("Purpose: provide repository file access context for the next step.");
+        sb.AppendLine("Purpose: build the saved repository understanding for the current solution before requirement analysis.");
         sb.AppendLine();
-        sb.AppendLine("Repository source files and target solution documentation are available through the tool `find_available_files`.");
-        sb.AppendLine("That tool takes no input parameters and returns the full available file list as exact full physical paths, one per line.");
-        sb.AppendLine("No response is required for this step.");
+        sb.AppendLine("This is a repository understanding step only.");
+        sb.AppendLine("Do NOT analyze the requirement yet.");
+        sb.AppendLine("Do NOT design or plan changes.");
+        sb.AppendLine();
+        sb.AppendLine("REPOSITORY CONTEXT RULES");
+        sb.AppendLine("- The allowed repository context for this step is ALL `.md` files and ALL files under `src/`.");
+        sb.AppendLine("- First call `find_available_files` to confirm the full allowed file set.");
+        sb.AppendLine("- Then repeatedly call `get_next_file_batch` until the full allowed repository context has been reviewed.");
+        sb.AppendLine("- Use `get_file` only for targeted follow-up reads when a specific file needs closer confirmation.");
+        sb.AppendLine("- Your final response for this step must be Markdown only. The system will save it to disk as `repository-state.md` and pass it to Prompt 3.");
+        sb.AppendLine();
+        sb.AppendLine("Return Markdown using exactly this structure:");
+        sb.AppendLine("# Repository State");
+        sb.AppendLine("## Solution Overview");
+        sb.AppendLine("## Business / Domain Summary");
+        sb.AppendLine("## Solution Stack");
+        sb.AppendLine("## Architecture / Structure");
+        sb.AppendLine("## Implemented Functionalities");
+        sb.AppendLine("## Important Rules / Constraints Identified");
+        sb.AppendLine("## Relevant Files Reviewed");
+        sb.AppendLine("## Known Gaps / Unclear Areas");
+        sb.AppendLine();
+        sb.AppendLine("The `Relevant Files Reviewed` section must contain short summaries of the files actually used to build this repository understanding.");
         return sb.ToString().TrimEnd();
     }
 
@@ -212,7 +232,7 @@ Return a very short Markdown note with:
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 3 of 3 for analyze-request.");
-        sb.AppendLine("Analyze the requirement against the repository and provided solution documentation, then return the final analysis report in Markdown.");
+        sb.AppendLine("Use the saved repository understanding from Prompt 2 as the baseline understanding of the current solution, then analyze the requirement and return the final analysis report in Markdown.");
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TO ANALYZE");
         sb.AppendLine($"- Title: {request.RequirementTitle}");
@@ -221,9 +241,10 @@ Return a very short Markdown note with:
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- First call `find_available_files`. It has no input parameters and returns the full available file list as exact full physical paths, one per line.");
-        sb.AppendLine("- Then use `get_file` only with an exact full physical path returned by `find_available_files`.");
-        sb.AppendLine("- You may call `get_file` as many times as needed within the execution time limit.");
+        sb.AppendLine("- The repository-state Markdown produced in Prompt 2 is already available in your conversation context. Use it first.");
+        sb.AppendLine("- Call `find_available_files` if you need to confirm or target specific follow-up evidence.");
+        sb.AppendLine("- Use `get_file` only with an exact full physical path returned by `find_available_files`.");
+        sb.AppendLine("- Use targeted follow-up reads only where the requirement analysis needs extra confirmation beyond the repository-state understanding.");
         sb.AppendLine("- After you finish reading evidence, end with the final analysis report as plain Markdown.");
         sb.AppendLine("- Do not call save_workflow_output. The final Markdown response is the workflow output for analysis.");
         sb.AppendLine("- Stay in analysis mode only. Do not design the solution or plan implementation.");
@@ -319,17 +340,31 @@ Return a very short Markdown note with:
 
     private static string BuildArtifactsJson(IReadOnlyList<WorkflowArtifactDefinition> producedArtifacts)
     {
-        var artifacts = producedArtifacts.Count > 0
-            ? producedArtifacts
-                .Where(artifact => !string.IsNullOrWhiteSpace(artifact.Type) && !string.IsNullOrWhiteSpace(artifact.Name))
-                .Select(artifact => new ArtifactRecord(
-                    artifact.Type.Trim(),
-                    artifact.Name.Trim(),
-                    "analysis-report.md"))
-                .ToArray()
-            : [new ArtifactRecord("analysis-report", "Analysis Report", "analysis-report.md")];
+        var artifacts = new List<ArtifactRecord>
+        {
+            new("repository-state", "Repository State", RepositoryStateArtifactFileName)
+        };
 
-        return JsonSerializer.Serialize(artifacts, JsonOptions);
+        if (producedArtifacts.Count > 0)
+        {
+            artifacts.AddRange(
+                producedArtifacts
+                    .Where(artifact => !string.IsNullOrWhiteSpace(artifact.Type) && !string.IsNullOrWhiteSpace(artifact.Name))
+                    .Select(artifact => new ArtifactRecord(
+                        artifact.Type.Trim(),
+                        artifact.Name.Trim(),
+                        "analysis-report.md")));
+        }
+        else
+        {
+            artifacts.Add(new ArtifactRecord("analysis-report", "Analysis Report", "analysis-report.md"));
+        }
+
+        return JsonSerializer.Serialize(
+            artifacts
+                .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            JsonOptions);
     }
 
     private static IReadOnlyList<string> NormalizeFallbackList(IReadOnlyList<string> values)
