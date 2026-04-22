@@ -9,7 +9,6 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 internal static class FileAwareAgentRunner
 {
     private const int MaxToolCallsPerPhase = 16;
-    private const int MaxNoOpToolResponsesPerPhase = 8;
     private const int MaxTreeEntries = 120;
     private const int MaxSearchHits = 12;
 
@@ -176,7 +175,7 @@ internal static class FileAwareAgentRunner
             }
         }
 
-        throw new InvalidOperationException("Multi-step agent execution finished without saving a final workflow output.");
+        throw new InvalidOperationException("Multi-step agent execution finished without producing a final workflow output.");
     }
 
     private static async Task<string> ExecutePhaseAsync(
@@ -203,15 +202,10 @@ internal static class FileAwareAgentRunner
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages);
         pendingMessages.Clear();
 
-        var countedToolCalls = 0;
-        var noOpToolResponses = 0;
-        var responseIndex = 0;
-
-        while (countedToolCalls < MaxToolCallsPerPhase)
+        for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            responseIndex++;
             var rawText = await RunModelWithTimeoutAsync(agent, currentMessages, session, maxModelResponseSeconds, ct);
-            await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{responseIndex}", rawText, ct);
+            await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
             if (!TryParseToolRequest(rawText, out var toolRequest))
             {
@@ -226,6 +220,14 @@ internal static class FileAwareAgentRunner
                         requireRepositoryEvidence,
                         state.RepositoryDiscoveryUsed,
                         requireRepositoryDiscovery);
+                }
+
+                if (phase.RequiresSavedOutput)
+                {
+                    await logs.AppendLineAsync(
+                        workflowRunId,
+                        $"Result ({phase.Name}): final Markdown output accepted as the workflow output for this phase.",
+                        ct);
                 }
 
                 return rawText;
@@ -254,7 +256,6 @@ internal static class FileAwareAgentRunner
                     await LogIgnoredWorkflowRunIdAsync(toolRequest.WorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
                     var inputPayload = await payloadStore.GetInputAsync(workflowRunId, ct);
                     state.WorkflowInputLoaded = true;
-                    countedToolCalls++;
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_workflow_input('{workflowRunId}').", ct);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {inputPayload.InputPayloadJson.Length}.", ct);
 
@@ -266,31 +267,14 @@ internal static class FileAwareAgentRunner
                 }
                 case "find_available_files":
                 {
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files().", ct);
+
                     if (state.FilesAlreadyListed)
                     {
-                        noOpToolResponses++;
-                        await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files().", ct);
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): skipped repeated find_available_files call. Returning cached file list with guidance.", ct);
-
-                        if (noOpToolResponses >= MaxNoOpToolResponsesPerPhase)
-                        {
-                            throw new InvalidOperationException($"Agent is stuck repeating no-op tool calls in phase '{phase.Name}'.");
-                        }
-
-                        currentMessages =
-                        [
-                            CreateToolMessage(
-                                "AVAILABLE FILE LIST ALREADY PROVIDED." + Environment.NewLine +
-                                "Do not call find_available_files again in this phase." + Environment.NewLine +
-                                "Use only an exact full physical path from the previously returned list when calling get_file." + Environment.NewLine +
-                                "If an expected file is not in that list, treat that as an evidence gap and continue the analysis." + Environment.NewLine +
-                                "If you already have enough evidence, stop calling tools and return the final Markdown analysis report.")
-                        ];
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): skipped repeated find_available_files call. Returning cached file list.", ct);
+                        currentMessages = [CreateToolMessage(state.AvailableFilesPayload)];
                         continue;
                     }
-
-                    countedToolCalls++;
-                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): find_available_files().", ct);
 
                     var matchingPaths = FindAvailableFiles(availableFileIndex);
                     var fileListResult = FormatAvailableFiles(matchingPaths);
@@ -310,45 +294,28 @@ internal static class FileAwareAgentRunner
                     var requestedPath = toolRequest.ResolvedPath;
                     if (string.IsNullOrWhiteSpace(requestedPath))
                     {
-                        countedToolCalls++;
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. get_file requires a non-empty 'path'.", ct);
                         currentMessages =
                         [
-                            CreateToolMessage(
-                                "ERROR: get_file requires a non-empty 'path' property." + Environment.NewLine +
-                                "Tool contract:" + Environment.NewLine +
-                                "- action: get_file" + Environment.NewLine +
-                                "- path: exact full physical path from the available file list" + Environment.NewLine +
-                                "Do not invent file names. Do not use a relative path.")
+                            CreateToolMessage("ERROR: get_file requires a non-empty 'path' with an exact full physical path previously returned by find_available_files.")
                         ];
                         continue;
                     }
 
                     requestedPath = requestedPath.Trim();
-                    countedToolCalls++;
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_file('{requestedPath}').", ct);
 
                     var fileRead = TryReadFileByPhysicalPath(availableFileIndex, requestedPath);
                     if (fileRead is null)
                     {
-                        var normalizedRequestedPath = NormalizePath(Path.GetFullPath(requestedPath));
-                        var repeatedInvalidPath = !state.InvalidPaths.Add(normalizedRequestedPath);
-
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File path is not allowed for this run or the file does not exist.", ct);
                         currentMessages =
                         [
-                            CreateToolMessage(
-                                "ERROR: path not allowed." + Environment.NewLine +
-                                "Use only an exact full physical path returned earlier by find_available_files for this run." + Environment.NewLine +
-                                "Do not invent file names." + Environment.NewLine +
-                                (repeatedInvalidPath
-                                    ? "This same invalid path was already rejected. Do not retry it."
-                                    : "If the file is not in the available list, treat that as an evidence gap and continue the analysis."))
+                            CreateToolMessage("ERROR: path not allowed. Use only an exact full physical path returned by find_available_files for this run.")
                         ];
                         continue;
                     }
 
-                    noOpToolResponses = 0;
                     state.ReadPaths.Add(fileRead.NormalizedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}.", ct);
 
@@ -377,7 +344,6 @@ internal static class FileAwareAgentRunner
                         var outputJson = output.GetRawText();
                         await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): save_workflow_output('{workflowRunId}').", ct);
                         await logs.AppendBlockAsync(workflowRunId, $"Workflow output payload ({phase.Name})", outputJson, ct);
-                        countedToolCalls++;
                         await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
                         return outputJson;
                     }
@@ -401,7 +367,7 @@ internal static class FileAwareAgentRunner
             }
         }
 
-        throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} counted tool interactions in phase '{phase.Name}'.");
+        throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
     }
 
     private static IReadOnlyList<ChatMessage> BuildPhaseMessages(
@@ -641,11 +607,8 @@ internal static class FileAwareAgentRunner
         if (phase.AllowToolCalls)
         {
             sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
-            sb.AppendLine("- Tool contract: when calling a tool, return exactly one JSON object with an 'action' property.");
-            sb.AppendLine("- find_available_files takes no input parameters and returns the exact full physical path list for this run, one path per line.");
-            sb.AppendLine("- Call find_available_files at most once per phase.");
-            sb.AppendLine("- get_file requires a 'path' property with one exact full physical path previously returned by find_available_files.");
-            sb.AppendLine("- Never invent file names. If an expected file is missing from the available list, treat that as an evidence gap and continue.");
+            sb.AppendLine("- Use find_available_files to obtain exact full physical paths for this run.");
+            sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
         }
         else
         {
@@ -659,10 +622,9 @@ internal static class FileAwareAgentRunner
 
         if (phase.RequiresSavedOutput)
         {
-            sb.AppendLine("- This is the final phase: you MUST finish by calling save_workflow_output.");
-            sb.AppendLine("- In the final phase, do not call get_workflow_input or get_file.");
-            sb.AppendLine("- Return exactly one JSON object with properties action, workflowRunId, and output.");
-            sb.AppendLine("- Use property name 'action', not 'tool'.");
+            sb.AppendLine("- This is the final phase: finish with the final plain-text result for the workflow.");
+            sb.AppendLine("- You may use allowed tools earlier in this phase if needed before the final response.");
+            sb.AppendLine("- Do not call save_workflow_output unless a workflow explicitly asks for it.");
         }
         else
         {
@@ -773,7 +735,6 @@ internal static class FileAwareAgentRunner
         public bool FilesAlreadyListed { get; set; }
         public string AvailableFilesPayload { get; set; } = string.Empty;
         public HashSet<string> ReadPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public HashSet<string> InvalidPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private sealed record FileReadResult(string FullPath, string NormalizedPath, string Content);
