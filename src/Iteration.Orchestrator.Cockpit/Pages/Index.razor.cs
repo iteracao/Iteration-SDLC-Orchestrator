@@ -75,6 +75,7 @@ public partial class Index : ComponentBase, IDisposable
     private SolutionDocumentContent? _activeDocument;
     private WorkflowLogContent? _activeWorkflowLog;
     private WorkflowLogContent? _documentationWorkflowLog;
+    private Guid? _currentDocumentationWorkflowRunId;
     private WorkflowArtifactContent? _activeWorkflowArtifact;
     private WorkflowRunDetail? _activeWorkflowRunDetails;
     private bool _activeWorkflowRunDetailsLoading;
@@ -118,8 +119,8 @@ public partial class Index : ComponentBase, IDisposable
     private IReadOnlyList<RequirementPipelineViewModel> RequirementPipelines
         => _requirements.Select(BuildPipeline).ToList();
 
-    private WorkflowRunRow? LatestDocumentationWorkflowRun
-        => GetLatestDocumentationWorkflowRun();
+    private WorkflowRunRow? CurrentDocumentationWorkflowRun
+        => GetCurrentDocumentationWorkflowRun();
 
     private string ViewerTitle => GetViewerTitle();
 
@@ -290,7 +291,14 @@ public partial class Index : ComponentBase, IDisposable
                 _runs.Clear();
                 _runs.AddRange(runs);
                 _lastCockpitSnapshot = snapshot;
+                SyncDocumentationWorkflowRunSelection();
                 await RefreshActiveCardAsync(client, targetSolutionId.Value, refreshVersion);
+                shouldRender = true;
+            }
+
+            if (_documentationWorkflowModalOpen && _currentDocumentationWorkflowRunId.HasValue)
+            {
+                await LoadDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId);
                 shouldRender = true;
             }
 
@@ -713,13 +721,15 @@ public partial class Index : ComponentBase, IDisposable
 
         _documentationWorkflowModalOpen = true;
         _documentationWorkflowMessage = null;
-        await LoadLatestDocumentationWorkflowLogAsync();
+        SyncDocumentationWorkflowRunSelection();
+        await LoadDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId);
     }
 
     private void CloseDocumentationWorkflowModal()
     {
         _documentationWorkflowModalOpen = false;
         _documentationWorkflowMessage = null;
+        _currentDocumentationWorkflowRunId = null;
     }
 
     private void ResetDocumentationWorkflowModalState()
@@ -729,22 +739,25 @@ public partial class Index : ComponentBase, IDisposable
         _documentationWorkflowLog = null;
         _documentationWorkflowLogLoading = false;
         _runningDocumentationWorkflow = false;
+        _currentDocumentationWorkflowRunId = null;
     }
 
-    private WorkflowRunRow? GetLatestDocumentationWorkflowRun()
-        => _runs
-            .Where(x => string.Equals(x.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase)
-                && x.RequirementId is null
-                && x.BacklogItemId is null)
-            .OrderByDescending(x => x.StartedUtc)
-            .FirstOrDefault();
+    private WorkflowRunRow? GetCurrentDocumentationWorkflowRun()
+        => _currentDocumentationWorkflowRunId.HasValue
+            ? _runs.FirstOrDefault(x => x.Id == _currentDocumentationWorkflowRunId.Value)
+            : _runs
+                .Where(x => string.Equals(x.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase)
+                    && x.RequirementId is null
+                    && x.BacklogItemId is null)
+                .OrderByDescending(x => x.StartedUtc)
+                .FirstOrDefault();
 
-    private async Task LoadLatestDocumentationWorkflowLogAsync()
+    private async Task LoadDocumentationWorkflowLogAsync(Guid? workflowRunId)
     {
-        var latestRun = GetLatestDocumentationWorkflowRun();
-        if (latestRun is null)
+        if (!workflowRunId.HasValue)
         {
             _documentationWorkflowLog = null;
+            _documentationWorkflowLogLoading = false;
             return;
         }
 
@@ -754,13 +767,36 @@ public partial class Index : ComponentBase, IDisposable
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            _documentationWorkflowLog = await GetWorkflowLogContentAsync(client, latestRun.Id, $"api/workflow-runs/{latestRun.Id}/log");
+            _documentationWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId.Value, $"api/workflow-runs/{workflowRunId.Value}/log");
         }
         finally
         {
             _documentationWorkflowLogLoading = false;
             StateHasChanged();
         }
+    }
+
+    private void SyncDocumentationWorkflowRunSelection()
+    {
+        var availableDocumentationRunIds = _runs
+            .Where(x => string.Equals(x.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase)
+                && x.RequirementId is null
+                && x.BacklogItemId is null)
+            .Select(x => x.Id)
+            .ToHashSet();
+
+        if (_currentDocumentationWorkflowRunId.HasValue && availableDocumentationRunIds.Contains(_currentDocumentationWorkflowRunId.Value))
+        {
+            return;
+        }
+
+        _currentDocumentationWorkflowRunId = _runs
+            .Where(x => string.Equals(x.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase)
+                && x.RequirementId is null
+                && x.BacklogItemId is null)
+            .OrderByDescending(x => x.StartedUtc)
+            .Select(x => (Guid?)x.Id)
+            .FirstOrDefault();
     }
 
     private void CloseDrawer()
@@ -1168,6 +1204,8 @@ public partial class Index : ComponentBase, IDisposable
 
         _runningDocumentationWorkflow = true;
         _documentationWorkflowMessage = null;
+        _documentationWorkflowLog = null;
+        _documentationWorkflowLogLoading = true;
 
         try
         {
@@ -1183,16 +1221,18 @@ public partial class Index : ComponentBase, IDisposable
                 throw new InvalidOperationException(await ReadApiErrorAsync(response));
             }
 
+            var payload = await response.Content.ReadFromJsonAsync<WorkflowRunStartedResponse>();
+            _currentDocumentationWorkflowRunId = payload?.Id;
             _documentationWorkflowMessageSeverity = Severity.Success;
             _documentationWorkflowMessage = "Documentation workflow started.";
-            await LoadDocumentsAsync();
             await LoadCockpitAsync(showLoading: false);
-            await LoadLatestDocumentationWorkflowLogAsync();
+            await LoadDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId);
         }
         catch (Exception ex)
         {
             _documentationWorkflowMessageSeverity = Severity.Error;
             _documentationWorkflowMessage = ex.Message;
+            _documentationWorkflowLogLoading = false;
         }
         finally
         {
@@ -1845,6 +1885,11 @@ public partial class Index : ComponentBase, IDisposable
         public string? Status { get; set; }
         public string? DocumentationUpdatesJson { get; set; }
         public string? KnowledgeUpdatesJson { get; set; }
+    }
+
+    private sealed class WorkflowRunStartedResponse
+    {
+        public Guid Id { get; set; }
     }
 
     private static class VisualStatePalette

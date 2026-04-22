@@ -109,8 +109,8 @@
                    Close="CloseDrawer" />
 
 <DocumentationWorkflowDialog IsOpen="_documentationWorkflowModalOpen"
-                             LatestRun="LatestDocumentationWorkflowRun"
-                             LatestRunStatusText="@(LatestDocumentationWorkflowRun is null ? string.Empty : HumanizeWorkflowStatus(LatestDocumentationWorkflowRun.Status))"
+                             LatestRun="CurrentDocumentationWorkflowRun"
+                             LatestRunStatusText="@(CurrentDocumentationWorkflowRun is null ? string.Empty : HumanizeWorkflowStatus(CurrentDocumentationWorkflowRun.Status))"
                              SelectedTargetLabel="@SelectedTargetLabel"
                              Message="@_documentationWorkflowMessage"
                              MessageSeverity="@_documentationWorkflowMessageSeverity"

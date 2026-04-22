@@ -173,27 +173,12 @@
                         <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="_runningDocumentationSetup" OnClick="RunSetupDocumentationAsync">
                             Run documentation setup
                         </MudButton>
-
                         @if (_documentationSetupResult is not null)
                         {
                             <MudPaper Outlined="true" Class="pa-3 mt-3">
                                 <MudText Typo="Typo.subtitle2">Latest documentation setup</MudText>
                                 <MudText Typo="Typo.body2">Workflow run: @_documentationSetupResult.Id</MudText>
-                                <MudText Typo="Typo.body2">Mode: @_documentationSetupResult.Mode</MudText>
-                                <MudText Typo="Typo.body2">Created: @(_documentationSetupResult.DocumentsCreated.Count)</MudText>
-                                <MudText Typo="Typo.body2">Updated: @(_documentationSetupResult.DocumentsUpdated.Count)</MudText>
-                                <MudText Typo="Typo.body2">Unchanged: @(_documentationSetupResult.DocumentsUnchanged.Count)</MudText>
-
-                                @if (_documentationSetupResult.DriftFindings.Count > 0)
-                                {
-                                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">Drift findings</MudText>
-                                    <MudList Dense="true">
-                                        @foreach (var finding in _documentationSetupResult.DriftFindings.Take(8))
-                                        {
-                                            <MudListItem>@finding</MudListItem>
-                                        }
-                                    </MudList>
-                                }
+                                <MudText Typo="Typo.body2">Status: queued/running in background</MudText>
                             </MudPaper>
                         }
                     }
@@ -476,7 +461,7 @@
 
             _documentationSetupResult = await response.Content.ReadFromJsonAsync<SetupDocumentationResponse>();
             _messageSeverity = Severity.Success;
-            _message = "Documentation setup workflow completed.";
+            _message = "Documentation setup workflow started.";
         }
         catch (Exception ex)
         {
@@ -599,12 +584,5 @@
     private sealed class SetupDocumentationResponse
     {
         public Guid Id { get; set; }
-        public string Mode { get; set; } = string.Empty;
-        public List<string> StableDocsFound { get; set; } = [];
-        public List<string> DriftFindings { get; set; } = [];
-        public List<string> DocumentsCreated { get; set; } = [];
-        public List<string> DocumentsUpdated { get; set; } = [];
-        public List<string> DocumentsUnchanged { get; set; } = [];
-        public List<string> OpenQuestions { get; set; } = [];
     }
 }

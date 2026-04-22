@@ -1,4 +1,5 @@
 using Iteration.Orchestrator.Application.Abstractions;
+using Iteration.Orchestrator.Application.Solutions;
 using Microsoft.EntityFrameworkCore;
 
 namespace Iteration.Orchestrator.Application.Workflows;
@@ -7,6 +8,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
 {
     private readonly IAppDbContext _db;
     private readonly StartAnalyzeSolutionRunHandler _analyzeHandler;
+    private readonly SetupDocumentationHandler _setupDocumentationHandler;
     private readonly StartDesignSolutionRunHandler _designHandler;
     private readonly StartPlanImplementationRunHandler _planHandler;
     private readonly StartImplementSolutionChangeRunHandler _implementationHandler;
@@ -15,6 +17,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
     public WorkflowRunExecutor(
         IAppDbContext db,
         StartAnalyzeSolutionRunHandler analyzeHandler,
+        SetupDocumentationHandler setupDocumentationHandler,
         StartDesignSolutionRunHandler designHandler,
         StartPlanImplementationRunHandler planHandler,
         StartImplementSolutionChangeRunHandler implementationHandler,
@@ -22,6 +25,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
     {
         _db = db;
         _analyzeHandler = analyzeHandler;
+        _setupDocumentationHandler = setupDocumentationHandler;
         _designHandler = designHandler;
         _planHandler = planHandler;
         _implementationHandler = implementationHandler;
@@ -44,6 +48,9 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
             {
                 case "analyze-request":
                     await _analyzeHandler.ExecuteAsync(workflowRunId, ct);
+                    break;
+                case "setup-documentation":
+                    await _setupDocumentationHandler.ExecuteAsync(workflowRunId, ct);
                     break;
                 case "design-solution-change":
                     await _designHandler.ExecuteAsync(workflowRunId, ct);

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Application.Common;
+using Iteration.Orchestrator.Application.Workflows;
 using Iteration.Orchestrator.Domain.Solutions;
 using Iteration.Orchestrator.Domain.Workflows;
 using Microsoft.EntityFrameworkCore;
@@ -12,15 +13,7 @@ public sealed record SetupDocumentationCommand(
     Guid TargetSolutionId,
     string RequestedBy);
 
-public sealed record SetupDocumentationExecutionResult(
-    Guid WorkflowRunId,
-    string Mode,
-    IReadOnlyList<string> StableDocsFound,
-    IReadOnlyList<string> DriftFindings,
-    IReadOnlyList<string> DocumentsCreated,
-    IReadOnlyList<string> DocumentsUpdated,
-    IReadOnlyList<string> DocumentsUnchanged,
-    IReadOnlyList<string> OpenQuestions);
+public sealed record SetupDocumentationExecutionResult(Guid WorkflowRunId);
 
 public sealed class SetupDocumentationHandler
 {
@@ -29,24 +22,50 @@ public sealed class SetupDocumentationHandler
     private readonly ISolutionDocumentationSetupAgent _agent;
     private readonly IArtifactStore _artifacts;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly IWorkflowExecutionQueue _queue;
 
     public SetupDocumentationHandler(
         IAppDbContext db,
         IConfigCatalog config,
         ISolutionDocumentationSetupAgent agent,
         IArtifactStore artifacts,
-        IWorkflowRunLogStore logs)
+        IWorkflowRunLogStore logs,
+        IWorkflowExecutionQueue queue)
     {
         _db = db;
         _config = config;
         _agent = agent;
         _artifacts = artifacts;
         _logs = logs;
+        _queue = queue;
     }
 
     public async Task<SetupDocumentationExecutionResult> HandleAsync(SetupDocumentationCommand command, CancellationToken ct)
     {
         var target = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == command.TargetSolutionId, ct)
+            ?? throw new InvalidOperationException("Target solution not found.");
+
+        var workflow = await _config.GetWorkflowAsync("setup-documentation", ct);
+
+        var run = new WorkflowRun(null, null, target.Id, workflow.Code, command.RequestedBy);
+        _db.WorkflowRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
+        await _logs.AppendLineAsync(run.Id, "Workflow run created and queued.", ct);
+        await _queue.EnqueueAsync(run.Id, ct);
+        return new SetupDocumentationExecutionResult(run.Id);
+    }
+
+    public async Task ExecuteAsync(Guid workflowRunId, CancellationToken ct)
+    {
+        var run = await _db.WorkflowRuns.FirstOrDefaultAsync(x => x.Id == workflowRunId, ct)
+            ?? throw new InvalidOperationException("Workflow run not found.");
+
+        if (!string.Equals(run.WorkflowCode, "setup-documentation", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Workflow run is not a setup-documentation run.");
+        }
+
+        var target = await _db.SolutionTargets.FirstOrDefaultAsync(x => x.Id == run.TargetSolutionId, ct)
             ?? throw new InvalidOperationException("Target solution not found.");
 
         var solution = await _db.Solutions.FirstOrDefaultAsync(x => x.Id == target.SolutionId, ct)
@@ -70,7 +89,6 @@ public sealed class SetupDocumentationHandler
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var run = new WorkflowRun(null, null, target.Id, workflow.Code, command.RequestedBy);
         var request = new SolutionDocumentationSetupRequest(
             run.Id,
             target.Id,
@@ -92,17 +110,17 @@ public sealed class SetupDocumentationHandler
         var inputJson = JsonSerializer.Serialize(request, JsonOptions);
         var taskRun = new AgentTaskRun(run.Id, agentDefinition.Code, inputJson);
 
-        _db.WorkflowRuns.Add(run);
         _db.AgentTaskRuns.Add(taskRun);
+
+        await _logs.AppendLineAsync(run.Id, "Background workflow execution started.", ct);
 
         run.Start("documentation-setup");
         taskRun.Start();
-
         await _db.SaveChangesAsync(ct);
-        await _logs.AppendLineAsync(run.Id, "Documentation setup workflow started.", ct);
 
         try
         {
+            await _logs.AppendLineAsync(run.Id, "Documentation setup workflow started.", ct);
             await _artifacts.SaveTextAsync(run.Id, "setup-documentation.input.json", inputJson, ct);
 
             var result = await _agent.RunAsync(request, agentDefinition, target, ct);
@@ -137,22 +155,11 @@ public sealed class SetupDocumentationHandler
 
             await _db.SaveChangesAsync(ct);
             await _logs.AppendLineAsync(run.Id, "Documentation setup workflow completed successfully.", ct);
-
-            return new SetupDocumentationExecutionResult(
-                run.Id,
-                result.Mode,
-                result.StableDocsFound,
-                result.DriftFindings,
-                writeOutcome.Created,
-                writeOutcome.Updated,
-                writeOutcome.Unchanged,
-                result.OpenQuestions);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await _logs.AppendLineAsync(run.Id, "Documentation setup workflow was cancelled.", CancellationToken.None);
-            taskRun.Fail("Documentation setup workflow cancelled.");
-            run.Fail(run.CurrentStage, "Documentation setup workflow cancelled.");
+            await _logs.AppendLineAsync(run.Id, "Documentation setup workflow execution was cancelled by the background execution token.", CancellationToken.None);
+            taskRun.Fail("Documentation setup workflow execution cancelled by the background execution token.");
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
@@ -160,6 +167,11 @@ public sealed class SetupDocumentationHandler
         {
             await _artifacts.SaveTextAsync(run.Id, "workflow-exception.txt", ex.ToString(), CancellationToken.None);
             await _logs.AppendLineAsync(run.Id, "Documentation setup workflow failed.", CancellationToken.None);
+            await _logs.AppendKeyValuesAsync(run.Id, "Error", new Dictionary<string, string?>
+            {
+                ["Type"] = ex.GetType().Name,
+                ["Message"] = ex.Message
+            }, CancellationToken.None);
             await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
             taskRun.Fail(ex.Message);
             run.Fail(run.CurrentStage, ex.Message);
@@ -207,65 +219,72 @@ public sealed class SetupDocumentationHandler
         {
             if (!stableDocumentTargets.Contains(relativePath, StringComparer.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException($"Reported documentation path '{relativePath}' is not part of the canonical stable documentation set.");
+                throw new InvalidOperationException($"Reported documentation path '{relativePath}' is not part of the canonical stable document set.");
             }
 
             var fullPath = Path.Combine(knowledgeRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(fullPath))
             {
-                throw new InvalidOperationException($"Reported documentation file '{relativePath}' does not exist after the agent write step.");
+                throw new InvalidOperationException($"Expected stable documentation file '{relativePath}' was not written to disk.");
             }
         }
 
         return new DocumentationWriteOutcome(created, updated, unchanged);
     }
 
-    private static string ToWorkspaceRelativePath(string repositoryRelativePath, string solutionCode)
+    private static string BuildProfileSummary(ProfileDefinition profile)
     {
-        var prefix = $"AI/solutions/{solutionCode}/";
-        return repositoryRelativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? repositoryRelativePath[prefix.Length..]
-            : repositoryRelativePath;
+        var builder = new StringBuilder();
+        builder.AppendLine($"Profile: {profile.Code}");
+        builder.AppendLine(profile.Name);
+        if (!string.IsNullOrWhiteSpace(profile.Description))
+        {
+            builder.AppendLine(profile.Description.Trim());
+        }
+
+        return builder.ToString().Trim();
     }
 
     private static IReadOnlyList<WorkflowFileReference> BuildProfileRuleFiles(ProfileDefinition profile)
-        => profile.Rules
-            .Select(rule => new WorkflowFileReference(rule.Path, "markdown", "Profile rule", "profile"))
-            .ToArray();
+       => profile.Rules
+        .Select(rule => new WorkflowFileReference(
+            rule.Path,
+            "rule",
+            null,
+            "profile-rule"))
+        .ToArray();
 
-    private static string BuildProfileSummary(ProfileDefinition profile)
+    private static string ToWorkspaceRelativePath(string fullPath, string solutionCode)
     {
-        var parts = new List<string>();
-
-        if (!string.IsNullOrWhiteSpace(profile.Name))
+        var normalized = fullPath.Replace('\\', '/');
+        var marker = $"/AI/solutions/{solutionCode}/";
+        var index = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
         {
-            parts.Add(profile.Name.Trim());
+            return Path.GetFileName(fullPath);
         }
 
-        if (!string.IsNullOrWhiteSpace(profile.Description))
-        {
-            parts.Add(profile.Description.Trim());
-        }
-
-        if (profile.Rules.Count > 0)
-        {
-            parts.Add("Rules included:\n" + string.Join("\n", profile.Rules.Select(rule => $"- {rule.Path}")));
-        }
-
-        return string.Join("\n\n", parts);
+        return normalized[(index + marker.Length)..];
     }
 
-    private static string NormalizeMarkdown(string value)
-        => value.Replace("\r\n", "\n").Trim();
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static string NormalizeMarkdown(string markdown)
     {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true
-    };
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return string.Empty;
+        }
+
+        return markdown.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd().Replace("\n", Environment.NewLine);
+    }
 
     private sealed record DocumentationWriteOutcome(
         IReadOnlyList<string> Created,
         IReadOnlyList<string> Updated,
         IReadOnlyList<string> Unchanged);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 }

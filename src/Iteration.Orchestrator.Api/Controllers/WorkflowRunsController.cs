@@ -79,14 +79,7 @@ public sealed class WorkflowRunsController : ControllerBase
 
             return Ok(new
             {
-                id = result.WorkflowRunId,
-                result.Mode,
-                result.StableDocsFound,
-                result.DriftFindings,
-                result.DocumentsCreated,
-                result.DocumentsUpdated,
-                result.DocumentsUnchanged,
-                result.OpenQuestions
+                id = result.WorkflowRunId
             });
         }
         catch (InvalidOperationException ex)
