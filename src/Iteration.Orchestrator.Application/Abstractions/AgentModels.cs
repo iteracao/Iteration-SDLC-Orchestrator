@@ -184,6 +184,8 @@ public sealed record SolutionDocumentationSetupResult(
     IReadOnlyList<string> RepoDocsReviewed,
     IReadOnlyList<string> SourceAreasReviewed,
     IReadOnlyList<string> DriftFindings,
-    IReadOnlyList<DocumentationFileDraft> Documents,
+    IReadOnlyList<string> DocumentsCreated,
+    IReadOnlyList<string> DocumentsUpdated,
+    IReadOnlyList<string> DocumentsUnchanged,
     IReadOnlyList<string> OpenQuestions,
-    string RawJson);
+    string RawReportMarkdown);

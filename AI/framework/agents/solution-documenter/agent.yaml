@@ -6,6 +6,5 @@ allowedTools:
   - find_available_files
   - get_next_file_batch
   - get_file
-
-outputSchema: output.schema.json
+  - write_file
 promptFile: prompt.md

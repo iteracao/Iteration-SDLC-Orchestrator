@@ -30,7 +30,8 @@ internal static class FileAwareAgentRunner
         IReadOnlyCollection<string>? requiredFrameworkPaths = null,
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
         bool requireRepositoryEvidence = false,
-        int maxModelResponseSeconds = 180)
+        int maxModelResponseSeconds = 180,
+        IReadOnlyDictionary<string, string>? writableFiles = null)
     {
         var phase = new AgentPhaseDefinition(
             Name: "single-pass",
@@ -60,7 +61,8 @@ internal static class FileAwareAgentRunner
             requireRepositoryEvidence,
             requireRepositoryDiscovery: false,
             discoveryTools: null,
-            maxModelResponseSeconds: maxModelResponseSeconds);
+            maxModelResponseSeconds: maxModelResponseSeconds,
+            writableFiles: null);
     }
 
     public static async Task<string> RunPromptAsync(
@@ -113,7 +115,8 @@ internal static class FileAwareAgentRunner
         bool requireRepositoryEvidence = false,
         bool requireRepositoryDiscovery = false,
         RepositoryDiscoveryTools? discoveryTools = null,
-        int maxModelResponseSeconds = 180)
+        int maxModelResponseSeconds = 180,
+        IReadOnlyDictionary<string, string>? writableFiles = null)
     {
         if (phases.Count == 0)
         {
@@ -172,7 +175,8 @@ internal static class FileAwareAgentRunner
                     requiredSolutionPathSet,
                     requireRepositoryEvidence,
                     requireRepositoryDiscovery,
-                    responseTimeoutSeconds);
+                    responseTimeoutSeconds,
+                    writableFiles);
             }
 
             if (phase.RequiresSavedOutput)
@@ -204,9 +208,10 @@ internal static class FileAwareAgentRunner
         IReadOnlySet<string> requiredSolutionPathSet,
         bool requireRepositoryEvidence,
         bool requireRepositoryDiscovery,
-        int maxModelResponseSeconds)
+        int maxModelResponseSeconds,
+        IReadOnlyDictionary<string, string>? writableFiles)
     {
-        var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages);
+        var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages, writableFiles);
         pendingMessages.Clear();
         var nextUnreadFileIndex = 0;
 
@@ -379,6 +384,46 @@ internal static class FileAwareAgentRunner
                     ];
                     continue;
                 }
+                case "write_file":
+                {
+                    var requestedPath = toolRequest.ResolvedPath;
+                    var content = toolRequest.Content;
+                    if (string.IsNullOrWhiteSpace(requestedPath))
+                    {
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires a non-empty 'path'.", ct);
+                        currentMessages = [CreateToolMessage("ERROR: write_file requires a non-empty 'path' matching one approved stable documentation file.")];
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(content))
+                    {
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires non-empty 'content'.", ct);
+                        currentMessages = [CreateToolMessage("ERROR: write_file requires non-empty 'content'.")];
+                        continue;
+                    }
+
+                    requestedPath = requestedPath.Trim();
+                    await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): write_file('{requestedPath}').", ct);
+
+                    if (writableFiles is null || !writableFiles.TryGetValue(requestedPath, out var fullWritePath))
+                    {
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File path is not approved for writes in this workflow.", ct);
+                        currentMessages = [CreateToolMessage("ERROR: path not approved for write_file. Use only one approved stable documentation path exactly as listed in the prompt.")];
+                        continue;
+                    }
+
+                    var folder = Path.GetDirectoryName(fullWritePath);
+                    if (!string.IsNullOrWhiteSpace(folder))
+                    {
+                        Directory.CreateDirectory(folder);
+                    }
+
+                    var normalizedContent = content.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd() + Environment.NewLine;
+                    await File.WriteAllTextAsync(fullWritePath, normalizedContent, ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Wrote {normalizedContent.Length} character(s) to '{requestedPath}'.", ct);
+                    currentMessages = [CreateToolMessage($"OK: wrote '{requestedPath}'.")];
+                    continue;
+                }
                 case "save_workflow_output":
                 {
                     if (toolRequest.Output is not JsonElement output)
@@ -428,11 +473,12 @@ internal static class FileAwareAgentRunner
         AgentPhaseDefinition phase,
         int phaseIndex,
         int totalPhases,
-        IReadOnlyList<ChatMessage> pendingMessages)
+        IReadOnlyList<ChatMessage> pendingMessages,
+        IReadOnlyDictionary<string, string>? writableFiles)
     {
         var messages = new List<ChatMessage>(pendingMessages.Count + 1);
         messages.AddRange(pendingMessages);
-        messages.Add(CreateUserMessage(BuildPhasePrompt(phase, phaseIndex, totalPhases)));
+        messages.Add(CreateUserMessage(BuildPhasePrompt(phase, phaseIndex, totalPhases, writableFiles)));
         return messages;
     }
 
@@ -735,7 +781,7 @@ internal static class FileAwareAgentRunner
             totalBatchesEstimate);
     }
 
-    private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases)
+    private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, IReadOnlyDictionary<string, string>? writableFiles)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"PHASE {phaseIndex + 1} OF {totalPhases}: {phase.Name}");
@@ -751,6 +797,10 @@ internal static class FileAwareAgentRunner
             sb.AppendLine("- Use find_available_files to obtain exact full physical paths for this run.");
             sb.AppendLine("- Use get_next_file_batch to review the allowed file set in controlled server-sized batches.");
             sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
+            if (writableFiles is not null && writableFiles.Count > 0)
+            {
+                sb.AppendLine("- Use write_file only with one approved stable documentation path exactly as listed in the prompt.");
+            }
         }
         else
         {
@@ -923,6 +973,7 @@ internal static class FileAwareAgentRunner
         public string? Path { get; set; }
         public string? Query { get; set; }
         public string? FilePath { get; set; }
+        public string? Content { get; set; }
         public JsonElement? Output { get; set; }
 
         public string ResolvedAction => !string.IsNullOrWhiteSpace(Action)

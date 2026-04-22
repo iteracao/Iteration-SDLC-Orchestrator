@@ -107,15 +107,13 @@ public sealed class SetupDocumentationHandler
 
             var result = await _agent.RunAsync(request, agentDefinition, target, ct);
 
-            var writeOutcome = await ApplyDocumentationChangesAsync(
+            var writeOutcome = ValidateDocumentationStateAfterAgentWrites(
                 target.RepositoryPath,
                 target.Code,
                 stableDocumentTargets,
                 existingStableDocumentPaths,
-                result,
-                ct);
+                result);
 
-            var reportMarkdown = BuildReportMarkdown(result, writeOutcome);
             var outputJson = JsonSerializer.Serialize(new
             {
                 result.Mode,
@@ -127,12 +125,11 @@ public sealed class SetupDocumentationHandler
                 result.OpenQuestions,
                 DocumentsCreated = writeOutcome.Created,
                 DocumentsUpdated = writeOutcome.Updated,
-                DocumentsUnchanged = writeOutcome.Unchanged,
-                Documents = result.Documents
+                DocumentsUnchanged = writeOutcome.Unchanged
             }, JsonOptions);
 
             await _artifacts.SaveTextAsync(run.Id, "setup-documentation.output.json", outputJson, ct);
-            await _artifacts.SaveTextAsync(run.Id, "setup-documentation-report.md", reportMarkdown, ct);
+            await _artifacts.SaveTextAsync(run.Id, "setup-documentation-report.md", NormalizeMarkdown(result.RawReportMarkdown) + Environment.NewLine, ct);
 
             taskRun.Succeed(outputJson);
             run.Complete("setup-documentation-completed");
@@ -171,149 +168,56 @@ public sealed class SetupDocumentationHandler
         }
     }
 
-    private static async Task<DocumentationWriteOutcome> ApplyDocumentationChangesAsync(
+    private static DocumentationWriteOutcome ValidateDocumentationStateAfterAgentWrites(
         string repositoryPath,
         string solutionCode,
         IReadOnlyList<string> stableDocumentTargets,
         IReadOnlyList<string> existingStableDocumentPaths,
-        SolutionDocumentationSetupResult result,
-        CancellationToken ct)
+        SolutionDocumentationSetupResult result)
     {
         var knowledgeRoot = StableDocumentationCatalog.BuildKnowledgeRoot(repositoryPath, solutionCode);
         Directory.CreateDirectory(knowledgeRoot);
 
-        var existingSet = existingStableDocumentPaths
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var draftMap = result.Documents
-            .ToDictionary(x => x.Path, StringComparer.OrdinalIgnoreCase);
+        var existingSet = existingStableDocumentPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var created = result.DocumentsCreated.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+        var updated = result.DocumentsUpdated.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+        var unchanged = result.DocumentsUnchanged.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
 
         if (string.Equals(result.Mode, "bootstrap", StringComparison.OrdinalIgnoreCase)
-            && !stableDocumentTargets.All(path => draftMap.ContainsKey(path)))
+            && !stableDocumentTargets.All(path => created.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || updated.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || unchanged.Contains(path, StringComparer.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException("Bootstrap mode must provide content for the full canonical stable documentation set.");
+            throw new InvalidOperationException("Bootstrap mode must report the full canonical stable documentation set.");
         }
 
-        var missingStableTargets = stableDocumentTargets
-            .Where(path => !existingSet.Contains(path))
-            .ToArray();
-
+        var missingStableTargets = stableDocumentTargets.Where(path => !existingSet.Contains(path)).ToArray();
         if (!string.Equals(result.Mode, "aligned", StringComparison.OrdinalIgnoreCase)
-            && missingStableTargets.Any(path =>
-                !draftMap.TryGetValue(path, out var draft)
-                || string.Equals(draft.Action, "unchanged", StringComparison.OrdinalIgnoreCase)))
+            && missingStableTargets.Any(path => !created.Contains(path, StringComparer.OrdinalIgnoreCase) && !updated.Contains(path, StringComparer.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException("Missing canonical stable documentation files must be created during bootstrap or update mode.");
+            throw new InvalidOperationException("Missing canonical stable documentation files must be created or updated during bootstrap or update mode.");
         }
 
-        if (string.Equals(result.Mode, "aligned", StringComparison.OrdinalIgnoreCase)
-            && result.Documents.Any(x => !string.Equals(x.Action, "unchanged", StringComparison.OrdinalIgnoreCase)))
+        if (string.Equals(result.Mode, "aligned", StringComparison.OrdinalIgnoreCase) && (created.Length > 0 || updated.Length > 0))
         {
             throw new InvalidOperationException("Aligned mode must not rewrite stable documentation.");
         }
 
-        var created = new List<string>();
-        var updated = new List<string>();
-        var unchanged = new List<string>();
-
-        foreach (var relativePath in stableDocumentTargets)
+        foreach (var relativePath in created.Concat(updated).Concat(unchanged).Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            if (!stableDocumentTargets.Contains(relativePath, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Reported documentation path '{relativePath}' is not part of the canonical stable documentation set.");
+            }
+
             var fullPath = Path.Combine(knowledgeRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            var folder = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrWhiteSpace(folder))
+            if (!File.Exists(fullPath))
             {
-                Directory.CreateDirectory(folder);
-            }
-
-            if (!draftMap.TryGetValue(relativePath, out var draft)
-                || string.Equals(draft.Action, "unchanged", StringComparison.OrdinalIgnoreCase))
-            {
-                if (File.Exists(fullPath))
-                {
-                    unchanged.Add(relativePath);
-                }
-
-                continue;
-            }
-
-            var normalizedContent = NormalizeMarkdown(draft.Content);
-            var fileExists = File.Exists(fullPath);
-            if (fileExists)
-            {
-                var currentContent = NormalizeMarkdown(await File.ReadAllTextAsync(fullPath, ct));
-                if (string.Equals(currentContent, normalizedContent, StringComparison.Ordinal))
-                {
-                    unchanged.Add(relativePath);
-                    continue;
-                }
-            }
-
-            await File.WriteAllTextAsync(fullPath, normalizedContent + Environment.NewLine, ct);
-
-            if (fileExists || existingSet.Contains(relativePath))
-            {
-                updated.Add(relativePath);
-            }
-            else
-            {
-                created.Add(relativePath);
+                throw new InvalidOperationException($"Reported documentation file '{relativePath}' does not exist after the agent write step.");
             }
         }
 
-        foreach (var relativePath in stableDocumentTargets)
-        {
-            if (!created.Contains(relativePath, StringComparer.OrdinalIgnoreCase)
-                && !updated.Contains(relativePath, StringComparer.OrdinalIgnoreCase)
-                && !unchanged.Contains(relativePath, StringComparer.OrdinalIgnoreCase)
-                && File.Exists(Path.Combine(knowledgeRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))))
-            {
-                unchanged.Add(relativePath);
-            }
-        }
-
-        return new DocumentationWriteOutcome(
-            created.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
-            updated.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
-            unchanged.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
-    }
-
-    private static string BuildReportMarkdown(
-        SolutionDocumentationSetupResult result,
-        DocumentationWriteOutcome writeOutcome)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("# Setup Documentation Report");
-        sb.AppendLine();
-        sb.AppendLine($"- mode: {result.Mode}");
-        sb.AppendLine();
-        AppendListSection(sb, "Stable Docs Found", result.StableDocsFound);
-        AppendListSection(sb, "Repo Docs Reviewed", result.RepoDocsReviewed);
-        AppendListSection(sb, "Source Areas Reviewed", result.SourceAreasReviewed);
-        AppendListSection(sb, "Drift Findings", result.DriftFindings);
-        AppendListSection(sb, "Documents Created", writeOutcome.Created);
-        AppendListSection(sb, "Documents Updated", writeOutcome.Updated);
-        AppendListSection(sb, "Documents Unchanged", writeOutcome.Unchanged);
-        AppendListSection(sb, "Open Questions", result.OpenQuestions);
-        return sb.ToString().TrimEnd() + Environment.NewLine;
-    }
-
-    private static void AppendListSection(StringBuilder sb, string title, IReadOnlyList<string> items)
-    {
-        sb.AppendLine($"## {title}");
-        sb.AppendLine();
-
-        if (items.Count == 0)
-        {
-            sb.AppendLine("- none");
-        }
-        else
-        {
-            foreach (var item in items)
-            {
-                sb.AppendLine($"- {item}");
-            }
-        }
-
-        sb.AppendLine();
+        return new DocumentationWriteOutcome(created, updated, unchanged);
     }
 
     private static string ToWorkspaceRelativePath(string repositoryRelativePath, string solutionCode)

@@ -1,13 +1,15 @@
 using System.Text;
-using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
+using Iteration.Orchestrator.Application.Common;
 using Iteration.Orchestrator.Domain.Solutions;
 
 namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISolutionDocumentationSetupAgent
 {
+    private const string BoundariesArtifactFileName = "01-boundaries.md";
     private const string DocumentationContextArtifactFileName = "documentation-context.md";
+    private const string FinalDecisionArtifactFileName = "03-decision.md";
 
     private readonly string _endpoint;
     private readonly string _model;
@@ -51,6 +53,11 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 
         try
         {
+            var writableFiles = request.StableDocumentTargets.ToDictionary(
+                path => path,
+                path => Path.Combine(StableDocumentationCatalog.BuildKnowledgeRoot(request.RepositoryPath, request.SolutionCode), path.Replace('/', Path.DirectorySeparatorChar)),
+                StringComparer.OrdinalIgnoreCase);
+
             var phases = new[]
             {
                 new FileAwareAgentRunner.AgentPhaseDefinition(
@@ -59,7 +66,9 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Establish documentation setup boundaries and authority order.",
-                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    AllowToolCalls: false,
+                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2",
                     Prompt: BuildDocumentationContextPrompt(request),
@@ -76,17 +85,18 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Prompt: BuildFinalOutputPrompt(request),
                     RequiresSavedOutput: true,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Produce the final documentation setup decision and document drafts as JSON.",
+                    PurposeSummary: "Decide the final documentation state, write approved stable docs, and return the final Markdown report.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireWorkflowInput: false,
-                    RequireCompletionValidation: true)
+                    RequireCompletionValidation: true,
+                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName)
             };
 
-            var rawText = await FileAwareAgentRunner.RunMultiStepAsync(
+            var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
                 _endpoint,
                 _model,
                 agentDefinition.Name,
-                BuildInstructions(agentDefinition),
+                BuildInstructions(agentDefinition, request),
                 phases,
                 request.RepositoryPath,
                 request.AllowedContextFiles,
@@ -98,12 +108,11 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                 requireRepositoryEvidence: false,
                 requireRepositoryDiscovery: false,
                 discoveryTools: null,
-                maxModelResponseSeconds: _maxModelResponseSeconds);
+                maxModelResponseSeconds: _maxModelResponseSeconds,
+                writableFiles: writableFiles);
 
-            var payload = ParseAndNormalize(rawText, request);
-            var normalizedJson = JsonSerializer.Serialize(payload, JsonOptions);
-
-            await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup agent response parsed successfully.", ct);
+            var payload = ParseAndNormalize(rawMarkdown, request);
+            await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup agent final report parsed successfully.", ct);
 
             return new SolutionDocumentationSetupResult(
                 payload.Mode,
@@ -112,9 +121,11 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                 payload.RepoDocsReviewed,
                 payload.SourceAreasReviewed,
                 payload.DriftFindings,
-                payload.Documents,
+                payload.DocumentsCreated,
+                payload.DocumentsUpdated,
+                payload.DocumentsUnchanged,
                 payload.OpenQuestions,
-                normalizedJson);
+                rawMarkdown);
         }
         catch (Exception ex)
         {
@@ -124,7 +135,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         }
     }
 
-    private static string BuildInstructions(AgentDefinition agentDefinition)
+    private static string BuildInstructions(AgentDefinition agentDefinition, SolutionDocumentationSetupRequest request)
     {
         var sb = new StringBuilder();
         sb.AppendLine(agentDefinition.PromptText.Trim());
@@ -133,13 +144,20 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine("- This workflow runs as a three-prompt sequence.");
         sb.AppendLine("- Prompt 1 establishes rules and boundaries.");
         sb.AppendLine($"- Prompt 2 must review the full allowed context and produce Markdown saved as {DocumentationContextArtifactFileName}.");
-        sb.AppendLine("- Prompt 3 must return the final JSON result only.");
+        sb.AppendLine("- Prompt 3 must decide the final documentation state, use write_file for approved doc changes, and return the final Markdown report only.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
-        sb.AppendLine("- Allowed tool actions are find_available_files, get_next_file_batch, and get_file.");
-        sb.AppendLine("- Always call find_available_files first.");
+        sb.AppendLine("- Allowed read tool actions are find_available_files, get_next_file_batch, and get_file.");
+        sb.AppendLine("- Allowed write tool action is write_file.");
+        sb.AppendLine("- Always call find_available_files first before targeted get_file calls.");
         sb.AppendLine("- In Prompt 2, repeatedly call get_next_file_batch until all allowed context has been reviewed.");
         sb.AppendLine("- Use get_file only with exact full physical paths returned by find_available_files.");
+        sb.AppendLine("- Use write_file only for approved stable documentation files listed below.");
+        sb.AppendLine("Approved stable documentation targets:");
+        foreach (var path in request.StableDocumentTargets)
+        {
+            sb.AppendLine($"- {path}");
+        }
         return sb.ToString().TrimEnd();
     }
 
@@ -163,6 +181,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine("- Do not rewrite documentation when mode should be aligned.");
         sb.AppendLine();
         sb.AppendLine("Return a very short Markdown note with:");
+        sb.AppendLine("# Boundaries");
         sb.AppendLine("## Workflow Intent");
         sb.AppendLine("## Boundaries To Preserve");
         return sb.ToString().TrimEnd();
@@ -201,66 +220,109 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 3 of 3 for setup-documentation.");
-        sb.AppendLine("Use the saved documentation context from Prompt 2 as your baseline, then produce the final setup-documentation decision.");
+        sb.AppendLine("Use the saved documentation context from Prompt 2 as your baseline.");
         sb.AppendLine();
         sb.AppendLine("GOAL");
         sb.AppendLine("- Decide whether the mode is bootstrap, update, or aligned.");
-        sb.AppendLine("- Create document drafts only for files that must be created or updated.");
-        sb.AppendLine("- If the mode is aligned, do not propose rewrites.");
+        sb.AppendLine("- Use write_file to create or update only approved stable documentation files.");
+        sb.AppendLine("- If the mode is aligned, do not call write_file.");
         sb.AppendLine();
-        sb.AppendLine("DRIFT RULES");
-        sb.AppendLine("- Compare stable docs against local repository docs and source code.");
-        sb.AppendLine("- Detect missing documents, outdated sections, workflow mismatch, architecture/module mismatch, and new modules not documented.");
-        sb.AppendLine("- Do not use excluded areas as evidence.");
-        sb.AppendLine();
-        sb.AppendLine("DOCUMENT TARGETS");
+        sb.AppendLine("WRITE RULES");
+        sb.AppendLine("- You may write ONLY these approved stable document paths:");
         foreach (var path in request.StableDocumentTargets)
         {
-            sb.AppendLine($"- {path}");
+            sb.AppendLine($"  - {path}");
         }
-        sb.AppendLine();
-        sb.AppendLine("OUTPUT CONTRACT");
-        sb.AppendLine("- Return JSON only.");
-        sb.AppendLine("- The top-level object must contain:");
-        sb.AppendLine("  - mode");
-        sb.AppendLine("  - summary");
-        sb.AppendLine("  - stableDocsFound");
-        sb.AppendLine("  - repoDocsReviewed");
-        sb.AppendLine("  - sourceAreasReviewed");
-        sb.AppendLine("  - driftFindings");
-        sb.AppendLine("  - documents");
-        sb.AppendLine("  - openQuestions");
-        sb.AppendLine("- `mode` must be one of: bootstrap, update, aligned.");
-        sb.AppendLine("- `documents` must be an array of objects with: path, action, content.");
-        sb.AppendLine("- `path` must be one of the stable document targets listed above.");
-        sb.AppendLine("- `action` must be create, update, or unchanged.");
-        sb.AppendLine("- `content` is required for create or update and must be omitted or empty for unchanged.");
+        sb.AppendLine("- Never write any other path.");
         sb.AppendLine("- Stable docs must stay concise, structured, long-lived, and grounded in source code.");
         sb.AppendLine("- Do not include workflow logs, analysis narratives, or transient run details in document content.");
+        sb.AppendLine();
+        sb.AppendLine("FINAL REPORT FORMAT");
+        sb.AppendLine("Return Markdown only using exactly these sections:");
+        sb.AppendLine("# Setup Documentation Result");
+        sb.AppendLine("## Mode");
+        sb.AppendLine("## Summary");
+        sb.AppendLine("## Stable Docs Found");
+        sb.AppendLine("## Repo Docs Reviewed");
+        sb.AppendLine("## Source Areas Reviewed");
+        sb.AppendLine("## Drift Findings");
+        sb.AppendLine("## Documents Created");
+        sb.AppendLine("## Documents Updated");
+        sb.AppendLine("## Documents Unchanged");
+        sb.AppendLine("## Open Questions");
+        sb.AppendLine();
+        sb.AppendLine("Use bullet lists for list sections. Put exactly one of: bootstrap, update, aligned under ## Mode.");
         return sb.ToString().TrimEnd();
     }
 
-    private static WorkflowOutputPayload ParseAndNormalize(string raw, SolutionDocumentationSetupRequest request)
+    private static WorkflowReportPayload ParseAndNormalize(string raw, SolutionDocumentationSetupRequest request)
     {
-        var cleaned = ExtractJsonObject(raw);
-        var parsed = JsonSerializer.Deserialize<WorkflowOutputPayload>(cleaned, JsonOptions)
-            ?? throw new InvalidOperationException($"Agent returned an empty or invalid JSON payload. Raw response: {raw}");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new InvalidOperationException("Agent returned an empty final report.");
+        }
 
-        var stableTargets = request.StableDocumentTargets
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var sections = ParseSections(raw);
+        var mode = NormalizeMode(GetSingleValue(sections, "Mode"), request.ExistingStableDocumentPaths.Count);
+        var summary = GetSingleValue(sections, "Summary");
 
-        parsed.Mode = NormalizeMode(parsed.Mode, request.ExistingStableDocumentPaths.Count);
-        parsed.Summary = string.IsNullOrWhiteSpace(parsed.Summary)
-            ? $"Documentation setup completed for '{request.SolutionName}'."
-            : parsed.Summary.Trim();
-        parsed.StableDocsFound = NormalizeStringList(parsed.StableDocsFound);
-        parsed.RepoDocsReviewed = NormalizeStringList(parsed.RepoDocsReviewed);
-        parsed.SourceAreasReviewed = NormalizeStringList(parsed.SourceAreasReviewed);
-        parsed.DriftFindings = NormalizeStringList(parsed.DriftFindings);
-        parsed.OpenQuestions = NormalizeStringList(parsed.OpenQuestions);
-        parsed.Documents = NormalizeDocuments(parsed.Documents, stableTargets, parsed.Mode);
-        return parsed;
+        var payload = new WorkflowReportPayload
+        {
+            Mode = mode,
+            Summary = string.IsNullOrWhiteSpace(summary) ? $"Documentation setup completed for '{request.SolutionName}'." : summary.Trim(),
+            StableDocsFound = NormalizeStringList(GetList(sections, "Stable Docs Found")),
+            RepoDocsReviewed = NormalizeStringList(GetList(sections, "Repo Docs Reviewed")),
+            SourceAreasReviewed = NormalizeStringList(GetList(sections, "Source Areas Reviewed")),
+            DriftFindings = NormalizeStringList(GetList(sections, "Drift Findings")),
+            DocumentsCreated = NormalizeDocumentPaths(GetList(sections, "Documents Created"), request.StableDocumentTargets),
+            DocumentsUpdated = NormalizeDocumentPaths(GetList(sections, "Documents Updated"), request.StableDocumentTargets),
+            DocumentsUnchanged = NormalizeDocumentPaths(GetList(sections, "Documents Unchanged"), request.StableDocumentTargets),
+            OpenQuestions = NormalizeStringList(GetList(sections, "Open Questions"))
+        };
+
+        if (string.Equals(payload.Mode, "aligned", StringComparison.OrdinalIgnoreCase)
+            && (payload.DocumentsCreated.Count > 0 || payload.DocumentsUpdated.Count > 0))
+        {
+            throw new InvalidOperationException("Aligned mode must not report created or updated documents.");
+        }
+
+        return payload;
     }
+
+    private static Dictionary<string, List<string>> ParseSections(string markdown)
+    {
+        var sections = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        string? current = null;
+        foreach (var rawLine in markdown.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+        {
+            var line = rawLine.TrimEnd();
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                current = line[3..].Trim();
+                sections[current] = new List<string>();
+                continue;
+            }
+
+            if (current is null || string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            sections[current].Add(line.Trim());
+        }
+
+        return sections;
+    }
+
+    private static string GetSingleValue(IReadOnlyDictionary<string, List<string>> sections, string name)
+        => sections.TryGetValue(name, out var lines)
+            ? string.Join(" ", lines.Select(x => x.TrimStart('-', ' ').Trim()).Where(x => !string.IsNullOrWhiteSpace(x))).Trim()
+            : string.Empty;
+
+    private static IReadOnlyList<string> GetList(IReadOnlyDictionary<string, List<string>> sections, string name)
+        => sections.TryGetValue(name, out var lines)
+            ? lines.Select(x => x.TrimStart('-', ' ').Trim()).Where(x => !string.IsNullOrWhiteSpace(x) && !string.Equals(x, "none", StringComparison.OrdinalIgnoreCase)).ToArray()
+            : Array.Empty<string>();
 
     private static string NormalizeMode(string? mode, int existingStableDocCount)
         => mode?.Trim().ToLowerInvariant() switch
@@ -279,74 +341,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? [];
 
-    private static List<DocumentationFileDraft> NormalizeDocuments(
-        IEnumerable<DocumentationFileDraft>? documents,
-        IReadOnlySet<string> stableTargets,
-        string mode)
+    private static List<string> NormalizeDocumentPaths(IEnumerable<string>? values, IReadOnlyList<string> stableTargets)
     {
-        var normalized = documents?
-            .Where(x => !string.IsNullOrWhiteSpace(x.Path))
-            .Select(x => new DocumentationFileDraft(
-                x.Path.Trim(),
-                NormalizeDocumentAction(x.Action),
-                x.Content.Trim()))
-            .Where(x => stableTargets.Contains(x.Path))
-            .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.Last())
-            .ToList() ?? [];
-
-        foreach (var document in normalized)
-        {
-            if ((string.Equals(document.Action, "create", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(document.Action, "update", StringComparison.OrdinalIgnoreCase))
-                && string.IsNullOrWhiteSpace(document.Content))
-            {
-                throw new InvalidOperationException($"Documentation draft '{document.Path}' is missing content for action '{document.Action}'.");
-            }
-        }
-
-        if (string.Equals(mode, "aligned", StringComparison.OrdinalIgnoreCase)
-            && normalized.Any(x => !string.Equals(x.Action, "unchanged", StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new InvalidOperationException("Aligned mode must not contain create or update document drafts.");
-        }
-
-        return normalized;
+        var stableSet = stableTargets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return NormalizeStringList(values).Where(stableSet.Contains).ToList();
     }
 
-    private static string NormalizeDocumentAction(string? action)
-        => action?.Trim().ToLowerInvariant() switch
-        {
-            "create" => "create",
-            "update" => "update",
-            "unchanged" => "unchanged",
-            _ => "update"
-        };
-
-    private static string ExtractJsonObject(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            throw new InvalidOperationException("Agent returned an empty response.");
-        }
-
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
-        if (start < 0 || end <= start)
-        {
-            throw new InvalidOperationException($"Agent response did not contain a valid JSON object. Raw response: {raw}");
-        }
-
-        return raw[start..(end + 1)];
-    }
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true
-    };
-
-    private sealed class WorkflowOutputPayload
+    private sealed class WorkflowReportPayload
     {
         public string Mode { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
@@ -354,8 +355,9 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         public List<string> RepoDocsReviewed { get; set; } = [];
         public List<string> SourceAreasReviewed { get; set; } = [];
         public List<string> DriftFindings { get; set; } = [];
-        public List<DocumentationFileDraft> Documents { get; set; } = [];
+        public List<string> DocumentsCreated { get; set; } = [];
+        public List<string> DocumentsUpdated { get; set; } = [];
+        public List<string> DocumentsUnchanged { get; set; } = [];
         public List<string> OpenQuestions { get; set; } = [];
     }
-
 }

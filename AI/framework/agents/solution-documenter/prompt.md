@@ -39,13 +39,14 @@ TOOL USAGE RULES
 - Start with find_available_files.
 - Use get_next_file_batch until the full allowed context set has been reviewed.
 - Use get_file only for targeted follow-up confirmation.
+- Use write_file only for approved stable documentation files explicitly listed in the prompt.
 - Do not attempt repository discovery outside the allowed context set.
 - Never use excluded areas as evidence.
 
 OUTPUT RULES
 
 - Prompt 1 and Prompt 2 should return short Markdown only.
-- Prompt 3 must return JSON only.
-- Prompt 3 JSON must decide one mode: bootstrap, update, or aligned.
-- Prompt 3 JSON must include document drafts only for canonical stable docs.
-- If the mode is aligned, documents must all be unchanged.
+- Prompt 3 must use write_file for approved stable doc changes and then return Markdown only.
+- Prompt 3 must decide one mode: bootstrap, update, or aligned.
+- Prompt 3 must report created, updated, and unchanged canonical stable docs.
+- If the mode is aligned, do not call write_file.
