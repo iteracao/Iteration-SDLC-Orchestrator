@@ -59,10 +59,10 @@ internal static class CockpitLifecycleRules
         => status == 6;
 
     public static bool CanCancelWorkflowRun(int status)
-        => status is 1 or 4 or 6;
+        => status is 1 or 2;
 
     public static bool IsBlockingWorkflowStatus(int status)
-        => status is 1 or 2 or 6;
+        => status is 1 or 2;
 
     public static bool IsRunningWorkflowStatus(int status)
         => status == 2;
