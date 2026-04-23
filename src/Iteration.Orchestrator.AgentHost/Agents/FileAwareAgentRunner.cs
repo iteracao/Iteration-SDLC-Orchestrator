@@ -612,14 +612,26 @@ internal static class FileAwareAgentRunner
             return null;
         }
 
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
-        if (start < 0 || end <= start)
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            var firstNewLine = trimmed.IndexOf('\n');
+            if (firstNewLine >= 0)
+            {
+                trimmed = trimmed[(firstNewLine + 1)..].Trim();
+                if (trimmed.EndsWith("```", StringComparison.Ordinal))
+                {
+                    trimmed = trimmed[..^3].Trim();
+                }
+            }
+        }
+
+        if (!trimmed.StartsWith("{", StringComparison.Ordinal) || !trimmed.EndsWith("}", StringComparison.Ordinal))
         {
             return null;
         }
 
-        return raw[start..(end + 1)];
+        return trimmed;
     }
 
     private static string NormalizePath(string relativePath)
@@ -813,6 +825,11 @@ internal static class FileAwareAgentRunner
             if (phase.AllowedToolActions?.Contains("find_available_files", StringComparer.OrdinalIgnoreCase) == true)
             {
                 sb.AppendLine("- `find_available_files` takes no parameters and returns only file paths, one per line.");
+            }
+
+            if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
+            {
+                sb.AppendLine("- `get_next_file_batch` takes no parameters and returns the next unread batch of allowed files with their contents.");
             }
 
             if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)

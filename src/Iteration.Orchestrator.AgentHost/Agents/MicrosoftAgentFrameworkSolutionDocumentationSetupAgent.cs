@@ -8,7 +8,7 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISolutionDocumentationSetupAgent
 {
     private const string BoundariesArtifactFileName = "01-boundaries.md";
-    private const string DocumentationContextArtifactFileName = "documentation-context.md";
+    private const string RepositoryStateArtifactFileName = "repository-state.md";
     private const string FinalDecisionArtifactFileName = "03-decision.md";
 
     private readonly IAgentConversationFactory _conversationFactory;
@@ -71,12 +71,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Prompt: BuildDocumentationContextPrompt(request),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Build the read-only documentation context from evidence.",
+                    PurposeSummary: "Review the full allowed repository context, then save the repository-state Markdown.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
-                    AllowedToolActions: ["find_available_files", "get_file"],
-                    SavedMarkdownArtifactFileName: DocumentationContextArtifactFileName,
-                    InjectSavedMarkdownIntoNextPhase: true),
+                    AllowedToolActions: ["find_available_files", "get_next_file_batch", "get_file"],
+                    SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
+                    InjectSavedMarkdownIntoNextPhase: true,
+                    RequireAllAvailableFilesRead: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalOutputPrompt(request),
@@ -139,7 +140,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine();
         sb.AppendLine("Follow the current phase prompt exactly.");
         sb.AppendLine("Use only the tools allowed by the current phase.");
-        sb.AppendLine("Do not invent drift, file evidence, or write actions.");
+        sb.AppendLine("Do not invent drift, file evidence, write actions, or repository state. Use direct evidence only.");
         return sb.ToString().TrimEnd();
     }
 
@@ -167,32 +168,33 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         return """
 This is Prompt 2 of 3 for setup-documentation.
 
+Goal:
+Build the initial repository-state Markdown for this solution by reviewing the full allowed evidence set.
+
 Rules:
-- Read-only phase.
+- This is a read-only phase.
 - Call `find_available_files` first.
-- Use only file paths returned by `find_available_files`.
-- Use `get_file` only to read evidence.
-- Do not call `write_file`.
+- Then repeatedly call `get_next_file_batch` until the full allowed file set has been reviewed.
+- Use `get_file` only for targeted follow-up reads when a specific file needs closer confirmation.
+- Use only exact full physical paths returned by `find_available_files`.
+- Never call `write_file` in this phase.
 - Managed documents are the fixed output documents of this workflow.
 - Repository files are evidence only.
-- A repository file is not drift just because it is not a managed document.
-- Drift means one of:
-  - a managed document contradicts source code
-  - a managed document is missing required content
-  - outdated relative to current structure
-- Report drift only when it affects managed documents.
-- Do not suggest adding new documents.
-- Do not suggest expanding the managed document list.
-- Do not classify unrelated files as drift.
-- Do not invent exclusions.
-- Do not add irrelevant questions.
+- Drift applies only to the managed documents, based on repository evidence.
+- Do not suggest new documents or expand the managed document list.
+- Never mix tool calls and final Markdown in the same response.
+- Do not finish this phase until the full allowed evidence set has been reviewed.
 
 Return Markdown only using exactly this structure:
-# Documentation Context
-## Stable Docs Found
-## Repo Docs Reviewed
-## Source Files Reviewed
-## Drift Signals
+# Repository State
+## Solution Overview
+## Business / Domain Summary
+## Solution Stack
+## Architecture / Structure
+## Current Stable Documentation State
+## Managed Document Assessment
+## Relevant Files Reviewed
+## Best Practice Gaps / Risks
 ## Open Questions
 """;
     }
@@ -201,7 +203,7 @@ Return Markdown only using exactly this structure:
     {
         var sb = new StringBuilder();
         sb.AppendLine("This is Prompt 3 of 3 for setup-documentation.");
-        sb.AppendLine("Use only the evidence from Prompt 2.");
+        sb.AppendLine("Use the repository-state Markdown from Prompt 2 as the baseline understanding of the current solution.");
         sb.AppendLine("Allowed write targets:");
         foreach (var path in request.StableDocumentTargets)
         {
@@ -210,17 +212,19 @@ Return Markdown only using exactly this structure:
         sb.AppendLine();
         sb.AppendLine("Rules:");
         sb.AppendLine("- Determine one mode before any write: ALIGNED, UPDATE, or BOOTSTRAP.");
-        sb.AppendLine("- ALIGNED: do not call `write_file`.");
-        sb.AppendLine("- UPDATE: update only required managed documents.");
-        sb.AppendLine("- BOOTSTRAP: create missing managed documents only.");
+        sb.AppendLine("- Base the decision only on Prompt 2 evidence and the current stable document state.");
+        sb.AppendLine("- Absence of evidence is not evidence of absence.");
+        sb.AppendLine("- ALIGNED: do not call `write_file` and mark every managed document as KEEP or NO WRITE.");
+        sb.AppendLine("- UPDATE: update only required managed documents, and still include exactly one action for every managed document.");
+        sb.AppendLine("- BOOTSTRAP: actions must cover the full canonical managed document set. Every managed document must be listed with CREATE or KEEP.");
         sb.AppendLine("- You may write only the managed documents listed above.");
         sb.AppendLine("- Never write any repository file such as README.md, .sln, props, config files, or source files.");
-        sb.AppendLine("- If Prompt 2 mentions non-managed files, treat them only as evidence.");
-        sb.AppendLine("- Ignore any drift that does not affect the managed documents.");
         sb.AppendLine("- Never write placeholder content.");
         sb.AppendLine("- Never overwrite valid managed documents.");
-        sb.AppendLine("- Every action in `## Actions` must use one of: `CREATE <path>`, `UPDATE <path>`, `KEEP <path>`, `NO WRITE`.");
-        sb.AppendLine("- If mode is UPDATE or BOOTSTRAP, perform only the necessary `write_file` calls, then return the final Markdown.");
+        sb.AppendLine("- `## Actions` must include exactly one entry for each managed document.");
+        sb.AppendLine("- Every action in `## Actions` must use one of: CREATE <path>, UPDATE <path>, KEEP <path>, NO WRITE.");
+        sb.AppendLine("- If mode is UPDATE or BOOTSTRAP, perform only the necessary `write_file` calls before returning the final Markdown.");
+        sb.AppendLine("- Never mix tool calls and final Markdown in the same response.");
         sb.AppendLine();
         sb.AppendLine("Return Markdown only using exactly this structure:");
         sb.AppendLine("# Decision");
