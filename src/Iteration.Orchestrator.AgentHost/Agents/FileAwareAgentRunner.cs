@@ -12,6 +12,7 @@ internal static class FileAwareAgentRunner
     private const int MaxBatchCharacters = 90000;
     private const int MaxFileCharactersPerBatchItem = 12000;
     private const int MaxSearchHits = 12;
+    private const int MaxToolObjectsPerResponse = 8;
 
     public static Task<string> RunAsync(
         IAgentConversationFactory conversationFactory,
@@ -39,8 +40,7 @@ internal static class FileAwareAgentRunner
             PurposeSummary: "Run the workflow in a single prompt/tool loop.",
             Mode: AgentPhaseMode.Interactive,
             RequireWorkflowInput: true,
-            RequireCompletionValidation: true,
-            ResponseMode: AgentPhaseResponseMode.ToolCallsOrMarkdown);
+            RequireCompletionValidation: true);
 
         return RunMultiStepAsync(
             conversationFactory,
@@ -209,31 +209,87 @@ internal static class FileAwareAgentRunner
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages, writableFiles);
         pendingMessages.Clear();
         var nextUnreadFileIndex = 0;
+        var writtenPathsThisPhase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            if (phase.AutoCompleteWhenAllAvailableFilesRead && AllAvailableFilesRead(state.ReadPaths, availableFileIndex))
-            {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Result ({phase.Name}): repository evidence acquisition completed automatically after all allowed files were reviewed.",
-                    ct);
-                return "Repository evidence acquisition complete.";
-            }
-
             var rawText = await RunModelWithTimeoutAsync(conversation, currentMessages, maxModelResponseSeconds, ct);
             await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
-            if (!TryParseToolRequest(rawText, out var toolRequest))
+            var toolResponseState = AnalyzeToolResponse(rawText);
+            if (toolResponseState.State == ToolResponseState.MixedToolAndText)
+            {
+                await logs.AppendLineAsync(
+                    workflowRunId,
+                    $"Result ({phase.Name}): error. Mixed tool call and final Markdown/text in the same response are not allowed.",
+                    ct);
+                currentMessages =
+                [
+                    CreateUserMessage("INVALID RESPONSE. Return either exactly one JSON tool-call object OR the final Markdown output, never both in the same response.")
+                ];
+                continue;
+            }
+
+            if (toolResponseState.State == ToolResponseState.MultipleToolObjects)
+            {
+                await logs.AppendLineAsync(
+                    workflowRunId,
+                    $"Result ({phase.Name}): error. Multiple tool-call objects in one response are not allowed.",
+                    ct);
+                currentMessages =
+                [
+                    CreateUserMessage("INVALID RESPONSE. Return exactly one JSON tool-call object per response.")
+                ];
+                continue;
+            }
+
+            if (toolResponseState.State == ToolResponseState.SingleToolObject && phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
+            {
+                await logs.AppendLineAsync(
+                    workflowRunId,
+                    $"Tool call blocked ({phase.Name}): this phase requires a pure Markdown response with no tool calls.",
+                    ct);
+                currentMessages =
+                [
+                    CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.")
+                ];
+                continue;
+            }
+
+            if (toolResponseState.State == ToolResponseState.NoToolObject)
             {
                 if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
                 {
                     await logs.AppendLineAsync(
                         workflowRunId,
-                        $"Result ({phase.Name}): error. This phase accepts only a single tool-call JSON object per response.",
+                        $"Result ({phase.Name}): error. This phase requires exactly one JSON tool-call object per response.",
                         ct);
-                    currentMessages = BuildToolOnlyCorrectionMessages(phase);
+                    currentMessages =
+                    [
+                        CreateUserMessage("INVALID RESPONSE. This phase is tool-call only. Return exactly one JSON tool-call object and no Markdown or prose.")
+                    ];
                     continue;
+                }
+                if (phase.AllowedToolActions?.Contains("write_file", StringComparer.OrdinalIgnoreCase) == true)
+                {
+                    var pendingWritePaths = ExtractDeclaredWritePaths(rawText);
+                    var missingWritePaths = pendingWritePaths
+                        .Where(path => !writtenPathsThisPhase.Contains(path))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+                    if (missingWritePaths.Length > 0)
+                    {
+                        await logs.AppendLineAsync(
+                            workflowRunId,
+                            $"Result ({phase.Name}): error. Final Markdown declared writes that were not executed in this phase: {string.Join(", ", missingWritePaths)}.",
+                            ct);
+                        currentMessages =
+                        [
+                            CreateUserMessage($"INVALID FINAL RESPONSE. Execute write_file first for these declared paths before returning final Markdown: {string.Join(", ", missingWritePaths)}.")
+                        ];
+                        continue;
+                    }
                 }
 
                 if (phase.RequireCompletionValidation)
@@ -281,21 +337,8 @@ internal static class FileAwareAgentRunner
                 return rawText;
             }
 
+            var toolRequest = toolResponseState.SingleToolRequest;
             var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
-
-            if (phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly || !phase.AllowToolCalls)
-            {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Tool call blocked ({phase.Name}): '{toolRequest.ResolvedAction}'. This phase requires a pure Markdown response with no tool calls.",
-                    ct);
-
-                currentMessages =
-                [
-                    CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only plain Markdown. Do not return JSON. Do not call any tools.")
-                ];
-                continue;
-            }
 
             if (phase.AllowToolCalls && phase.AllowedToolActions is { Count: > 0 }
                 && !phase.AllowedToolActions.Contains(normalizedAction, StringComparer.OrdinalIgnoreCase))
@@ -306,10 +349,21 @@ internal static class FileAwareAgentRunner
                     ct);
                 currentMessages =
                 [
-                    CreateToolMessage($"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}."),
-                    CreateUserMessage(phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly
-                        ? "Return exactly one allowed tool-call JSON object and nothing else."
-                        : "Use only the allowed tool actions for this phase, or finish with Markdown only when you are done.")
+                    CreateToolMessage($"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}.")
+                ];
+                continue;
+            }
+
+            if (!phase.AllowToolCalls)
+            {
+                await logs.AppendLineAsync(
+                    workflowRunId,
+                    $"Tool call blocked ({phase.Name}): '{toolRequest.ResolvedAction}'. This phase requires a pure Markdown response with no tool calls.",
+                    ct);
+
+                currentMessages =
+                [
+                    CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.")
                 ];
                 continue;
             }
@@ -345,22 +399,23 @@ internal static class FileAwareAgentRunner
                     var fileListResult = FormatAvailableFiles(matchingPaths);
                     state.FilesAlreadyListed = true;
                     state.AvailableFilesPayload = fileListResult;
+                    state.RepositoryDiscoveryUsed = true;
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
-                    if (phase.AutoAcquireAllAvailableFilesAfterDiscovery)
+
+                    if (phase.AutoLoadAllAvailableFilesAfterFindAvailableFiles)
                     {
                         pendingMessages.Add(CreateToolMessage(fileListResult));
-                        var acquisitionResult = AcquireAllAvailableFiles(availableFileIndex, state.ReadPaths);
-                        nextUnreadFileIndex = acquisitionResult.NextUnreadFileIndex;
-                        foreach (var payload in acquisitionResult.BatchPayloads)
+                        var autoLoadResult = AutoLoadRepositoryEvidence(availableFileIndex, state);
+                        foreach (var payload in autoLoadResult.ToolPayloads)
                         {
                             pendingMessages.Add(CreateToolMessage(payload));
                         }
 
                         await logs.AppendLineAsync(
                             workflowRunId,
-                            $"Result ({phase.Name}): repository evidence acquisition loaded automatically. Batches prepared: {acquisitionResult.BatchPayloads.Count}. Files reviewed: {state.ReadPaths.Count}.",
+                            $"Result ({phase.Name}): repository evidence acquisition loaded automatically. Batches prepared: {autoLoadResult.BatchCount}. Files reviewed: {autoLoadResult.FilesReviewed}.",
                             ct);
-                        return "Repository evidence acquisition complete.";
+                        return "Repository evidence acquisition completed.";
                     }
 
                     currentMessages = BuildPostToolMessages(phase, fileListResult, state.ReadPaths, availableFileIndex);
@@ -384,6 +439,19 @@ internal static class FileAwareAgentRunner
                         ct);
 
                     currentMessages = BuildPostToolMessages(phase, batch.Payload, state.ReadPaths, availableFileIndex);
+
+                    if (phase.AutoCompleteWhenAllAvailableFilesRead &&
+                        phase.RequireAllAvailableFilesRead &&
+                        availableFileIndex.FullPaths.Count > 0 &&
+                        availableFileIndex.NormalizedFullPaths.Keys.All(path => state.ReadPaths.Contains(path)))
+                    {
+                        await logs.AppendLineAsync(
+                            workflowRunId,
+                            $"Result ({phase.Name}): repository evidence acquisition completed automatically after all allowed files were reviewed.",
+                            ct);
+                        return "Repository evidence acquisition completed.";
+                    }
+
                     continue;
                 }
                 case "read_file":
@@ -466,8 +534,9 @@ internal static class FileAwareAgentRunner
 
                     var normalizedContent = content.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd() + Environment.NewLine;
                     await File.WriteAllTextAsync(fullWritePath, normalizedContent, ct);
+                    writtenPathsThisPhase.Add(requestedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Wrote {normalizedContent.Length} character(s) to '{requestedPath}'.", ct);
-                    currentMessages = BuildPostToolMessages(phase, $"OK: wrote '{requestedPath}'.", state.ReadPaths, availableFileIndex);
+                    currentMessages = [CreateToolMessage($"OK: wrote '{requestedPath}'.")];
                     continue;
                 }
                 case "save_workflow_output":
@@ -671,6 +740,181 @@ internal static class FileAwareAgentRunner
         return trimmed;
     }
 
+    private static IReadOnlyList<ChatMessage> BuildPostToolMessages(
+        AgentPhaseDefinition phase,
+        string toolPayload,
+        IReadOnlyCollection<string> readPaths,
+        AvailableFileIndex availableFileIndex)
+    {
+        var messages = new List<ChatMessage>
+        {
+            CreateToolMessage(toolPayload)
+        };
+
+        if (phase.RequireAllAvailableFilesRead)
+        {
+            var reviewedCount = availableFileIndex.NormalizedFullPaths.Keys.Count(path => readPaths.Contains(path));
+            var remainingCount = Math.Max(0, availableFileIndex.FullPaths.Count - reviewedCount);
+            messages.Add(CreateUserMessage($"Repository review progress: {reviewedCount}/{availableFileIndex.FullPaths.Count} files reviewed. Remaining: {remainingCount}."));
+        }
+
+        return messages;
+    }
+
+    private static ToolResponseAnalysis AnalyzeToolResponse(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+        }
+
+        var trimmed = TrimCodeFence(raw).Trim();
+        if (trimmed.Length == 0)
+        {
+            return new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+        }
+
+        var requests = new List<ToolRequest>();
+        var index = 0;
+        while (index < trimmed.Length)
+        {
+            while (index < trimmed.Length && char.IsWhiteSpace(trimmed[index])) index++;
+            if (index >= trimmed.Length) break;
+            if (trimmed[index] != '{')
+            {
+                return requests.Count > 0
+                    ? new ToolResponseAnalysis(ToolResponseState.MixedToolAndText, null)
+                    : new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+            }
+
+            if (!TryReadSingleJsonObject(trimmed, index, out var json, out var nextIndex))
+            {
+                return requests.Count > 0
+                    ? new ToolResponseAnalysis(ToolResponseState.MixedToolAndText, null)
+                    : new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+            }
+
+            try
+            {
+                var request = JsonSerializer.Deserialize<ToolRequest>(json, JsonOptions);
+                if (request is null || string.IsNullOrWhiteSpace(request.ResolvedAction))
+                {
+                    return requests.Count > 0
+                        ? new ToolResponseAnalysis(ToolResponseState.MixedToolAndText, null)
+                        : new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+                }
+
+                requests.Add(request);
+                if (requests.Count > MaxToolObjectsPerResponse)
+                {
+                    return new ToolResponseAnalysis(ToolResponseState.MultipleToolObjects, null);
+                }
+            }
+            catch (JsonException)
+            {
+                return requests.Count > 0
+                    ? new ToolResponseAnalysis(ToolResponseState.MixedToolAndText, null)
+                    : new ToolResponseAnalysis(ToolResponseState.NoToolObject, null);
+            }
+
+            index = nextIndex;
+        }
+
+        return requests.Count switch
+        {
+            0 => new ToolResponseAnalysis(ToolResponseState.NoToolObject, null),
+            1 => new ToolResponseAnalysis(ToolResponseState.SingleToolObject, requests[0]),
+            _ => new ToolResponseAnalysis(ToolResponseState.MultipleToolObjects, null)
+        };
+    }
+
+    private static string TrimCodeFence(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            var firstNewLine = trimmed.IndexOf('\n');
+            if (firstNewLine >= 0)
+            {
+                trimmed = trimmed[(firstNewLine + 1)..].Trim();
+                if (trimmed.EndsWith("```", StringComparison.Ordinal))
+                {
+                    trimmed = trimmed[..^3].Trim();
+                }
+            }
+        }
+
+        return trimmed;
+    }
+
+    private static bool TryReadSingleJsonObject(string text, int startIndex, out string json, out int nextIndex)
+    {
+        json = string.Empty;
+        nextIndex = startIndex;
+        try
+        {
+            var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(text[startIndex..]), isFinalBlock: true, state: default);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return false;
+            }
+
+            using var document = JsonDocument.ParseValue(ref reader);
+            json = document.RootElement.GetRawText();
+            nextIndex = startIndex + (int)reader.BytesConsumed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static IReadOnlyList<string> ExtractDeclaredWritePaths(string markdown)
+    {
+        var paths = new List<string>();
+        foreach (var rawLine in markdown.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim().TrimStart('-', ' ');
+            if (line.StartsWith("CREATE ", StringComparison.OrdinalIgnoreCase))
+            {
+                paths.Add(line[7..].Trim());
+                continue;
+            }
+
+            if (line.StartsWith("UPDATE ", StringComparison.OrdinalIgnoreCase))
+            {
+                paths.Add(line[7..].Trim());
+            }
+        }
+
+        return paths.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+    private static AutoLoadRepositoryEvidenceResult AutoLoadRepositoryEvidence(AvailableFileIndex availableFileIndex, AgentExecutionState state)
+    {
+        var payloads = new List<string>();
+        var nextUnreadFileIndex = 0;
+        var batchCount = 0;
+        while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
+        {
+            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+            if (batch.Files.Count == 0)
+            {
+                break;
+            }
+
+            batchCount++;
+            nextUnreadFileIndex = batch.NextUnreadFileIndex;
+            payloads.Add(batch.Payload);
+            foreach (var file in batch.Files)
+            {
+                state.ReadPaths.Add(file.NormalizedPath);
+            }
+        }
+
+        return new AutoLoadRepositoryEvidenceResult(payloads, batchCount, state.ReadPaths.Count);
+    }
+
     private static string NormalizePath(string relativePath)
         => relativePath.Replace('\\', '/').Trim();
 
@@ -723,62 +967,7 @@ internal static class FileAwareAgentRunner
         }
 
         files.Sort(StringComparer.OrdinalIgnoreCase);
-        var batchStartIndexes = BuildBatchStartIndexes(files);
-        return new AvailableFileIndex(files, normalizedMap, batchStartIndexes);
-    }
-
-    private static IReadOnlyList<int> BuildBatchStartIndexes(IReadOnlyList<string> fullPaths)
-    {
-        if (fullPaths.Count == 0)
-        {
-            return [0];
-        }
-
-        var batchStarts = new List<int> { 0 };
-        var currentBatchCharacters = 0;
-        var currentBatchItemCount = 0;
-
-        for (var i = 0; i < fullPaths.Count; i++)
-        {
-            var fullPath = fullPaths[i];
-            if (!File.Exists(fullPath))
-            {
-                continue;
-            }
-
-            var blockLength = EstimateBatchBlockLength(fullPath);
-            if (currentBatchItemCount > 0 && currentBatchCharacters + blockLength > MaxBatchCharacters)
-            {
-                batchStarts.Add(i);
-                currentBatchCharacters = 0;
-                currentBatchItemCount = 0;
-            }
-
-            currentBatchCharacters += blockLength;
-            currentBatchItemCount++;
-        }
-
-        return batchStarts;
-    }
-
-    private static int EstimateBatchBlockLength(string fullPath)
-    {
-        var normalizedPath = NormalizePath(fullPath);
-        var contentLength = 0;
-        if (File.Exists(fullPath))
-        {
-            var originalContent = File.ReadAllText(fullPath);
-            contentLength = Math.Min(originalContent.Length, MaxFileCharactersPerBatchItem);
-            if (originalContent.Length > MaxFileCharactersPerBatchItem)
-            {
-                contentLength += Environment.NewLine.Length * 2 + 57 + MaxFileCharactersPerBatchItem.ToString().Length;
-            }
-        }
-
-        return fullPath.Length
-            + normalizedPath.Length
-            + contentLength
-            + 64;
+        return new AvailableFileIndex(files, normalizedMap);
     }
 
     private static FileReadResult? TryReadFileByPhysicalPath(AvailableFileIndex availableFileIndex, string requestedPath)
@@ -812,32 +1001,6 @@ internal static class FileAwareAgentRunner
         return string.Join(Environment.NewLine, fullPaths);
     }
 
-    private static RepositoryAcquisitionResult AcquireAllAvailableFiles(AvailableFileIndex availableFileIndex, ISet<string> readPaths)
-    {
-        var nextUnreadFileIndex = 0;
-        var payloads = new List<string>();
-
-        while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
-        {
-            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
-            if (batch.Files.Count == 0)
-            {
-                nextUnreadFileIndex = batch.NextUnreadFileIndex;
-                break;
-            }
-
-            foreach (var file in batch.Files)
-            {
-                readPaths.Add(file.NormalizedPath);
-            }
-
-            payloads.Add(batch.Payload);
-            nextUnreadFileIndex = batch.NextUnreadFileIndex;
-        }
-
-        return new RepositoryAcquisitionResult(payloads, nextUnreadFileIndex);
-    }
-
     private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
     {
         if (nextUnreadFileIndex < 0)
@@ -848,8 +1011,7 @@ internal static class FileAwareAgentRunner
         if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
         {
             var emptyPayload = "END OF FILE BATCHES";
-            var totalBatchCount = Math.Max(1, availableFileIndex.BatchStartIndexes.Count);
-            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, totalBatchCount, totalBatchCount);
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
         }
 
         var files = new List<FileReadResult>();
@@ -905,8 +1067,10 @@ internal static class FileAwareAgentRunner
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatches = Math.Max(1, availableFileIndex.BatchStartIndexes.Count);
-        var batchNumber = ResolveBatchNumber(availableFileIndex.BatchStartIndexes, nextUnreadFileIndex);
+        var totalBatchesEstimate = Math.Max(1, (int)Math.Ceiling((double)availableFileIndex.FullPaths.Count / Math.Max(1, files.Count)));
+        var batchNumber = files.Count == 0
+            ? 0
+            : (nextUnreadFileIndex / Math.Max(1, files.Count)) + 1;
 
         return new FileBatchResult(
             files,
@@ -914,23 +1078,7 @@ internal static class FileAwareAgentRunner
             currentIndex,
             currentIndex < availableFileIndex.FullPaths.Count,
             batchNumber,
-            totalBatches);
-    }
-
-    private static int ResolveBatchNumber(IReadOnlyList<int> batchStartIndexes, int nextUnreadFileIndex)
-    {
-        var batchNumber = 1;
-        for (var i = 0; i < batchStartIndexes.Count; i++)
-        {
-            if (batchStartIndexes[i] > nextUnreadFileIndex)
-            {
-                break;
-            }
-
-            batchNumber = i + 1;
-        }
-
-        return batchNumber;
+            totalBatchesEstimate);
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, IReadOnlyDictionary<string, string>? writableFiles)
@@ -943,24 +1091,9 @@ internal static class FileAwareAgentRunner
         sb.AppendLine(phase.Prompt.TrimEnd());
         sb.AppendLine();
         sb.AppendLine("PHASE RULES:");
-        switch (phase.ResponseMode)
-        {
-            case AgentPhaseResponseMode.ToolCallsOnly:
-                sb.AppendLine("- Return exactly one JSON tool call object per response.");
-                sb.AppendLine("- Final Markdown/text is forbidden in this phase.");
-                break;
-            case AgentPhaseResponseMode.MarkdownOnly:
-                sb.AppendLine("- Return only a concise plain Markdown phase summary.");
-                sb.AppendLine("- Tool calls are forbidden in this phase.");
-                sb.AppendLine("- Do not return JSON.");
-                break;
-            default:
-                sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
-                break;
-        }
-
         if (phase.AllowToolCalls)
         {
+            sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
             if (phase.AllowedToolActions is { Count: > 0 })
             {
                 sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
@@ -990,6 +1123,12 @@ internal static class FileAwareAgentRunner
             {
                 sb.AppendLine("- `write_file` may be used only with one approved stable documentation path exactly as listed in the prompt.");
             }
+        }
+        else
+        {
+            sb.AppendLine("- Return only a concise plain Markdown phase summary.");
+            sb.AppendLine("- Tool calls are forbidden in this phase.");
+            sb.AppendLine("- Do not return JSON.");
         }
 
         sb.AppendLine("- Do not include markdown fences.");
@@ -1026,37 +1165,6 @@ internal static class FileAwareAgentRunner
         sb.AppendLine(content.Trim());
         return sb.ToString().TrimEnd();
     }
-
-    private static IReadOnlyList<ChatMessage> BuildToolOnlyCorrectionMessages(AgentPhaseDefinition phase)
-        =>
-        [
-            CreateUserMessage($"INVALID RESPONSE FOR PHASE '{phase.Name}'. Return exactly one allowed tool-call JSON object and nothing else. Do not return Markdown or prose in this phase.")
-        ];
-
-    private static IReadOnlyList<ChatMessage> BuildPostToolMessages(
-        AgentPhaseDefinition phase,
-        string toolPayload,
-        IReadOnlyCollection<string> readPaths,
-        AvailableFileIndex availableFileIndex)
-    {
-        if (phase.ResponseMode != AgentPhaseResponseMode.ToolCallsOnly)
-        {
-            return [CreateToolMessage(toolPayload)];
-        }
-
-        var reviewedCount = readPaths.Count(path => availableFileIndex.NormalizedFullPaths.ContainsKey(path));
-        var remainingCount = Math.Max(0, availableFileIndex.FullPaths.Count - reviewedCount);
-
-        return
-        [
-            CreateToolMessage(toolPayload),
-            CreateUserMessage($"Continue the repository evidence acquisition. Return exactly one allowed tool-call JSON object and nothing else. Files reviewed: {reviewedCount}/{availableFileIndex.FullPaths.Count}. Remaining: {remainingCount}. Final Markdown is not allowed in this phase.")
-        ];
-    }
-
-    private static bool AllAvailableFilesRead(IReadOnlyCollection<string> readPaths, AvailableFileIndex availableFileIndex)
-        => availableFileIndex.NormalizedFullPaths.Keys.All(readPaths.Contains);
-
 
     private static ChatMessage CreateUserMessage(string content) => new(ChatRole.User, content);
 
@@ -1146,6 +1254,7 @@ internal static class FileAwareAgentRunner
         bool AllowRepositoryDiscovery,
         string PurposeSummary,
         AgentPhaseMode Mode = AgentPhaseMode.Interactive,
+        AgentPhaseResponseMode ResponseMode = AgentPhaseResponseMode.ToolCallsOrMarkdown,
         bool RequireWorkflowInput = false,
         bool RequireCompletionValidation = false,
         bool AllowToolCalls = true,
@@ -1153,9 +1262,8 @@ internal static class FileAwareAgentRunner
         string? SavedMarkdownArtifactFileName = null,
         bool InjectSavedMarkdownIntoNextPhase = false,
         bool RequireAllAvailableFilesRead = false,
-        AgentPhaseResponseMode ResponseMode = AgentPhaseResponseMode.ToolCallsOrMarkdown,
         bool AutoCompleteWhenAllAvailableFilesRead = false,
-        bool AutoAcquireAllAvailableFilesAfterDiscovery = false);
+        bool AutoLoadAllAvailableFilesAfterFindAvailableFiles = false);
 
     internal sealed record RepositoryDiscoveryTools(
         Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,
@@ -1170,6 +1278,18 @@ internal static class FileAwareAgentRunner
         public HashSet<string> ReadPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
+    private enum ToolResponseState
+    {
+        NoToolObject,
+        SingleToolObject,
+        MultipleToolObjects,
+        MixedToolAndText
+    }
+
+    private sealed record ToolResponseAnalysis(ToolResponseState State, ToolRequest? SingleToolRequest);
+
+    private sealed record AutoLoadRepositoryEvidenceResult(IReadOnlyList<string> ToolPayloads, int BatchCount, int FilesReviewed);
+
     private sealed record FileReadResult(string FullPath, string NormalizedPath, string Content);
 
     private sealed record FileBatchResult(
@@ -1180,14 +1300,9 @@ internal static class FileAwareAgentRunner
         int BatchNumber,
         int TotalBatchesEstimate);
 
-    private sealed record RepositoryAcquisitionResult(
-        IReadOnlyList<string> BatchPayloads,
-        int NextUnreadFileIndex);
-
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,
-        IReadOnlyDictionary<string, string> NormalizedFullPaths,
-        IReadOnlyList<int> BatchStartIndexes);
+        IReadOnlyDictionary<string, string> NormalizedFullPaths);
 
     private sealed class ToolRequest
     {

@@ -1457,6 +1457,7 @@ public partial class Index : ComponentBase, IDisposable
 
         var preferredFiles = new[]
         {
+            "workflow-report.md",
             "setup-documentation-report.md",
             "setup-documentation.output.json",
             "analysis-report.md",

@@ -65,33 +65,29 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     PurposeSummary: "Establish documentation setup boundaries and authority order.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     AllowToolCalls: false,
-                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName,
-                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
+                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2A",
-                    Prompt: BuildDocumentationAcquisitionPrompt(),
+                    Prompt: BuildRepositoryAcquisitionPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Discover the allowed evidence set, then let the runner load the full repository evidence automatically.",
+                    PurposeSummary: "Trigger deterministic repository evidence acquisition for the full allowed file set.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
-                    RequireCompletionValidation: true,
+                    RequireCompletionValidation: false,
                     AllowedToolActions: ["find_available_files"],
-                    RequireAllAvailableFilesRead: true,
-                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOnly,
-                    AutoAcquireAllAvailableFilesAfterDiscovery: true),
+                    AutoLoadAllAvailableFilesAfterFindAvailableFiles: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2B",
-                    Prompt: BuildDocumentationSynthesisPrompt(),
+                    Prompt: BuildDocumentationContextPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Synthesize the repository-state Markdown from the fully reviewed evidence set.",
+                    PurposeSummary: "Build the repository-state Markdown using the full repository evidence already loaded.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
                     AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
                     InjectSavedMarkdownIntoNextPhase: true,
-                    RequireAllAvailableFilesRead: true,
-                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
+                    RequireAllAvailableFilesRead: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalOutputPrompt(request),
@@ -102,8 +98,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequireWorkflowInput: false,
                     RequireCompletionValidation: true,
                     AllowedToolActions: ["write_file"],
-                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName,
-                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOrMarkdown)
+                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName)
             };
 
             var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
@@ -178,8 +173,9 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildDocumentationAcquisitionPrompt()
-        => """
+    private static string BuildRepositoryAcquisitionPrompt()
+    {
+        return """
 This is Prompt 2A of 4 for setup-documentation.
 
 Goal:
@@ -193,9 +189,11 @@ Rules:
 - Do not return Markdown, prose, summaries, or conclusions in this phase.
 - Return exactly one allowed tool-call JSON object per response.
 """;
+    }
 
-    private static string BuildDocumentationSynthesisPrompt()
-        => """
+    private static string BuildDocumentationContextPrompt()
+    {
+        return """
 This is Prompt 2B of 4 for setup-documentation.
 
 Goal:
@@ -221,6 +219,7 @@ Return Markdown only using exactly this structure:
 ## Best Practice Gaps / Risks
 ## Open Questions
 """;
+    }
 
     private static string BuildFinalOutputPrompt(SolutionDocumentationSetupRequest request)
     {

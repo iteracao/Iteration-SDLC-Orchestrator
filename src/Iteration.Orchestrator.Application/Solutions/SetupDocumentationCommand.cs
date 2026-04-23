@@ -147,7 +147,12 @@ public sealed class SetupDocumentationHandler
             }, JsonOptions);
 
             await _artifacts.SaveTextAsync(run.Id, "setup-documentation.output.json", outputJson, ct);
-            await _artifacts.SaveTextAsync(run.Id, "setup-documentation-report.md", NormalizeMarkdown(result.RawReportMarkdown) + Environment.NewLine, ct);
+
+            var repositoryStateMarkdown = await _artifacts.ReadTextAsync(run.Id, "repository-state.md", ct) ?? string.Empty;
+            var finalDecisionMarkdown = NormalizeMarkdown(result.RawReportMarkdown) + Environment.NewLine;
+            var visibleReportMarkdown = BuildVisibleSetupDocumentationReport(repositoryStateMarkdown, finalDecisionMarkdown);
+            await _artifacts.SaveTextAsync(run.Id, "setup-documentation-report.md", visibleReportMarkdown, ct);
+            await _artifacts.SaveTextAsync(run.Id, "workflow-report.md", visibleReportMarkdown, ct);
 
             taskRun.Succeed(outputJson);
             run.Complete("setup-documentation-completed");
@@ -203,6 +208,13 @@ public sealed class SetupDocumentationHandler
             throw new InvalidOperationException("Bootstrap mode must report the full canonical stable documentation set.");
         }
 
+        if (string.Equals(result.Mode, "bootstrap", StringComparison.OrdinalIgnoreCase)
+            && !stableDocumentTargets.All(path => created.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || updated.Contains(path, StringComparer.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("Bootstrap mode must physically create or update every canonical stable documentation file; KEEP is not valid for placeholder-only bootstrap targets.");
+        }
+
         var missingStableTargets = stableDocumentTargets.Where(path => !existingSet.Contains(path)).ToArray();
         if (!string.Equals(result.Mode, "aligned", StringComparison.OrdinalIgnoreCase)
             && missingStableTargets.Any(path => !created.Contains(path, StringComparer.OrdinalIgnoreCase) && !updated.Contains(path, StringComparer.OrdinalIgnoreCase)))
@@ -230,6 +242,26 @@ public sealed class SetupDocumentationHandler
         }
 
         return new DocumentationWriteOutcome(created, updated, unchanged);
+    }
+
+    private static string BuildVisibleSetupDocumentationReport(string repositoryStateMarkdown, string finalDecisionMarkdown)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Setup Documentation Report");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(repositoryStateMarkdown))
+        {
+            sb.AppendLine("## Repository State");
+            sb.AppendLine();
+            sb.AppendLine(repositoryStateMarkdown.Trim());
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## Final Decision");
+        sb.AppendLine();
+        sb.AppendLine(finalDecisionMarkdown.Trim());
+        sb.AppendLine();
+        return sb.ToString();
     }
 
     private static string BuildProfileSummary(ProfileDefinition profile)
