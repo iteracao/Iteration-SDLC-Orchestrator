@@ -141,6 +141,10 @@ public partial class Index : ComponentBase, IDisposable
     private bool DocumentationWorkflowRunDisabled
         => _startingDocumentationWorkflow || IsDocumentationWorkflowInProgress(CurrentDocumentationWorkflowRun);
 
+    private bool CanCopyDocumentationWorkflowLog
+        => !string.IsNullOrWhiteSpace(_documentationWorkflowLog?.Content)
+           || !string.IsNullOrWhiteSpace(_documentationWorkflowLog?.Message);
+
     private bool ActiveCardCanDeleteRequirement
         => _activeCard is not null
            && string.Equals(_activeCard.LaneKey, LaneKeys.Requirement, StringComparison.OrdinalIgnoreCase)
@@ -863,6 +867,20 @@ public partial class Index : ComponentBase, IDisposable
     private async Task CopyViewerContentToClipboardAsync()
     {
         var content = _activeWorkflowLog?.Content ?? _activeWorkflowArtifact?.Content;
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", content);
+    }
+
+    private async Task CopyDocumentationWorkflowLogToClipboardAsync()
+    {
+        var content = !string.IsNullOrWhiteSpace(_documentationWorkflowLog?.Content)
+            ? _documentationWorkflowLog.Content
+            : _documentationWorkflowLog?.Message;
+
         if (string.IsNullOrWhiteSpace(content))
         {
             return;

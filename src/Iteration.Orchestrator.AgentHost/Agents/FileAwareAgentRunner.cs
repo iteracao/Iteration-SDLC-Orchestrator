@@ -269,6 +269,20 @@ internal static class FileAwareAgentRunner
 
             var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
 
+            if (phase.AllowToolCalls && phase.AllowedToolActions is { Count: > 0 }
+                && !phase.AllowedToolActions.Contains(normalizedAction, StringComparer.OrdinalIgnoreCase))
+            {
+                await logs.AppendLineAsync(
+                    workflowRunId,
+                    $"Result ({phase.Name}): error. Tool action '{toolRequest.ResolvedAction}' is not allowed in this phase.",
+                    ct);
+                currentMessages =
+                [
+                    CreateToolMessage($"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}.")
+                ];
+                continue;
+            }
+
             if (!phase.AllowToolCalls)
             {
                 await logs.AppendLineAsync(
@@ -341,6 +355,16 @@ internal static class FileAwareAgentRunner
                 case "read_file":
                 case "get_file":
                 {
+                    if (!state.FilesAlreadyListed)
+                    {
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. get_file cannot be used before find_available_files.", ct);
+                        currentMessages =
+                        [
+                            CreateToolMessage("ERROR: call find_available_files first.")
+                        ];
+                        continue;
+                    }
+
                     var requestedPath = toolRequest.ResolvedPath;
                     if (string.IsNullOrWhiteSpace(requestedPath))
                     {
@@ -784,14 +808,30 @@ internal static class FileAwareAgentRunner
         sb.AppendLine("PHASE RULES:");
         if (phase.AllowToolCalls)
         {
-            sb.AppendLine("- Return either a single JSON tool call object or a concise plain-text phase summary.");
-            sb.AppendLine("- Use find_available_files first to obtain the allowed full physical paths for this run.");
-            sb.AppendLine("- find_available_files takes no parameters and returns only file paths, one per line.");
-            sb.AppendLine("- Use get_file only with an exact full physical path returned by find_available_files.");
-            sb.AppendLine("- get_file returns file content to the model only. File content is not copied into prompts and should not be echoed into logs.");
-            if (writableFiles is not null && writableFiles.Count > 0)
+            sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
+            if (phase.AllowedToolActions is { Count: > 0 })
             {
-                sb.AppendLine("- Use write_file only with one approved stable documentation path exactly as listed in the prompt.");
+                sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
+            }
+            else
+            {
+                sb.AppendLine("- Use only the tool actions required by the phase prompt.");
+            }
+
+            if (phase.AllowedToolActions?.Contains("find_available_files", StringComparer.OrdinalIgnoreCase) == true)
+            {
+                sb.AppendLine("- `find_available_files` takes no parameters and returns only file paths, one per line.");
+            }
+
+            if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)
+            {
+                sb.AppendLine("- `get_file` requires an exact full physical path returned earlier by `find_available_files`.");
+            }
+
+            if (phase.AllowedToolActions?.Contains("write_file", StringComparer.OrdinalIgnoreCase) == true
+                && writableFiles is not null && writableFiles.Count > 0)
+            {
+                sb.AppendLine("- `write_file` may be used only with one approved stable documentation path exactly as listed in the prompt.");
             }
         }
         else
@@ -808,16 +848,10 @@ internal static class FileAwareAgentRunner
         {
             sb.AppendLine("- This is the final phase: finish with the final plain-text result for the workflow.");
             sb.AppendLine("- You may use allowed tools earlier in this phase if needed before the final response.");
-            sb.AppendLine("- Do not call save_workflow_output unless a workflow explicitly asks for it.");
         }
-        else
+        else if (phase.RequireCompletionValidation)
         {
-            sb.AppendLine("- Do not call save_workflow_output in this phase.");
-
-            if (phase.RequireCompletionValidation)
-            {
-                sb.AppendLine("- Before you finish this phase, gather enough direct evidence to support your final plain-text response.");
-            }
+            sb.AppendLine("- Before you finish this phase, gather enough direct evidence to support your final plain-text response.");
         }
 
         if (!string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
@@ -926,6 +960,7 @@ internal static class FileAwareAgentRunner
         bool RequireWorkflowInput = false,
         bool RequireCompletionValidation = false,
         bool AllowToolCalls = true,
+        IReadOnlyList<string>? AllowedToolActions = null,
         string? SavedMarkdownArtifactFileName = null,
         bool InjectSavedMarkdownIntoNextPhase = false,
         bool RequireAllAvailableFilesRead = false);
