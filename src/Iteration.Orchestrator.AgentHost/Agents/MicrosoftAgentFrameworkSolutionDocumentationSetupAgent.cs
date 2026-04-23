@@ -50,23 +50,34 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 
         try
         {
-            var writableFiles = request.StableDocumentTargets.ToDictionary(
-                path => path,
-                path => Path.Combine(StableDocumentationCatalog.BuildKnowledgeRoot(request.RepositoryPath, request.SolutionCode), path.Replace('/', Path.DirectorySeparatorChar)),
+            var knowledgeRoot = StableDocumentationCatalog.BuildKnowledgeRoot(request.RepositoryPath, request.SolutionCode);
+            var managedDocumentMap = request.StableDocumentTargets.ToDictionary(
+                logicalPath => logicalPath,
+                logicalPath => Path.Combine(knowledgeRoot, logicalPath.Replace('/', Path.DirectorySeparatorChar)),
                 StringComparer.OrdinalIgnoreCase);
 
-            var phases = new[]
+            var writableFiles = managedDocumentMap.Values.ToDictionary(
+                physicalPath => physicalPath,
+                physicalPath => physicalPath,
+                StringComparer.OrdinalIgnoreCase);
+
+            var writeTargets = request.StableDocumentTargets
+                .Select(logicalPath => (LogicalPath: logicalPath, PhysicalPath: managedDocumentMap[logicalPath]))
+                .ToList();
+
+            var phases = new List<FileAwareAgentRunner.AgentPhaseDefinition>
             {
-                new FileAwareAgentRunner.AgentPhaseDefinition(
+                new(
                     Name: "Prompt 1",
-                    Prompt: BuildBootstrapPrompt(request),
+                    Prompt: BuildBootstrapPrompt(request, writeTargets),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Establish documentation setup boundaries and authority order.",
+                    PurposeSummary: "Establish documentation setup contract, authority order, and approved physical write targets.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: true,
                     AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: BoundariesArtifactFileName),
-                new FileAwareAgentRunner.AgentPhaseDefinition(
+                new(
                     Name: "Prompt 2A",
                     Prompt: BuildRepositoryAcquisitionPrompt(),
                     RequiresSavedOutput: false,
@@ -76,7 +87,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequireCompletionValidation: false,
                     AllowedToolActions: ["find_available_files"],
                     AutoLoadAllAvailableFilesAfterFindAvailableFiles: true),
-                new FileAwareAgentRunner.AgentPhaseDefinition(
+                new(
                     Name: "Prompt 2B",
                     Prompt: BuildDocumentationContextPrompt(),
                     RequiresSavedOutput: false,
@@ -88,18 +99,40 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
                     InjectSavedMarkdownIntoNextPhase: true,
                     RequireAllAvailableFilesRead: true),
-                new FileAwareAgentRunner.AgentPhaseDefinition(
+                new(
                     Name: "Prompt 3",
-                    Prompt: BuildFinalOutputPrompt(request),
+                    Prompt: BuildDecisionPrompt(writeTargets),
+                    RequiresSavedOutput: false,
+                    AllowRepositoryDiscovery: false,
+                    PurposeSummary: "Decide the documentation mode and per-document actions only.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: true,
+                    AllowToolCalls: false,
+                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName,
+                    InjectSavedMarkdownIntoNextPhase: true)
+            };
+
+            phases.AddRange(writeTargets.Select((targetInfo, index) =>
+                new FileAwareAgentRunner.AgentPhaseDefinition(
+                    Name: $"Prompt {index + 4}",
+                    Prompt: BuildSingleWritePrompt(index + 1, targetInfo.LogicalPath, targetInfo.PhysicalPath),
+                    RequiresSavedOutput: false,
+                    AllowRepositoryDiscovery: false,
+                    PurposeSummary: $"Write only {targetInfo.LogicalPath} when required by the decision artifact.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: false,
+                    AllowedToolActions: ["write_file"])));
+
+            phases.Add(
+                new FileAwareAgentRunner.AgentPhaseDefinition(
+                    Name: $"Prompt {writeTargets.Count + 4}",
+                    Prompt: BuildFinalSummaryPrompt(),
                     RequiresSavedOutput: true,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Decide the final documentation state and apply only approved writes.",
+                    PurposeSummary: "Return the final setup-documentation result after all required writes are complete.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
-                    RequireWorkflowInput: false,
                     RequireCompletionValidation: true,
-                    AllowedToolActions: ["write_file"],
-                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName)
-            };
+                    AllowToolCalls: false));
 
             var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
                 _conversationFactory,
@@ -154,10 +187,11 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildBootstrapPrompt(SolutionDocumentationSetupRequest request)
+    private static string BuildBootstrapPrompt(SolutionDocumentationSetupRequest request, IReadOnlyList<(string LogicalPath, string PhysicalPath)> writeTargets)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 1 of 4 for setup-documentation.");
+        sb.AppendLine("This is Prompt 1 of setup-documentation.");
+        sb.AppendLine("Goal: define the documentation contract only.");
         sb.AppendLine("Return Markdown only.");
         sb.AppendLine("Output exactly:");
         sb.AppendLine("# Contract");
@@ -166,17 +200,26 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         {
             sb.AppendLine($"- {path}");
         }
+        sb.AppendLine("## Managed Document Physical Paths");
+        foreach (var target in writeTargets)
+        {
+            sb.AppendLine($"- {target.LogicalPath} -> {target.PhysicalPath}");
+        }
         sb.AppendLine("## Authority Order");
         sb.AppendLine("1. Source code");
         sb.AppendLine("2. Valid stable docs");
         sb.AppendLine("3. Local repository docs");
+        sb.AppendLine("## Path Rules");
+        sb.AppendLine("- All write_file calls must use the full physical path exactly as listed above.");
+        sb.AppendLine("- Logical paths are for decision and reporting only.");
+        sb.AppendLine("- Never guess, shorten, or transform a path.");
         return sb.ToString().TrimEnd();
     }
 
     private static string BuildRepositoryAcquisitionPrompt()
     {
         return """
-This is Prompt 2A of 4 for setup-documentation.
+This is Prompt 2A of setup-documentation.
 
 Goal:
 Load the full allowed repository evidence set for this solution.
@@ -194,7 +237,7 @@ Rules:
     private static string BuildDocumentationContextPrompt()
     {
         return """
-This is Prompt 2B of 4 for setup-documentation.
+This is Prompt 2B of setup-documentation.
 
 Goal:
 Build the initial repository-state Markdown for this solution using the full evidence set already reviewed in Prompt 2A.
@@ -221,32 +264,26 @@ Return Markdown only using exactly this structure:
 """;
     }
 
-    private static string BuildFinalOutputPrompt(SolutionDocumentationSetupRequest request)
+    private static string BuildDecisionPrompt(IReadOnlyList<(string LogicalPath, string PhysicalPath)> writeTargets)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 4 of 4 for setup-documentation.");
+        sb.AppendLine("This is Prompt 3 of setup-documentation.");
+        sb.AppendLine("Goal: decide the documentation mode and per-document actions only. Do not write files in this step.");
         sb.AppendLine("Use the repository-state Markdown from Prompt 2B as the baseline understanding of the current solution.");
-        sb.AppendLine("Allowed write targets:");
-        foreach (var path in request.StableDocumentTargets)
+        sb.AppendLine();
+        sb.AppendLine("Managed document mapping:");
+        foreach (var target in writeTargets)
         {
-            sb.AppendLine($"- {path}");
+            sb.AppendLine($"- {target.LogicalPath} -> {target.PhysicalPath}");
         }
         sb.AppendLine();
         sb.AppendLine("Rules:");
-        sb.AppendLine("- Determine one mode before any write: ALIGNED, UPDATE, or BOOTSTRAP.");
-        sb.AppendLine("- Base the decision only on Prompt 2B evidence and the current stable document state.");
-        sb.AppendLine("- Absence of evidence is not evidence of absence.");
-        sb.AppendLine("- ALIGNED: do not call `write_file` and mark every managed document as KEEP or NO WRITE.");
-        sb.AppendLine("- UPDATE: update only required managed documents, and still include exactly one action for every managed document.");
-        sb.AppendLine("- BOOTSTRAP: actions must cover the full canonical managed document set. Every managed document must be listed with CREATE or KEEP.");
-        sb.AppendLine("- You may write only the managed documents listed above.");
-        sb.AppendLine("- Never write any repository file such as README.md, .sln, props, config files, or source files.");
-        sb.AppendLine("- Never write placeholder content.");
-        sb.AppendLine("- Never overwrite valid managed documents.");
+        sb.AppendLine("- Determine one mode only: ALIGNED, UPDATE, or BOOTSTRAP.");
+        sb.AppendLine("- This is a decision step only. Tool calls are forbidden.");
+        sb.AppendLine("- Base the decision only on repository-state evidence and the current stable document state.");
         sb.AppendLine("- `## Actions` must include exactly one entry for each managed document.");
-        sb.AppendLine("- Every action in `## Actions` must use one of: CREATE <path>, UPDATE <path>, KEEP <path>, NO WRITE.");
-        sb.AppendLine("- If mode is UPDATE or BOOTSTRAP, perform only the necessary `write_file` calls before returning the final Markdown.");
-        sb.AppendLine("- Never mix tool calls and final Markdown in the same response.");
+        sb.AppendLine("- Every action must use one of: CREATE <logical path>, UPDATE <logical path>, KEEP <logical path>, NO WRITE.");
+        sb.AppendLine("- Do not suggest new documents or extra targets.");
         sb.AppendLine();
         sb.AppendLine("Return Markdown only using exactly this structure:");
         sb.AppendLine("# Decision");
@@ -254,6 +291,57 @@ Return Markdown only using exactly this structure:
         sb.AppendLine("## Actions");
         sb.AppendLine("## Reasoning");
         return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildSingleWritePrompt(int stepNumber, string logicalPath, string physicalPath)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"This is Prompt {stepNumber + 3} of setup-documentation.");
+        sb.AppendLine($"Goal: handle only `{logicalPath}` in this step.");
+        sb.AppendLine();
+        sb.AppendLine("Current write target:");
+        sb.AppendLine($"- Logical path: {logicalPath}");
+        sb.AppendLine($"- Physical path: {physicalPath}");
+        sb.AppendLine();
+        sb.AppendLine("Rules:");
+        sb.AppendLine("- This step has a single objective: handle only the current target.");
+        sb.AppendLine("- Read the decision artifact from Prompt 3 and act only for this logical path.");
+        sb.AppendLine("- If the decision says KEEP or NO WRITE for this target, do not call any tool.");
+        sb.AppendLine("- If the decision says CREATE or UPDATE for this target, call `write_file` exactly once.");
+        sb.AppendLine("- Any `write_file` call must use the exact full physical path shown above.");
+        sb.AppendLine("- Do not write any other file.");
+        sb.AppendLine("- Never mix tool calls and Markdown in the same response.");
+        sb.AppendLine();
+        sb.AppendLine("If writing is required, return exactly one JSON object in this shape:");
+        sb.AppendLine($@"{{""tool"":""write_file"",""args"":{{""path"":""{physicalPath}"",""content"":""<markdown content>""}}}}");
+        sb.AppendLine();
+        sb.AppendLine("If no write is required, return Markdown only using exactly this structure:");
+        sb.AppendLine("# Write Step Result");
+        sb.AppendLine($"Action: NO WRITE {logicalPath}");
+        sb.AppendLine("## Reasoning");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildFinalSummaryPrompt()
+    {
+        return """
+This is the final prompt of setup-documentation.
+
+Goal:
+Return the final workflow result only after all prior write steps are complete.
+
+Rules:
+- Tool calls are forbidden in this step.
+- Summarize the final mode and outcomes based on the decision artifact and any completed write steps.
+- Use logical managed-document paths in the final report.
+- Do not claim a write happened unless it already succeeded in a prior step.
+
+Return Markdown only using exactly this structure:
+# Decision
+Mode: ALIGNED | UPDATE | BOOTSTRAP
+## Actions
+## Reasoning
+""";
     }
 
     private static WorkflowReportPayload ParseAndNormalize(string raw, SolutionDocumentationSetupRequest request)

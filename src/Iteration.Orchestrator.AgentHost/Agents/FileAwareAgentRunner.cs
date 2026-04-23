@@ -372,7 +372,7 @@ internal static class FileAwareAgentRunner
             {
                 case "get_workflow_input":
                 {
-                    await LogIgnoredWorkflowRunIdAsync(toolRequest.WorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
+                    await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
                     var inputPayload = await payloadStore.GetInputAsync(workflowRunId, ct);
                     state.WorkflowInputLoaded = true;
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_workflow_input('{workflowRunId}').", ct);
@@ -501,18 +501,24 @@ internal static class FileAwareAgentRunner
                 case "write_file":
                 {
                     var requestedPath = toolRequest.ResolvedPath;
-                    var content = toolRequest.Content;
+                    var content = toolRequest.ResolvedContent;
+
+                    await logs.AppendLineAsync(
+                        workflowRunId,
+                        $"Parsed tool call ({phase.Name}): action='write_file', path='{requestedPath ?? "<null>"}', contentLength={(content?.Length ?? 0)}.",
+                        ct);
+
                     if (string.IsNullOrWhiteSpace(requestedPath))
                     {
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires a non-empty 'path'.", ct);
-                        currentMessages = [CreateToolMessage("ERROR: write_file requires a non-empty 'path' matching one approved stable documentation file.")];
+                        currentMessages = [CreateToolMessage(BuildWriteFilePathErrorMessage(writableFiles))];
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(content))
                     {
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires non-empty 'content'.", ct);
-                        currentMessages = [CreateToolMessage("ERROR: write_file requires non-empty 'content'.")];
+                        currentMessages = [CreateToolMessage(BuildWriteFileContentErrorMessage())];
                         continue;
                     }
 
@@ -522,7 +528,7 @@ internal static class FileAwareAgentRunner
                     if (writableFiles is null || !writableFiles.TryGetValue(requestedPath, out var fullWritePath))
                     {
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File path is not approved for writes in this workflow.", ct);
-                        currentMessages = [CreateToolMessage("ERROR: path not approved for write_file. Use only one approved stable documentation path exactly as listed in the prompt.")];
+                        currentMessages = [CreateToolMessage(BuildWriteFileNotApprovedErrorMessage(writableFiles))];
                         continue;
                     }
 
@@ -541,7 +547,7 @@ internal static class FileAwareAgentRunner
                 }
                 case "save_workflow_output":
                 {
-                    if (toolRequest.Output is not JsonElement output)
+                    if (toolRequest.ResolvedOutput is not JsonElement output)
                     {
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. save_workflow_output requires an 'output' object.", ct);
                         currentMessages =
@@ -553,7 +559,7 @@ internal static class FileAwareAgentRunner
 
                     try
                     {
-                        await LogIgnoredWorkflowRunIdAsync(toolRequest.WorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
+                        await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
                         ValidateWorkflowOutputPayload(output);
                         var outputJson = output.GetRawText();
                         await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): save_workflow_output('{workflowRunId}').", ct);
@@ -1304,6 +1310,33 @@ internal static class FileAwareAgentRunner
         IReadOnlyList<string> FullPaths,
         IReadOnlyDictionary<string, string> NormalizedFullPaths);
 
+
+    private static string BuildWriteFilePathErrorMessage(IReadOnlyDictionary<string, string>? writableFiles)
+    {
+        var approvedPaths = writableFiles is null || writableFiles.Count == 0
+            ? "<none>"
+            : string.Join(Environment.NewLine + "- ", writableFiles.Keys);
+
+        return "ERROR: write_file requires a non-empty 'path'. Return exactly one tool call using this shape: " +
+               "{\"tool\":\"write_file\",\"args\":{\"path\":\"<approved full physical path>\",\"content\":\"<markdown content>\"}}. " +
+               "Use one of these approved full physical paths exactly as listed:" + Environment.NewLine + "- " + approvedPaths;
+    }
+
+    private static string BuildWriteFileContentErrorMessage()
+    {
+        return "ERROR: write_file requires non-empty 'content'. Return exactly one tool call using this shape: " +
+               "{\"tool\":\"write_file\",\"args\":{\"path\":\"<approved full physical path>\",\"content\":\"<markdown content>\"}}.";
+    }
+
+    private static string BuildWriteFileNotApprovedErrorMessage(IReadOnlyDictionary<string, string>? writableFiles)
+    {
+        var approvedPaths = writableFiles is null || writableFiles.Count == 0
+            ? "<none>"
+            : string.Join(Environment.NewLine + "- ", writableFiles.Keys);
+
+        return "ERROR: path not approved for write_file. Return exactly one tool call using an approved full physical path exactly as listed in the current step. Approved paths:" + Environment.NewLine + "- " + approvedPaths;
+    }
+
     private sealed class ToolRequest
     {
         public string? Action { get; set; }
@@ -1314,13 +1347,51 @@ internal static class FileAwareAgentRunner
         public string? FilePath { get; set; }
         public string? Content { get; set; }
         public JsonElement? Output { get; set; }
+        public JsonElement? Args { get; set; }
 
         public string ResolvedAction => !string.IsNullOrWhiteSpace(Action)
             ? Action!
             : Tool ?? string.Empty;
 
-        public string? ResolvedPath => !string.IsNullOrWhiteSpace(Path)
-            ? Path
-            : FilePath;
+        public string? ResolvedPath => FirstNonEmpty(Path, FilePath, TryGetStringArg("path"), TryGetStringArg("filePath"));
+
+        public string? ResolvedQuery => FirstNonEmpty(Query, TryGetStringArg("query"));
+
+        public string? ResolvedContent => FirstNonEmpty(Content, TryGetStringArg("content"));
+
+        public string? ResolvedWorkflowRunId => FirstNonEmpty(WorkflowRunId, TryGetStringArg("workflowRunId"));
+
+        public JsonElement? ResolvedOutput => Output ?? TryGetArg("output");
+
+        private string? TryGetStringArg(string propertyName)
+        {
+            var value = TryGetArg(propertyName);
+            return value is { ValueKind: JsonValueKind.String } ? value.Value.GetString() : null;
+        }
+
+        private JsonElement? TryGetArg(string propertyName)
+        {
+            if (Args is not { ValueKind: JsonValueKind.Object } args)
+            {
+                return null;
+            }
+
+            return args.TryGetProperty(propertyName, out var value)
+                ? value
+                : null;
+        }
+
+        private static string? FirstNonEmpty(params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
     }
 }
