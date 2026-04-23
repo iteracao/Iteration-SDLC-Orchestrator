@@ -177,10 +177,16 @@ Rules:
 - Use only file paths returned by `find_available_files`.
 - Use `get_file` only to read evidence.
 - Do not call `write_file`.
+- Managed documents are the fixed output documents of this workflow.
+- Repository files are evidence only.
+- A repository file is not drift just because it is not a managed document.
 - Drift means one of:
-  - contradiction with source
-  - missing required content
+  - a managed document contradicts source code
+  - a managed document is missing required content
   - outdated relative to current structure
+- Report drift only when it affects managed documents.
+- Do not suggest adding new documents.
+- Do not suggest expanding the managed document list.
 - Do not classify unrelated files as drift.
 - Do not invent exclusions.
 - Do not add irrelevant questions.
@@ -209,10 +215,14 @@ Return Markdown only using exactly this structure:
         sb.AppendLine("Rules:");
         sb.AppendLine("- Determine one mode before any write: ALIGNED, UPDATE, or BOOTSTRAP.");
         sb.AppendLine("- ALIGNED: do not call `write_file`.");
-        sb.AppendLine("- UPDATE: write only necessary stable docs.");
-        sb.AppendLine("- BOOTSTRAP: write only missing or invalid stable docs.");
+        sb.AppendLine("- UPDATE: update only required managed documents.");
+        sb.AppendLine("- BOOTSTRAP: create missing managed documents only.");
+        sb.AppendLine("- You may write only the managed documents listed above.");
+        sb.AppendLine("- Never write any repository file such as README.md, .sln, props, config files, or source files.");
+        sb.AppendLine("- If Prompt 2 mentions non-managed files, treat them only as evidence.");
+        sb.AppendLine("- Ignore any drift that does not affect the managed documents.");
         sb.AppendLine("- Never write placeholder content.");
-        sb.AppendLine("- Never overwrite valid docs.");
+        sb.AppendLine("- Never overwrite valid managed documents.");
         sb.AppendLine("- Every action in `## Actions` must use one of: `CREATE <path>`, `UPDATE <path>`, `KEEP <path>`, `NO WRITE`.");
         sb.AppendLine("- If mode is UPDATE or BOOTSTRAP, perform only the necessary `write_file` calls, then return the final Markdown.");
         sb.AppendLine();
