@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Iteration.Orchestrator.AgentHost.Agents;
@@ -15,8 +14,7 @@ internal static class FileAwareAgentRunner
     private const int MaxSearchHits = 12;
 
     public static Task<string> RunAsync(
-        string endpoint,
-        string model,
+        IAgentConversationFactory conversationFactory,
         string agentName,
         string instructions,
         string initialPrompt,
@@ -44,8 +42,7 @@ internal static class FileAwareAgentRunner
             RequireCompletionValidation: true);
 
         return RunMultiStepAsync(
-            endpoint,
-            model,
+            conversationFactory,
             agentName,
             instructions,
             [phase],
@@ -66,8 +63,7 @@ internal static class FileAwareAgentRunner
     }
 
     public static async Task<string> RunPromptAsync(
-        string endpoint,
-        string model,
+        IAgentConversationFactory conversationFactory,
         string agentName,
         string instructions,
         string prompt,
@@ -77,19 +73,19 @@ internal static class FileAwareAgentRunner
         CancellationToken ct,
         int maxModelResponseSeconds = 180)
     {
-        var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
-        AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
+        var conversation = conversationFactory.CreateConversation(agentName, instructions);
         var responseTimeoutSeconds = maxModelResponseSeconds;
-        var session = await agent.CreateSessionAsync(ct);
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
         await logs.AppendBlockAsync(workflowRunId, $"Prompt: {logTitle}", prompt, ct);
-        await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
+        await logs.AppendLineAsync(
+            workflowRunId,
+            $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
+            ct);
 
         var rawText = await RunModelWithTimeoutAsync(
-            agent,
+            conversation,
             [CreateUserMessage(prompt)],
-            session,
             responseTimeoutSeconds,
             ct);
 
@@ -98,8 +94,7 @@ internal static class FileAwareAgentRunner
     }
 
     public static async Task<string> RunMultiStepAsync(
-        string endpoint,
-        string model,
+        IAgentConversationFactory conversationFactory,
         string agentName,
         string instructions,
         IReadOnlyList<AgentPhaseDefinition> phases,
@@ -123,9 +118,7 @@ internal static class FileAwareAgentRunner
             throw new InvalidOperationException("At least one agent phase is required.");
         }
 
-        var chatClient = new OllamaChatClient(new Uri(endpoint), modelId: model);
-        AIAgent agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
-        var session = await agent.CreateSessionAsync(ct);
+        var conversation = conversationFactory.CreateConversation(agentName, instructions);
         var responseTimeoutSeconds = maxModelResponseSeconds;
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
@@ -138,7 +131,10 @@ internal static class FileAwareAgentRunner
         var pendingMessages = new List<ChatMessage>();
         var state = new AgentExecutionState();
 
-        await logs.AppendLineAsync(workflowRunId, $"Model '{model}' using per-response timeout of {responseTimeoutSeconds} seconds.", ct);
+        await logs.AppendLineAsync(
+            workflowRunId,
+            $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
+            ct);
 
         for (var phaseIndex = 0; phaseIndex < phases.Count; phaseIndex++)
         {
@@ -156,8 +152,7 @@ internal static class FileAwareAgentRunner
             else
             {
                 phaseResult = await ExecutePhaseAsync(
-                    agent,
-                    session,
+                    conversation,
                     phase,
                     phaseIndex,
                     phases.Count,
@@ -189,8 +184,7 @@ internal static class FileAwareAgentRunner
     }
 
     private static async Task<string> ExecutePhaseAsync(
-        AIAgent agent,
-        AgentSession session,
+        IAgentConversation conversation,
         AgentPhaseDefinition phase,
         int phaseIndex,
         int totalPhases,
@@ -217,7 +211,7 @@ internal static class FileAwareAgentRunner
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            var rawText = await RunModelWithTimeoutAsync(agent, currentMessages, session, maxModelResponseSeconds, ct);
+            var rawText = await RunModelWithTimeoutAsync(conversation, currentMessages, maxModelResponseSeconds, ct);
             await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
             if (!TryParseToolRequest(rawText, out var toolRequest))
@@ -632,9 +626,8 @@ internal static class FileAwareAgentRunner
         => relativePath.Replace('\\', '/').Trim();
 
     private static async Task<string> RunModelWithTimeoutAsync(
-        AIAgent agent,
+        IAgentConversation conversation,
         IReadOnlyList<ChatMessage> messages,
-        AgentSession session,
         int maxModelResponseSeconds,
         CancellationToken ct)
     {
@@ -643,8 +636,7 @@ internal static class FileAwareAgentRunner
 
         try
         {
-            var rawResponse = await agent.RunAsync(messages, session: session, cancellationToken: timeoutCts.Token);
-            return rawResponse.Text ?? string.Empty;
+            return await conversation.RunAsync(messages, timeoutCts.Token);
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {

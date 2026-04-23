@@ -1,4 +1,4 @@
-﻿namespace Iteration.Orchestrator.Infrastructure.AI;
+namespace Iteration.Orchestrator.Application.AI;
 
 public sealed class OllamaOptions
 {
@@ -9,4 +9,5 @@ public sealed class OllamaOptions
     public int StartupTimeoutSeconds { get; set; } = 20;
     public int RequestTimeoutSeconds { get; set; } = 300;
     public int AgentResponseTimeoutSeconds { get; set; } = 180;
+    public string AgentModel { get; set; } = "qwen2.5-coder:7b";
 }

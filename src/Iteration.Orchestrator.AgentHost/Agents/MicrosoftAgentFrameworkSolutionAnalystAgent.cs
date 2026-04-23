@@ -10,16 +10,14 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 {
     private const string RepositoryStateArtifactFileName = "repository-state.md";
 
-    private readonly string _endpoint;
-    private readonly string _model;
+    private readonly IAgentConversationFactory _conversationFactory;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
     private readonly IArtifactStore _artifacts;
     private readonly int _maxModelResponseSeconds;
 
     public MicrosoftAgentFrameworkSolutionAnalystAgent(
-        string endpoint,
-        string model,
+        IAgentConversationFactory conversationFactory,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         IArtifactStore artifacts,
@@ -27,8 +25,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         IConfigCatalog config,
         int maxModelResponseSeconds)
     {
-        _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
-        _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
+        _conversationFactory = conversationFactory;
         _logs = logs;
         _payloadStore = payloadStore;
         _artifacts = artifacts;
@@ -95,8 +92,7 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
 
             var instructions = BuildInstructions(agentDefinition);
             var reportMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
-                _endpoint,
-                _model,
+                _conversationFactory,
                 agentDefinition.Name,
                 instructions,
                 phases,

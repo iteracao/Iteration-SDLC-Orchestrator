@@ -14,6 +14,7 @@ using Iteration.Orchestrator.Infrastructure.Solutions;
 using Iteration.Orchestrator.Api.Background;
 using Iteration.Orchestrator.SolutionBridge.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,9 +27,47 @@ builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connect
 
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama"));
+builder.Services.Configure<OpenAIOptions>(
+    builder.Configuration.GetSection("OpenAI"));
 
-builder.Services.AddHttpClient<IOllamaService, OllamaService>();
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<OllamaService>();
+builder.Services.AddHttpClient<OpenAITextGenerationService>();
 builder.Services.AddHttpClient<IGitHubRepositoryMetadataService, GitHubRepositoryMetadataService>();
+builder.Services.AddSingleton(sp =>
+{
+    var openAiOptions = sp.GetRequiredService<IOptions<OpenAIOptions>>().Value;
+    var ollamaOptions = sp.GetRequiredService<IOptions<OllamaOptions>>().Value;
+    var isOpenAiComplete = openAiOptions.IsComplete();
+
+    return isOpenAiComplete
+        ? new LlmProviderSelection(
+            "OpenAI",
+            NormalizeBaseUrl(openAiOptions.BaseUrl, "https://api.openai.com/v1"),
+            NormalizeModel(openAiOptions.Model, "gpt-5.4"),
+            Math.Max(1, openAiOptions.TimeoutSeconds),
+            IsOpenAiConfigurationComplete: true,
+            ApiKey: openAiOptions.ApiKey)
+        : new LlmProviderSelection(
+            "Ollama",
+            NormalizeBaseUrl(ollamaOptions.BaseUrl, "http://127.0.0.1:11434"),
+            NormalizeModel(ollamaOptions.AgentModel, ollamaOptions.DefaultModel),
+            NormalizeAgentResponseTimeoutSeconds(ollamaOptions.AgentResponseTimeoutSeconds),
+            IsOpenAiConfigurationComplete: false);
+});
+builder.Services.AddSingleton<IAgentConversationFactory>(sp =>
+{
+    var selection = sp.GetRequiredService<LlmProviderSelection>();
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    return new SelectedAgentConversationFactory(selection, () => httpClientFactory.CreateClient());
+});
+builder.Services.AddScoped<ITextGenerationService>(sp =>
+{
+    var selection = sp.GetRequiredService<LlmProviderSelection>();
+    return string.Equals(selection.ProviderName, "OpenAI", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<OpenAITextGenerationService>()
+        : sp.GetRequiredService<OllamaService>();
+});
 builder.Services.AddScoped<ICodeAgent, CodeAgent>();
 
 builder.Services.AddScoped<SetupSolutionHandler>();
@@ -60,8 +99,6 @@ var configRoot = builder.Configuration["ConfigRoot"]
 
 var resolvedConfigRoot = Path.GetFullPath(
     Path.Combine(AppContext.BaseDirectory, configRoot));
-var agentResponseTimeoutSeconds = NormalizeAgentResponseTimeoutSeconds(
-    builder.Configuration.GetValue<int?>("Ollama:AgentResponseTimeoutSeconds"));
 
 Console.WriteLine($"CONFIG ROOT = {resolvedConfigRoot}");
 
@@ -70,44 +107,54 @@ builder.Services.AddSingleton<IConfigCatalog>(_ =>
 
 builder.Services.AddSingleton<ISolutionBridge, LocalFileSystemSolutionBridge>();
 builder.Services.AddScoped<ISolutionAnalystAgent>(sp =>
-    new MicrosoftAgentFrameworkSolutionAnalystAgent(
-        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+{
+    var selectedProvider = sp.GetRequiredService<LlmProviderSelection>();
+    return new MicrosoftAgentFrameworkSolutionAnalystAgent(
+        sp.GetRequiredService<IAgentConversationFactory>(),
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
         sp.GetRequiredService<IArtifactStore>(),
         sp.GetRequiredService<ISolutionBridge>(),
         sp.GetRequiredService<IConfigCatalog>(),
-        agentResponseTimeoutSeconds));
+        selectedProvider.TimeoutSeconds);
+});
 builder.Services.AddScoped<ISolutionDesignerAgent>(sp =>
-    new MicrosoftAgentFrameworkSolutionDesignerAgent(
-        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+{
+    var selectedProvider = sp.GetRequiredService<LlmProviderSelection>();
+    return new MicrosoftAgentFrameworkSolutionDesignerAgent(
+        sp.GetRequiredService<IAgentConversationFactory>(),
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
-        agentResponseTimeoutSeconds));
+        selectedProvider.TimeoutSeconds);
+});
 builder.Services.AddScoped<ISolutionDocumentationSetupAgent>(sp =>
-    new MicrosoftAgentFrameworkSolutionDocumentationSetupAgent(
-        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+{
+    var selectedProvider = sp.GetRequiredService<LlmProviderSelection>();
+    return new MicrosoftAgentFrameworkSolutionDocumentationSetupAgent(
+        sp.GetRequiredService<IAgentConversationFactory>(),
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
         sp.GetRequiredService<IArtifactStore>(),
-        agentResponseTimeoutSeconds));
+        selectedProvider.TimeoutSeconds);
+});
 builder.Services.AddScoped<ISolutionPlannerAgent>(sp =>
-    new MicrosoftAgentFrameworkImplementationPlannerAgent(
-        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+{
+    var selectedProvider = sp.GetRequiredService<LlmProviderSelection>();
+    return new MicrosoftAgentFrameworkImplementationPlannerAgent(
+        sp.GetRequiredService<IAgentConversationFactory>(),
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
-        agentResponseTimeoutSeconds));
+        selectedProvider.TimeoutSeconds);
+});
 builder.Services.AddScoped<ISolutionImplementationAgent>(sp =>
-    new MicrosoftAgentFrameworkSolutionImplementationAgent(
-        builder.Configuration["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434",
-        builder.Configuration["Ollama:AgentModel"] ?? builder.Configuration["Ollama:DefaultModel"] ?? "qwen2.5-coder:7b",
+{
+    var selectedProvider = sp.GetRequiredService<LlmProviderSelection>();
+    return new MicrosoftAgentFrameworkSolutionImplementationAgent(
+        sp.GetRequiredService<IAgentConversationFactory>(),
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
-        agentResponseTimeoutSeconds));
+        selectedProvider.TimeoutSeconds);
+});
 
 builder.Services.AddSingleton<ISolutionSetupService, FileSystemSolutionSetupService>();
 
@@ -117,6 +164,13 @@ builder.Services.AddSingleton<IArtifactStore>(_ => new FileSystemArtifactStore(r
 builder.Services.AddSingleton<IWorkflowRunLogStore>(_ => new FileSystemWorkflowRunLogStore(resolvedArtifactRoot));
 
 var app = builder.Build();
+var selectedLlmProvider = app.Services.GetRequiredService<LlmProviderSelection>();
+
+app.Logger.LogInformation(
+    "Selected LLM provider: {Provider}. Selected model: {Model}. OpenAI config complete: {OpenAIConfigComplete}.",
+    selectedLlmProvider.ProviderName,
+    selectedLlmProvider.Model,
+    selectedLlmProvider.IsOpenAiConfigurationComplete);
 
 using (var scope = app.Services.CreateScope())
 {
@@ -133,3 +187,9 @@ app.Run();
 
 static int NormalizeAgentResponseTimeoutSeconds(int? configuredTimeoutSeconds)
     => Math.Clamp(configuredTimeoutSeconds ?? 180, 1, 180);
+
+static string NormalizeBaseUrl(string? configuredValue, string fallback)
+    => string.IsNullOrWhiteSpace(configuredValue) ? fallback : configuredValue.Trim();
+
+static string NormalizeModel(string? configuredValue, string fallback)
+    => string.IsNullOrWhiteSpace(configuredValue) ? fallback : configuredValue.Trim();

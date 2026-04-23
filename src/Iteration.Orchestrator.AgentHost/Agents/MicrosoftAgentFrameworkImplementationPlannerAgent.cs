@@ -6,16 +6,14 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutionPlannerAgent
 {
-    private readonly string _endpoint;
-    private readonly string _model;
+    private readonly IAgentConversationFactory _conversationFactory;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
     private readonly int _maxModelResponseSeconds;
 
-    public MicrosoftAgentFrameworkImplementationPlannerAgent(string endpoint, string model, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore, int maxModelResponseSeconds)
+    public MicrosoftAgentFrameworkImplementationPlannerAgent(IAgentConversationFactory conversationFactory, IWorkflowRunLogStore logs, IWorkflowPayloadStore payloadStore, int maxModelResponseSeconds)
     {
-        _endpoint = string.IsNullOrWhiteSpace(endpoint) ? "http://127.0.0.1:11434" : endpoint;
-        _model = string.IsNullOrWhiteSpace(model) ? "qwen2.5-coder:7b" : model;
+        _conversationFactory = conversationFactory;
         _logs = logs;
         _payloadStore = payloadStore;
         _maxModelResponseSeconds = maxModelResponseSeconds;
@@ -42,8 +40,7 @@ public sealed class MicrosoftAgentFrameworkImplementationPlannerAgent : ISolutio
         try
         {
             var rawText = await FileAwareAgentRunner.RunAsync(
-                _endpoint,
-                _model,
+                _conversationFactory,
                 agentDefinition.Name,
                 instructions,
                 prompt,

@@ -5,7 +5,7 @@ using Iteration.Orchestrator.Application.AI;
 
 namespace Iteration.Orchestrator.Infrastructure.AI;
 
-public sealed class OllamaService: IOllamaService
+public sealed class OllamaService : ITextGenerationService
 {
     private readonly HttpClient _http;
     private readonly OllamaOptions _options;

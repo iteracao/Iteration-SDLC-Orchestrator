@@ -5,11 +5,11 @@ namespace Iteration.Orchestrator.Application.Agents;
 
 public sealed class CodeAgent : ICodeAgent
 {
-    private readonly IOllamaService _ollama;
+    private readonly ITextGenerationService _textGeneration;
 
-    public CodeAgent(IOllamaService ollama)
+    public CodeAgent(ITextGenerationService textGeneration)
     {
-        _ollama = ollama;
+        _textGeneration = textGeneration;
     }
 
     public async Task<string> AnalyzeCodeAsync(string code, CancellationToken ct = default)
@@ -17,6 +17,6 @@ public sealed class CodeAgent : ICodeAgent
         var prompt = PromptBuilder.AnalyzeCode(code);
 
         // default = fast model
-        return await _ollama.GenerateAsync(prompt, ct: ct);
+        return await _textGeneration.GenerateAsync(prompt, ct: ct);
     }
 }
