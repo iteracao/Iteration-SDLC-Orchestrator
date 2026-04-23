@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
@@ -92,7 +93,7 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _selection.ApiKey);
         request.Content = JsonContent.Create(BuildPayload(messages));
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await SendWithRateLimitRetriesAsync(request, ct);
         var responseContent = await response.Content.ReadAsStringAsync(ct);
         response.EnsureSuccessStatusCode();
 
@@ -105,6 +106,55 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
         return ExtractOutputText(document.RootElement);
     }
 
+
+    private async Task<HttpResponseMessage> SendWithRateLimitRetriesAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        const int maxAttempts = 4;
+        var delay = TimeSpan.FromSeconds(2);
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            using var clonedRequest = await CloneRequestAsync(request, ct);
+            var response = await _httpClient.SendAsync(clonedRequest, ct);
+            if (response.StatusCode != (HttpStatusCode)429 || attempt == maxAttempts)
+            {
+                return response;
+            }
+
+            var retryDelay = response.Headers.RetryAfter?.Delta ?? delay;
+            response.Dispose();
+            await Task.Delay(retryDelay, ct);
+            delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 15));
+        }
+
+        throw new InvalidOperationException("Unreachable retry state.");
+    }
+
+    private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var clone = new HttpRequestMessage(request.Method, request.RequestUri);
+
+        foreach (var header in request.Headers)
+        {
+            clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        if (request.Content is not null)
+        {
+            var contentBytes = await request.Content.ReadAsByteArrayAsync(ct);
+            var contentClone = new ByteArrayContent(contentBytes);
+            foreach (var header in request.Content.Headers)
+            {
+                contentClone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+
+            clone.Content = contentClone;
+        }
+
+        clone.Version = request.Version;
+        clone.VersionPolicy = request.VersionPolicy;
+        return clone;
+    }
     private object BuildPayload(IReadOnlyList<ChatMessage> messages)
     {
         var payload = new Dictionary<string, object?>

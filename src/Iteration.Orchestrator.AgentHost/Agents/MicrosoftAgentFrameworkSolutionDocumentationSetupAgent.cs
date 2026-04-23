@@ -72,13 +72,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Prompt: BuildDocumentationAcquisitionPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Load the full allowed repository evidence set for documentation setup.",
+                    PurposeSummary: "Discover the allowed evidence set, then let the runner load the full repository evidence automatically.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
-                    AllowedToolActions: ["find_available_files", "get_next_file_batch", "get_file"],
+                    AllowedToolActions: ["find_available_files"],
                     RequireAllAvailableFilesRead: true,
                     ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOnly,
-                    AutoCompleteWhenAllAvailableFilesRead: true),
+                    AutoAcquireAllAvailableFilesAfterDiscovery: true),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 2B",
                     Prompt: BuildDocumentationSynthesisPrompt(),
@@ -187,11 +187,9 @@ Load the full allowed repository evidence set for this solution.
 
 Rules:
 - This is a read-only evidence-acquisition phase.
-- Call `find_available_files` first.
-- Then repeatedly call `get_next_file_batch` until no unread allowed files remain.
-- Use `get_file` only for targeted follow-up reads when a specific allowed file needs closer confirmation.
-- Use only exact full physical paths returned by `find_available_files`.
-- Never call `write_file` in this phase.
+- Call `find_available_files` exactly once.
+- After discovery, the runner will automatically load the full allowed repository evidence set.
+- Do not call `get_next_file_batch`, `get_file`, or `write_file` in this phase.
 - Do not return Markdown, prose, summaries, or conclusions in this phase.
 - Return exactly one allowed tool-call JSON object per response.
 """;

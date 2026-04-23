@@ -346,6 +346,23 @@ internal static class FileAwareAgentRunner
                     state.FilesAlreadyListed = true;
                     state.AvailableFilesPayload = fileListResult;
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
+                    if (phase.AutoAcquireAllAvailableFilesAfterDiscovery)
+                    {
+                        pendingMessages.Add(CreateToolMessage(fileListResult));
+                        var acquisitionResult = AcquireAllAvailableFiles(availableFileIndex, state.ReadPaths);
+                        nextUnreadFileIndex = acquisitionResult.NextUnreadFileIndex;
+                        foreach (var payload in acquisitionResult.BatchPayloads)
+                        {
+                            pendingMessages.Add(CreateToolMessage(payload));
+                        }
+
+                        await logs.AppendLineAsync(
+                            workflowRunId,
+                            $"Result ({phase.Name}): repository evidence acquisition loaded automatically. Batches prepared: {acquisitionResult.BatchPayloads.Count}. Files reviewed: {state.ReadPaths.Count}.",
+                            ct);
+                        return "Repository evidence acquisition complete.";
+                    }
+
                     currentMessages = BuildPostToolMessages(phase, fileListResult, state.ReadPaths, availableFileIndex);
                     continue;
                 }
@@ -706,7 +723,62 @@ internal static class FileAwareAgentRunner
         }
 
         files.Sort(StringComparer.OrdinalIgnoreCase);
-        return new AvailableFileIndex(files, normalizedMap);
+        var batchStartIndexes = BuildBatchStartIndexes(files);
+        return new AvailableFileIndex(files, normalizedMap, batchStartIndexes);
+    }
+
+    private static IReadOnlyList<int> BuildBatchStartIndexes(IReadOnlyList<string> fullPaths)
+    {
+        if (fullPaths.Count == 0)
+        {
+            return [0];
+        }
+
+        var batchStarts = new List<int> { 0 };
+        var currentBatchCharacters = 0;
+        var currentBatchItemCount = 0;
+
+        for (var i = 0; i < fullPaths.Count; i++)
+        {
+            var fullPath = fullPaths[i];
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            var blockLength = EstimateBatchBlockLength(fullPath);
+            if (currentBatchItemCount > 0 && currentBatchCharacters + blockLength > MaxBatchCharacters)
+            {
+                batchStarts.Add(i);
+                currentBatchCharacters = 0;
+                currentBatchItemCount = 0;
+            }
+
+            currentBatchCharacters += blockLength;
+            currentBatchItemCount++;
+        }
+
+        return batchStarts;
+    }
+
+    private static int EstimateBatchBlockLength(string fullPath)
+    {
+        var normalizedPath = NormalizePath(fullPath);
+        var contentLength = 0;
+        if (File.Exists(fullPath))
+        {
+            var originalContent = File.ReadAllText(fullPath);
+            contentLength = Math.Min(originalContent.Length, MaxFileCharactersPerBatchItem);
+            if (originalContent.Length > MaxFileCharactersPerBatchItem)
+            {
+                contentLength += Environment.NewLine.Length * 2 + 57 + MaxFileCharactersPerBatchItem.ToString().Length;
+            }
+        }
+
+        return fullPath.Length
+            + normalizedPath.Length
+            + contentLength
+            + 64;
     }
 
     private static FileReadResult? TryReadFileByPhysicalPath(AvailableFileIndex availableFileIndex, string requestedPath)
@@ -740,6 +812,32 @@ internal static class FileAwareAgentRunner
         return string.Join(Environment.NewLine, fullPaths);
     }
 
+    private static RepositoryAcquisitionResult AcquireAllAvailableFiles(AvailableFileIndex availableFileIndex, ISet<string> readPaths)
+    {
+        var nextUnreadFileIndex = 0;
+        var payloads = new List<string>();
+
+        while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
+        {
+            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+            if (batch.Files.Count == 0)
+            {
+                nextUnreadFileIndex = batch.NextUnreadFileIndex;
+                break;
+            }
+
+            foreach (var file in batch.Files)
+            {
+                readPaths.Add(file.NormalizedPath);
+            }
+
+            payloads.Add(batch.Payload);
+            nextUnreadFileIndex = batch.NextUnreadFileIndex;
+        }
+
+        return new RepositoryAcquisitionResult(payloads, nextUnreadFileIndex);
+    }
+
     private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
     {
         if (nextUnreadFileIndex < 0)
@@ -750,7 +848,8 @@ internal static class FileAwareAgentRunner
         if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
         {
             var emptyPayload = "END OF FILE BATCHES";
-            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
+            var totalBatchCount = Math.Max(1, availableFileIndex.BatchStartIndexes.Count);
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, totalBatchCount, totalBatchCount);
         }
 
         var files = new List<FileReadResult>();
@@ -806,10 +905,8 @@ internal static class FileAwareAgentRunner
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatchesEstimate = Math.Max(1, (int)Math.Ceiling((double)availableFileIndex.FullPaths.Count / Math.Max(1, files.Count)));
-        var batchNumber = files.Count == 0
-            ? 0
-            : (nextUnreadFileIndex / Math.Max(1, files.Count)) + 1;
+        var totalBatches = Math.Max(1, availableFileIndex.BatchStartIndexes.Count);
+        var batchNumber = ResolveBatchNumber(availableFileIndex.BatchStartIndexes, nextUnreadFileIndex);
 
         return new FileBatchResult(
             files,
@@ -817,7 +914,23 @@ internal static class FileAwareAgentRunner
             currentIndex,
             currentIndex < availableFileIndex.FullPaths.Count,
             batchNumber,
-            totalBatchesEstimate);
+            totalBatches);
+    }
+
+    private static int ResolveBatchNumber(IReadOnlyList<int> batchStartIndexes, int nextUnreadFileIndex)
+    {
+        var batchNumber = 1;
+        for (var i = 0; i < batchStartIndexes.Count; i++)
+        {
+            if (batchStartIndexes[i] > nextUnreadFileIndex)
+            {
+                break;
+            }
+
+            batchNumber = i + 1;
+        }
+
+        return batchNumber;
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, IReadOnlyDictionary<string, string>? writableFiles)
@@ -1041,7 +1154,8 @@ internal static class FileAwareAgentRunner
         bool InjectSavedMarkdownIntoNextPhase = false,
         bool RequireAllAvailableFilesRead = false,
         AgentPhaseResponseMode ResponseMode = AgentPhaseResponseMode.ToolCallsOrMarkdown,
-        bool AutoCompleteWhenAllAvailableFilesRead = false);
+        bool AutoCompleteWhenAllAvailableFilesRead = false,
+        bool AutoAcquireAllAvailableFilesAfterDiscovery = false);
 
     internal sealed record RepositoryDiscoveryTools(
         Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,
@@ -1066,9 +1180,14 @@ internal static class FileAwareAgentRunner
         int BatchNumber,
         int TotalBatchesEstimate);
 
+    private sealed record RepositoryAcquisitionResult(
+        IReadOnlyList<string> BatchPayloads,
+        int NextUnreadFileIndex);
+
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,
-        IReadOnlyDictionary<string, string> NormalizedFullPaths);
+        IReadOnlyDictionary<string, string> NormalizedFullPaths,
+        IReadOnlyList<int> BatchStartIndexes);
 
     private sealed class ToolRequest
     {
