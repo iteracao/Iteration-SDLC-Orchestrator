@@ -186,6 +186,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine("Follow the current phase prompt exactly.");
         sb.AppendLine("Use only the tools allowed by the current phase.");
         sb.AppendLine("Do not invent drift, file evidence, write actions, or repository state. Use direct evidence only.");
+        sb.AppendLine("Tool requests may use JSON when a phase defines that call shape.");
+        sb.AppendLine("Tool responses must be interpreted using the response format defined by the current phase prompt.");
         return sb.ToString().TrimEnd();
     }
 
@@ -226,21 +228,39 @@ This is Prompt 2A of setup-documentation.
 Goal:
 Read the full allowed repository evidence set for this solution using only `get_next_file_batch`.
 
-What the batch tool returns:
-- Each `get_next_file_batch` response already includes full file identification and complete file contents for the next unread batch.
+Tool request format:
+- Return exactly one tool-call JSON object per response in this shape:
+  {"tool":"get_next_file_batch","args":{}}
+- `get_next_file_batch` takes no parameters.
+
+Tool response format:
+- Response type: text/plain.
+- The first lines of each tool response are:
+  - `BATCH INDEX: <number>`
+  - `TOTAL BATCHES: <number>`
+  - `HAS MORE: yes|no`
+  - `FILES IN BATCH: <number>`
+- After that, the response contains one or more complete file blocks in this format:
+  - `FILE: <full physical path>`
+  - `NORMALIZED PATH: <normalized repository path>`
+  - `COMPLETE FILE: yes`
+  - `CHARACTERS: <number>`
+  - `CONTENT:`
+  - full raw file content
+  - `--- END FILE ---`
+- Files are never truncated or split across batches.
 - You do not need discovery first.
-- The system log records batch usage separately; do not summarize the batch contents here.
 
 Execution contract:
 - This is a read-only evidence-acquisition phase.
 - The only allowed tool in this phase is `get_next_file_batch`.
-- Call `get_next_file_batch` repeatedly until all batches are consumed.
-- Required number of executions = total number of batches for this run.
-- Treat the batch counter returned by the tool as authoritative for progress.
+- In each response, return exactly one tool-call JSON object and nothing else.
+- After each tool result, read `HAS MORE` from the plain-text tool response.
+- Continue calling `get_next_file_batch` while `HAS MORE: yes`.
+- Stop only when `HAS MORE: no`.
 - Do not skip batches.
 - Do not stop early.
 - Do not return Markdown, prose, summaries, or conclusions in this phase.
-- Return exactly one allowed tool-call JSON object per response.
 """;
     }
 
@@ -250,15 +270,16 @@ Execution contract:
 This is Prompt 2B of setup-documentation.
 
 Goal:
-Build the initial repository-state Markdown for this solution using the full evidence set already reviewed in Prompt 2A.
+Build the repository-state Markdown using ONLY the repository evidence loaded in Prompt 2A.
 
 Rules:
 - This is a synthesis phase.
 - Tool calls are forbidden in this phase.
-- Managed documents are the fixed output documents of this workflow.
-- Repository files are evidence only.
-- Drift applies only to the managed documents, based on repository evidence.
-- Do not suggest new documents or expand the managed document list.
+- Use only the evidence already loaded.
+- Do not invent, assume, or infer missing information.
+- If something is not present in the evidence, state it as unknown.
+- Do not suggest new documents.
+- Do not expand the managed document list.
 
 Return Markdown only using exactly this structure:
 # Repository State

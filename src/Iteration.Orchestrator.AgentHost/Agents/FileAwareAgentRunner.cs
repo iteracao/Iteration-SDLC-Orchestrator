@@ -77,15 +77,18 @@ internal static class FileAwareAgentRunner
         var responseTimeoutSeconds = maxModelResponseSeconds;
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
-        await logs.AppendBlockAsync(workflowRunId, $"Prompt: {logTitle}", prompt, ct);
+        await logs.AppendBlockAsync(workflowRunId, $"Model base instructions: {logTitle}", instructions, ct);
         await logs.AppendLineAsync(
             workflowRunId,
             $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
             ct);
 
+        var promptMessages = new[] { CreateUserMessage(prompt) };
+        await LogModelInputMessagesAsync(logs, workflowRunId, logTitle, 1, promptMessages, ct);
+
         var rawText = await RunModelWithTimeoutAsync(
             conversation,
-            [CreateUserMessage(prompt)],
+            promptMessages,
             responseTimeoutSeconds,
             ct);
 
@@ -135,6 +138,7 @@ internal static class FileAwareAgentRunner
             workflowRunId,
             $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
             ct);
+        await logs.AppendBlockAsync(workflowRunId, "Model message OUT [base] role=system source=base-instructions format=text/plain", instructions, ct);
 
         for (var phaseIndex = 0; phaseIndex < phases.Count; phaseIndex++)
         {
@@ -147,6 +151,7 @@ internal static class FileAwareAgentRunner
             {
                 pendingMessages.Add(CreateUserMessage(phase.Prompt));
                 await logs.AppendLineAsync(workflowRunId, $"Phase mode ({phase.Name}): ContextOnly. Prompt queued into agent conversation context with no model call.", ct);
+                await logs.AppendBlockAsync(workflowRunId, $"Model message QUEUED [{phase.Name}] role=user source=context-only-prompt format=text/plain", phase.Prompt, ct);
                 phaseResult = "Context loaded.";
             }
             else
@@ -205,13 +210,19 @@ internal static class FileAwareAgentRunner
         int maxModelResponseSeconds,
         IReadOnlyDictionary<string, string>? writableFiles)
     {
+        var phasePromptText = BuildPhasePrompt(phase, phaseIndex, totalPhases, writableFiles);
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages, writableFiles);
+        if (pendingMessages.Count > 0)
+        {
+            await logs.AppendLineAsync(workflowRunId, $"Pending model messages carried into {phase.Name}: {pendingMessages.Count}.", ct);
+        }
         pendingMessages.Clear();
         var nextUnreadFileIndex = 0;
         var writtenPathsThisPhase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
+            await LogModelInputMessagesAsync(logs, workflowRunId, phase.Name, i + 1, currentMessages, ct);
             var rawText = await RunModelWithTimeoutAsync(conversation, currentMessages, maxModelResponseSeconds, ct);
             await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} - agent response #{i + 1}", rawText, ct);
 
@@ -248,9 +259,11 @@ internal static class FileAwareAgentRunner
                     workflowRunId,
                     $"Tool call blocked ({phase.Name}): this phase requires a pure Markdown response with no tool calls.",
                     ct);
+                const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.";
+                await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=user source=retry-tools-blocked-markdown-only format=text/plain", retryMessage, ct);
                 currentMessages =
                 [
-                    CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.")
+                    CreateUserMessage(retryMessage)
                 ];
                 continue;
             }
@@ -263,9 +276,11 @@ internal static class FileAwareAgentRunner
                         workflowRunId,
                         $"Result ({phase.Name}): error. This phase requires exactly one JSON tool-call object per response.",
                         ct);
+                    const string retryMessage = "INVALID RESPONSE. This phase is tool-call only. Return exactly one JSON tool-call object and no Markdown or prose.";
+                    await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=user source=retry-tool-only-phase format=text/plain", retryMessage, ct);
                     currentMessages =
                     [
-                        CreateUserMessage("INVALID RESPONSE. This phase is tool-call only. Return exactly one JSON tool-call object and no Markdown or prose.")
+                        CreateUserMessage(retryMessage)
                     ];
                     continue;
                 }
@@ -283,9 +298,11 @@ internal static class FileAwareAgentRunner
                             workflowRunId,
                             $"Result ({phase.Name}): error. Final Markdown declared writes that were not executed in this phase: {string.Join(", ", missingWritePaths)}.",
                             ct);
+                        var retryMessage = $"INVALID FINAL RESPONSE. Execute write_file first for these declared paths before returning final Markdown: {string.Join(", ", missingWritePaths)}.";
+                        await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=user source=retry-missing-write-execution format=text/plain", retryMessage, ct);
                         currentMessages =
                         [
-                            CreateUserMessage($"INVALID FINAL RESPONSE. Execute write_file first for these declared paths before returning final Markdown: {string.Join(", ", missingWritePaths)}.")
+                            CreateUserMessage(retryMessage)
                         ];
                         continue;
                     }
@@ -316,12 +333,14 @@ internal static class FileAwareAgentRunner
                     await artifacts.SaveTextAsync(workflowRunId, phase.SavedMarkdownArtifactFileName, rawText, ct);
                     await logs.AppendLineAsync(
                         workflowRunId,
-                        $"Result ({phase.Name}): Markdown response saved to artifact '{phase.SavedMarkdownArtifactFileName}'.",
+                        $"Result ({phase.Name}): Markdown response saved to artifact '{phase.SavedMarkdownArtifactFileName}' | chars={rawText.Length}.",
                         ct);
 
                     if (phase.InjectSavedMarkdownIntoNextPhase)
                     {
-                        pendingMessages.Add(CreateUserMessage(BuildSavedMarkdownContextMessage(phase.SavedMarkdownArtifactFileName, rawText)));
+                        var savedMarkdownContextMessage = BuildSavedMarkdownContextMessage(phase.SavedMarkdownArtifactFileName, rawText);
+                        pendingMessages.Add(CreateUserMessage(savedMarkdownContextMessage));
+                        await logs.AppendLineAsync(workflowRunId, $"Model message QUEUED [{phase.Name}] role=user source=saved-markdown-context format=text/plain artifact='{phase.SavedMarkdownArtifactFileName}' chars={rawText.Length}.", ct);
                     }
                 }
 
@@ -338,6 +357,7 @@ internal static class FileAwareAgentRunner
 
             var toolRequest = toolResponseState.SingleToolRequest;
             var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
+            await logs.AppendBlockAsync(workflowRunId, $"Tool request ({phase.Name}) format=application/json", BuildToolRequestLog(rawText, toolRequest), ct);
 
             if (phase.AllowToolCalls && phase.AllowedToolActions is { Count: > 0 }
                 && !phase.AllowedToolActions.Contains(normalizedAction, StringComparer.OrdinalIgnoreCase))
@@ -360,9 +380,11 @@ internal static class FileAwareAgentRunner
                     $"Tool call blocked ({phase.Name}): '{toolRequest.ResolvedAction}'. This phase requires a pure Markdown response with no tool calls.",
                     ct);
 
+                const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
+                await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=user source=retry-tools-blocked format=text/plain", retryMessage, ct);
                 currentMessages =
                 [
-                    CreateUserMessage("TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.")
+                    CreateUserMessage(retryMessage)
                 ];
                 continue;
             }
@@ -377,9 +399,11 @@ internal static class FileAwareAgentRunner
                     await logs.AppendLineAsync(workflowRunId, $"Tool call ({phase.Name}): get_workflow_input('{workflowRunId}').", ct);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {inputPayload.InputPayloadJson.Length}.", ct);
 
+                    var toolPayload = $"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}";
+                    await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=tool source=get_workflow_input-result format=text/plain", toolPayload, ct);
                     currentMessages =
                     [
-                        CreateToolMessage($"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}")
+                        CreateToolMessage(toolPayload)
                     ];
                     continue;
                 }
@@ -417,7 +441,8 @@ internal static class FileAwareAgentRunner
                         return "Repository evidence acquisition completed.";
                     }
 
-                    currentMessages = BuildPostToolMessages(phase, fileListResult, state.ReadPaths, availableFileIndex);
+                    await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=tool source=find_available_files-result format=text/plain", fileListResult, ct);
+                    currentMessages = BuildPostToolMessages(fileListResult);
                     continue;
                 }
                 case "get_next_file_batch":
@@ -434,7 +459,7 @@ internal static class FileAwareAgentRunner
 
                     await logs.AppendLineAsync(
                         workflowRunId,
-                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatches}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
+                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
                         ct);
 
                     foreach (var logLine in DescribeBatchFilesForLog(batch.Files))
@@ -442,7 +467,8 @@ internal static class FileAwareAgentRunner
                         await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {logLine}", ct);
                     }
 
-                    currentMessages = BuildPostToolMessages(phase, batch.Payload, state.ReadPaths, availableFileIndex);
+                    await logs.AppendBlockAsync(workflowRunId, $"Tool response ({phase.Name}) source=get_next_file_batch-result format=text/plain metadata-only", BuildFilePayloadMetadataLog(batch.Payload), ct);
+                    currentMessages = BuildPostToolMessages(batch.Payload);
 
                     if (phase.AutoCompleteWhenAllAvailableFilesRead &&
                         phase.RequireAllAvailableFilesRead &&
@@ -499,11 +525,9 @@ internal static class FileAwareAgentRunner
                     state.ReadPaths.Add(fileRead.NormalizedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}. Complete file loaded with no truncation.", ct);
 
-                    currentMessages = BuildPostToolMessages(
-                        phase,
-                        BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content),
-                        state.ReadPaths,
-                        availableFileIndex);
+                    var toolPayload = BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content);
+                    await logs.AppendBlockAsync(workflowRunId, $"Tool response ({phase.Name}) source=get_file-result format=text/plain metadata-only", BuildFilePayloadMetadataLog(toolPayload), ct);
+                    currentMessages = BuildPostToolMessages(toolPayload);
                     continue;
                 }
                 case "write_file":
@@ -550,7 +574,9 @@ internal static class FileAwareAgentRunner
                     await File.WriteAllTextAsync(fullWritePath, normalizedContent, ct);
                     writtenPathsThisPhase.Add(requestedPath);
                     await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Wrote {normalizedContent.Length} character(s) to '{requestedPath}'.", ct);
-                    currentMessages = [CreateToolMessage($"OK: wrote '{requestedPath}'.")];
+                    var toolPayload = $"OK: wrote '{requestedPath}'.";
+                    await logs.AppendBlockAsync(workflowRunId, $"Model message OUT [{phase.Name}] role=tool source=write_file-result format=text/plain", toolPayload, ct);
+                    currentMessages = [CreateToolMessage(toolPayload)];
                     continue;
                 }
                 case "save_workflow_output":
@@ -596,6 +622,145 @@ internal static class FileAwareAgentRunner
         }
 
         throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
+    }
+
+
+    private static async Task LogModelInputMessagesAsync(
+        IWorkflowRunLogStore logs,
+        Guid workflowRunId,
+        string phaseName,
+        int attempt,
+        IReadOnlyList<ChatMessage> messages,
+        CancellationToken ct)
+    {
+        await logs.AppendLineAsync(
+            workflowRunId,
+            $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent.",
+            ct);
+
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var content = GetChatMessageText(message);
+            var source = InferMessageSource(content);
+            var format = InferMessageFormat(content);
+            var safeContent = SanitizeModelMessageForLog(content);
+
+            await logs.AppendBlockAsync(
+                workflowRunId,
+                $"Model message OUT [{phaseName}] attempt={attempt} index={index + 1}/{messages.Count} role={message.Role} source={source} format={format} chars={content.Length}",
+                safeContent,
+                ct);
+        }
+    }
+
+    private static string GetChatMessageText(ChatMessage message)
+        => message.Text ?? string.Empty;
+
+    private static string InferMessageSource(string content)
+    {
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("PHASE ", StringComparison.OrdinalIgnoreCase)) return "phase-prompt";
+        if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase)) return "artifact-context";
+        if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase)) return "tool-result:get_next_file_batch";
+        if (trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase)) return "tool-result:get_file";
+        if (trimmed.StartsWith("WORKFLOW INPUT FOR", StringComparison.OrdinalIgnoreCase)) return "tool-result:get_workflow_input";
+        if (trimmed.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)) return "tool-error";
+        if (trimmed.StartsWith("INVALID RESPONSE", StringComparison.OrdinalIgnoreCase)) return "retry-instruction";
+        if (trimmed.StartsWith("TOOLS ARE NOT ALLOWED", StringComparison.OrdinalIgnoreCase)) return "retry-instruction";
+        if (trimmed.StartsWith("OK:", StringComparison.OrdinalIgnoreCase)) return "tool-result";
+        return "message";
+    }
+
+    private static string InferMessageFormat(string content)
+    {
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("{") && trimmed.EndsWith("}")) return "application/json";
+        if (trimmed.StartsWith("#", StringComparison.Ordinal)) return "text/markdown";
+        return "text/plain";
+    }
+
+    private static string SanitizeModelMessageForLog(string content)
+    {
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildFilePayloadMetadataLog(content);
+        }
+
+        if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildArtifactContextMetadataLog(content);
+        }
+
+        return content;
+    }
+
+    private static string BuildArtifactContextMetadataLog(string content)
+    {
+        var normalized = content.Replace("\r\n", "\n").Replace("\r", "\n");
+        var lines = normalized.Split('\n');
+        var firstLine = lines.Length > 0 ? lines[0].Trim() : "SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE: <unknown>";
+        var artifactName = firstLine.Contains(':') ? firstLine[(firstLine.IndexOf(':') + 1)..].Trim() : "<unknown>";
+        var separator = normalized.IndexOf("\n\n", StringComparison.Ordinal);
+        var artifactContentLength = separator >= 0 ? normalized[(separator + 2)..].Trim().Length : 0;
+        return $"Artifact context queued into model message.\nArtifact: {artifactName}\nArtifact content chars: {artifactContentLength}\nFull message chars: {content.Length}\nContent omitted from log.";
+    }
+
+    private static string BuildToolRequestLog(string rawText, ToolRequest request)
+    {
+        var action = request.ResolvedAction;
+        if (string.Equals(action, "write_file", StringComparison.OrdinalIgnoreCase))
+        {
+            return "{\n" +
+                   $"  \"tool\": \"write_file\",\n" +
+                   $"  \"path\": \"{EscapeForLog(request.ResolvedPath ?? "<null>")}\",\n" +
+                   $"  \"contentLength\": {request.ResolvedContent?.Length ?? 0},\n" +
+                   $"  \"rawRequestChars\": {rawText.Length},\n" +
+                   "  \"content\": \"<omitted from log>\"\n" +
+                   "}";
+        }
+
+        return rawText.Trim();
+    }
+
+    private static string EscapeForLog(string value)
+        => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static string BuildFilePayloadMetadataLog(string payload)
+    {
+        var sb = new StringBuilder();
+        var normalized = payload.Replace("\r\n", "\n").Replace("\r", "\n");
+        var lines = normalized.Split('\n');
+        var skippingContent = false;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd();
+            if (skippingContent)
+            {
+                if (line.Equals("--- END FILE ---", StringComparison.OrdinalIgnoreCase))
+                {
+                    skippingContent = false;
+                    sb.AppendLine(line);
+                }
+
+                continue;
+            }
+
+            if (line.Equals("CONTENT:", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("CONTENT: <omitted from log>");
+                skippingContent = true;
+                continue;
+            }
+
+            sb.AppendLine(line);
+        }
+
+        sb.AppendLine($"PAYLOAD CHARS: {payload.Length}");
+        return sb.ToString().TrimEnd();
     }
 
     private static IReadOnlyList<ChatMessage> BuildPhaseMessages(
@@ -754,25 +919,9 @@ internal static class FileAwareAgentRunner
         return trimmed;
     }
 
-    private static IReadOnlyList<ChatMessage> BuildPostToolMessages(
-        AgentPhaseDefinition phase,
-        string toolPayload,
-        IReadOnlyCollection<string> readPaths,
-        AvailableFileIndex availableFileIndex)
+    private static IReadOnlyList<ChatMessage> BuildPostToolMessages(string toolPayload)
     {
-        var messages = new List<ChatMessage>
-        {
-            CreateToolMessage(toolPayload)
-        };
-
-        if (phase.RequireAllAvailableFilesRead)
-        {
-            var reviewedCount = availableFileIndex.NormalizedFullPaths.Keys.Count(path => readPaths.Contains(path));
-            var remainingCount = Math.Max(0, availableFileIndex.FullPaths.Count - reviewedCount);
-            messages.Add(CreateUserMessage($"Repository review progress: {reviewedCount}/{availableFileIndex.FullPaths.Count} files reviewed. Remaining: {remainingCount}."));
-        }
-
-        return messages;
+        return [CreateToolMessage(toolPayload)];
     }
 
     private static ToolResponseAnalysis AnalyzeToolResponse(string raw)
@@ -1068,16 +1217,20 @@ internal static class FileAwareAgentRunner
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatches = EstimateTotalBatchCount(availableFileIndex);
+        var totalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex);
         var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
+        var hasMore = currentIndex < availableFileIndex.FullPaths.Count;
+        var payloadText = payload.Length == 0
+            ? $"BATCH INDEX: {batchNumber}\nTOTAL BATCHES: {totalBatchesEstimate}\nHAS MORE: {(hasMore ? "yes" : "no")}\nFILES IN BATCH: 0\n\nEND OF FILE BATCHES"
+            : BuildFileBatchPayload(batchNumber, totalBatchesEstimate, hasMore, files.Count, payload.ToString());
 
         return new FileBatchResult(
             files,
-            payload.Length == 0 ? "END OF FILE BATCHES" : payload.ToString(),
+            payloadText,
             currentIndex,
-            currentIndex < availableFileIndex.FullPaths.Count,
+            hasMore,
             batchNumber,
-            totalBatches);
+            totalBatchesEstimate);
     }
 
 
@@ -1115,6 +1268,18 @@ internal static class FileAwareAgentRunner
         block.AppendLine(content);
         block.AppendLine("--- END FILE ---");
         return block.ToString().TrimEnd();
+    }
+
+    private static string BuildFileBatchPayload(int batchNumber, int totalBatches, bool hasMore, int fileCount, string fileBlocks)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"BATCH INDEX: {batchNumber}");
+        sb.AppendLine($"TOTAL BATCHES: {totalBatches}");
+        sb.AppendLine($"HAS MORE: {(hasMore ? "yes" : "no")}");
+        sb.AppendLine($"FILES IN BATCH: {fileCount}");
+        sb.AppendLine();
+        sb.Append(fileBlocks);
+        return sb.ToString().TrimEnd();
     }
 
     private static int EstimateTotalBatchCount(AvailableFileIndex availableFileIndex)
@@ -1217,15 +1382,9 @@ internal static class FileAwareAgentRunner
         sb.AppendLine("PHASE RULES:");
         if (phase.AllowToolCalls)
         {
-            if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
-            {
-                sb.AppendLine("- Return exactly one JSON tool call object per response.");
-                sb.AppendLine("- Do not return any Markdown, prose, summaries, or final phase result in this phase.");
-            }
-            else
-            {
-                sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
-            }
+            sb.AppendLine("- Tool invocation format may be JSON when the phase prompt requires it.");
+            sb.AppendLine("- Tool response payloads are plain text unless the phase prompt explicitly states another response format.");
+            sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
             if (phase.AllowedToolActions is { Count: > 0 })
             {
                 sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
@@ -1242,11 +1401,12 @@ internal static class FileAwareAgentRunner
 
             if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
             {
-                sb.AppendLine("- `get_next_file_batch` takes no parameters. Return exactly one JSON object in this shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
-                sb.AppendLine("- The tool returns JSON with: batchIndex (current 1-based batch), totalBatches (fixed total batch count for the full run), hasMore (whether another batch exists), and files[].");
-                sb.AppendLine("- Each files[] entry contains path (full relative repository path) and content (full raw file contents). Files are never truncated or split across batches.");
-                sb.AppendLine("- After each tool result, if hasMore is true, return one more single get_next_file_batch tool call in the next response. If hasMore is false, stop.");
-                sb.AppendLine("- Never return more than one tool call in the same response.");
+                sb.AppendLine("- `get_next_file_batch` takes no parameters.");
+                sb.AppendLine("- Call shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
+                sb.AppendLine("- Response format: text/plain.");
+                sb.AppendLine("- The first lines of each tool response are: `BATCH INDEX: <number>`, `TOTAL BATCHES: <number>`, `HAS MORE: yes|no`, `FILES IN BATCH: <number>`.");
+                sb.AppendLine("- The remainder of the response is a sequence of complete file blocks using: `FILE:`, `NORMALIZED PATH:`, `COMPLETE FILE: yes`, `CHARACTERS:`, `CONTENT:`, `--- END FILE ---`.");
+                sb.AppendLine("- Files are never truncated or split across batches.");
             }
 
             if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)
@@ -1434,7 +1594,7 @@ internal static class FileAwareAgentRunner
         int NextUnreadFileIndex,
         bool HasMore,
         int BatchNumber,
-        int TotalBatches);
+        int TotalBatchesEstimate);
 
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,
