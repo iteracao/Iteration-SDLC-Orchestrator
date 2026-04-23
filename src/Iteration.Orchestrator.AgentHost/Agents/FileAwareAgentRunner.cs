@@ -437,6 +437,11 @@ internal static class FileAwareAgentRunner
                         $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
                         ct);
 
+                    foreach (var logLine in DescribeBatchFilesForLog(batch.Files))
+                    {
+                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {logLine}", ct);
+                    }
+
                     currentMessages = BuildPostToolMessages(phase, batch.Payload, state.ReadPaths, availableFileIndex);
 
                     if (phase.AutoCompleteWhenAllAvailableFilesRead &&
@@ -1076,6 +1081,29 @@ internal static class FileAwareAgentRunner
     }
 
 
+    private static IReadOnlyList<string> DescribeBatchFilesForLog(IReadOnlyList<FileReadResult> files)
+    {
+        if (files.Count == 0)
+        {
+            return ["No files returned in this batch."];
+        }
+
+        var lines = new List<string>(files.Count);
+        for (var i = 0; i < files.Count; i++)
+        {
+            var file = files[i];
+            var positionLabel = i == 0
+                ? "First file"
+                : i == files.Count - 1
+                    ? "Last file"
+                    : "File";
+
+            lines.Add($"{positionLabel}: {file.FullPath} | chars={file.Content.Length}");
+        }
+
+        return lines;
+    }
+
     private static string BuildFullFileBatchBlock(string fullPath, string normalizedPath, string content)
     {
         var block = new StringBuilder();
@@ -1192,7 +1220,21 @@ internal static class FileAwareAgentRunner
         sb.AppendLine("PHASE RULES:");
         if (phase.AllowToolCalls)
         {
-            sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
+            if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
+            {
+                sb.AppendLine("- Return exactly one JSON tool call object per response.");
+                sb.AppendLine("- Do not return a final plain-text phase result in this phase.");
+            }
+            else if (phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
+            {
+                sb.AppendLine("- Return only the final plain-text phase result.");
+                sb.AppendLine("- Do not return JSON tool calls in this phase.");
+            }
+            else
+            {
+                sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
+            }
+
             if (phase.AllowedToolActions is { Count: > 0 })
             {
                 sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
@@ -1209,7 +1251,11 @@ internal static class FileAwareAgentRunner
 
             if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
             {
-                sb.AppendLine("- `get_next_file_batch` takes no parameters and returns the next unread batch of allowed files with complete file contents only. Files are never truncated or split across batches.");
+                sb.AppendLine("- `get_next_file_batch` takes no parameters.");
+                sb.AppendLine("- Call shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
+                sb.AppendLine("- It returns the next unread batch of allowed files as JSON with `batchIndex`, `totalBatches`, `hasMore`, and `files[]`.");
+                sb.AppendLine("- Each `files[]` entry contains `path` (full relative repository path) and `content` (full raw file contents).");
+                sb.AppendLine("- Files are never truncated or split across batches.");
             }
 
             if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)

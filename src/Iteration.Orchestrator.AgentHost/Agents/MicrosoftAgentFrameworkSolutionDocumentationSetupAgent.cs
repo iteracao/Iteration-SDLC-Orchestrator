@@ -82,11 +82,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Prompt: BuildRepositoryAcquisitionPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Trigger deterministic repository evidence acquisition for the full allowed file set.",
+                    PurposeSummary: "Load the full allowed repository evidence set by consuming every batch from get_next_file_batch.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOnly,
                     RequireCompletionValidation: false,
-                    AllowedToolActions: ["find_available_files"],
-                    AutoLoadAllAvailableFilesAfterFindAvailableFiles: true),
+                    AllowedToolActions: ["get_next_file_batch"],
+                    RequireAllAvailableFilesRead: true,
+                    AutoCompleteWhenAllAvailableFilesRead: true),
                 new(
                     Name: "Prompt 2B",
                     Prompt: BuildDocumentationContextPrompt(),
@@ -222,15 +224,37 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 This is Prompt 2A of setup-documentation.
 
 Goal:
-Load the full allowed repository evidence set for this solution.
+Read the full allowed repository evidence set for this solution using only `get_next_file_batch`.
 
-Rules:
-- This is a read-only evidence-acquisition phase.
-- Call `find_available_files` exactly once.
-- After discovery, the runner will automatically load the full allowed repository evidence set.
-- Do not call `get_next_file_batch`, `get_file`, or `write_file` in this phase.
-- Do not return Markdown, prose, summaries, or conclusions in this phase.
+Tool usage:
+- Call shape:
+  {"tool":"get_next_file_batch","args":{}}
+- `get_next_file_batch` takes no parameters.
 - Return exactly one allowed tool-call JSON object per response.
+- Do not return Markdown, prose, summaries, conclusions, or explanations in this phase.
+
+Tool response:
+- `get_next_file_batch` returns JSON with this structure:
+  - `batchIndex` (number): current batch number (1-based)
+  - `totalBatches` (number): total number of batches in this run
+  - `hasMore` (boolean): true if more batches remain, false if this is the last batch
+  - `files` (array): files returned in this batch
+    - `path` (string): full relative repository path
+    - `content` (string): full raw file contents
+- Each response already includes full file identification and complete file contents for the next unread batch.
+- You do not need discovery first.
+- The system log records batch usage separately; do not summarize the batch contents here.
+
+Execution contract:
+- This is a read-only evidence-acquisition phase.
+- The only allowed tool in this phase is `get_next_file_batch`.
+- After each call, read `batchIndex` and `totalBatches` to track progress.
+- Continue calling `get_next_file_batch` while `hasMore` is true.
+- Stop only when `hasMore` is false.
+- Required number of executions = total number of batches for this run.
+- Do not skip batches.
+- Do not stop early.
+- Interpret fields exactly as defined. Do not infer or reinterpret structure.
 """;
     }
 
