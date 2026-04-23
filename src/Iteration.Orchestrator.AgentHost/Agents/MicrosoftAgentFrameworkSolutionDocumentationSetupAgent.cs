@@ -46,7 +46,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             throw new InvalidOperationException("Documentation setup requires at least one allowed context file.");
         }
 
-        await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup workflow prepared for prompt-driven execution.", ct);
+        await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup initialized.", ct);
 
         try
         {
@@ -184,10 +184,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine(agentDefinition.PromptText.Trim());
         sb.AppendLine();
         sb.AppendLine("Follow the current phase prompt exactly.");
-        sb.AppendLine("Use only the tools allowed by the current phase.");
-        sb.AppendLine("Do not invent drift, file evidence, write actions, or repository state. Use direct evidence only.");
-        sb.AppendLine("Tool requests may use JSON when a phase defines that call shape.");
-        sb.AppendLine("Tool responses must be interpreted using the response format defined by the current phase prompt.");
+        sb.AppendLine("Use only direct file evidence. Do not invent drift, repository state, questions, or write actions.");
         return sb.ToString().TrimEnd();
     }
 
