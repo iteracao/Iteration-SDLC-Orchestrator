@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Iteration.Orchestrator.Application.Abstractions;
 using Microsoft.Extensions.AI;
 
@@ -136,14 +137,15 @@ internal static class FileAwareAgentRunner
 
         await logs.AppendLineAsync(
             workflowRunId,
-            $"Model provider: {conversationFactory.ProviderName}; model: {conversationFactory.SelectedModel}; timeout: {responseTimeoutSeconds}s.",
+            $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
             ct);
+        await logs.AppendBlockAsync(workflowRunId, "Model message OUT [base] role=system source=base-instructions format=text/plain", instructions, ct);
 
         for (var phaseIndex = 0; phaseIndex < phases.Count; phaseIndex++)
         {
             var phase = phases[phaseIndex];
-            await logs.AppendSectionAsync(workflowRunId, $"Phase {phaseIndex + 1}/{phases.Count}: {phase.Name}", ct);
-            await logs.AppendLineAsync(workflowRunId, phase.PurposeSummary.Trim(), ct);
+            await logs.AppendSectionAsync(workflowRunId, $"Agent phase {phaseIndex + 1}: {phase.Name}", ct);
+            await logs.AppendBlockAsync(workflowRunId, $"Phase prompt: {phase.Name}", phase.Prompt, ct);
 
             string phaseResult;
             if (phase.Mode == AgentPhaseMode.ContextOnly)
@@ -210,59 +212,49 @@ internal static class FileAwareAgentRunner
         IReadOnlyDictionary<string, string>? writableFiles)
     {
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages, writableFiles);
-        await LogPhasePromptAsync(logs, workflowRunId, phase.Name, currentMessages.Last(), ct);
         if (pendingMessages.Count > 0)
         {
-            await logs.AppendLineAsync(workflowRunId, $"Pending model messages carried into {phase.Name}: {pendingMessages.Count}.", ct);
+            await logs.AppendLineAsync(workflowRunId, $"{phase.Name}: carrying {pendingMessages.Count} context message(s) from previous phase.", ct);
         }
         pendingMessages.Clear();
+
         var nextUnreadFileIndex = 0;
-        var nextFileBatchNumber = 1;
         var writtenPathsThisPhase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            await LogModelInputMessagesAsync(logs, workflowRunId, phase.Name, i + 1, currentMessages, ct);
+            var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages);
             var rawText = await RunModelWithTimeoutAsync(conversation, currentMessages, maxModelResponseSeconds, ct);
             var toolResponseState = AnalyzeToolResponse(rawText);
-            await LogAgentResponseAsync(logs, workflowRunId, phase, i + 1, rawText, toolResponseState, ct);
+            AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
+
             if (toolResponseState.State == ToolResponseState.MixedToolAndText)
             {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Result ({phase.Name}): error. Mixed tool call and final Markdown/text in the same response are not allowed.",
-                    ct);
-                currentMessages =
-                [
-                    CreateUserMessage(BuildInvalidResponseRetryMessage(phase))
-                ];
+                var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "VALIDATION", "Rejected: mixed tool call and final Markdown/text in the same assistant message.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
 
             if (toolResponseState.State == ToolResponseState.MultipleToolObjects)
             {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Result ({phase.Name}): error. Multiple tool-call objects in one response are not allowed.",
-                    ct);
-                currentMessages =
-                [
-                    CreateUserMessage(BuildInvalidResponseRetryMessage(phase))
-                ];
+                var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "VALIDATION", "Rejected: multiple tool-call JSON objects in one assistant message.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
 
             if (toolResponseState.State == ToolResponseState.SingleToolObject && phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
             {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Tool call blocked ({phase.Name}): this phase requires a pure Markdown response with no tool calls.",
-                    ct);
                 const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.";
-                currentMessages =
-                [
-                    CreateUserMessage(retryMessage)
-                ];
+                AppendInteractionSection(interaction, "VALIDATION", "Rejected: tool call returned in a Markdown-only phase.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
 
@@ -270,17 +262,14 @@ internal static class FileAwareAgentRunner
             {
                 if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
                 {
-                    await logs.AppendLineAsync(
-                        workflowRunId,
-                        $"Result ({phase.Name}): error. This phase requires exactly one JSON tool-call object per response.",
-                        ct);
                     var retryMessage = BuildInvalidResponseRetryMessage(phase);
-                    currentMessages =
-                    [
-                        CreateUserMessage(retryMessage)
-                    ];
+                    AppendInteractionSection(interaction, "VALIDATION", "Rejected: this phase requires exactly one JSON tool-call object.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateUserMessage(retryMessage)];
                     continue;
                 }
+
                 if (phase.AllowedToolActions?.Contains("write_file", StringComparer.OrdinalIgnoreCase) == true)
                 {
                     var pendingWritePaths = ExtractDeclaredWritePaths(rawText);
@@ -291,15 +280,11 @@ internal static class FileAwareAgentRunner
 
                     if (missingWritePaths.Length > 0)
                     {
-                        await logs.AppendLineAsync(
-                            workflowRunId,
-                            $"Result ({phase.Name}): error. Final Markdown declared writes that were not executed in this phase: {string.Join(", ", missingWritePaths)}.",
-                            ct);
                         var retryMessage = $"INVALID FINAL RESPONSE. Execute write_file first for these declared paths before returning final Markdown: {string.Join(", ", missingWritePaths)}.";
-                        currentMessages =
-                        [
-                            CreateUserMessage(retryMessage)
-                        ];
+                        AppendInteractionSection(interaction, "VALIDATION", $"Rejected: final Markdown declared writes that were not executed: {string.Join(", ", missingWritePaths)}.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateUserMessage(retryMessage)];
                         continue;
                     }
                 }
@@ -327,60 +312,51 @@ internal static class FileAwareAgentRunner
                     }
 
                     await artifacts.SaveTextAsync(workflowRunId, phase.SavedMarkdownArtifactFileName, rawText, ct);
-                    await logs.AppendLineAsync(
-                        workflowRunId,
-                        $"Result ({phase.Name}): Markdown response saved to artifact '{phase.SavedMarkdownArtifactFileName}'.",
-                        ct);
+                    AppendInteractionSection(interaction, "ARTIFACT", $"Saved '{phase.SavedMarkdownArtifactFileName}' ({rawText.Length} chars).");
 
                     if (phase.InjectSavedMarkdownIntoNextPhase)
                     {
                         var savedMarkdownContextMessage = BuildSavedMarkdownContextMessage(phase.SavedMarkdownArtifactFileName, rawText);
                         pendingMessages.Add(CreateUserMessage(savedMarkdownContextMessage));
-                        await logs.AppendLineAsync(workflowRunId, $"Artifact '{phase.SavedMarkdownArtifactFileName}' queued as context for the next phase.", ct);
+                        AppendInteractionSection(interaction, "NEXT PHASE CONTEXT", $"Queued artifact '{phase.SavedMarkdownArtifactFileName}' as context ({rawText.Length} chars).");
                     }
                 }
 
                 if (phase.RequiresSavedOutput)
                 {
-                    await logs.AppendLineAsync(
-                        workflowRunId,
-                        $"Result ({phase.Name}): final Markdown output accepted as the workflow output for this phase.",
-                        ct);
+                    AppendInteractionSection(interaction, "RESULT", "Accepted as final workflow output.");
+                }
+                else if (string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
+                {
+                    AppendInteractionSection(interaction, "RESULT", "Markdown/text response accepted.");
                 }
 
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                 return rawText;
             }
 
             var toolRequest = toolResponseState.SingleToolRequest;
             var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
-            await logs.AppendLineAsync(workflowRunId, BuildToolRequestSummary(phase.Name, rawText, toolRequest), ct);
+            AppendInteractionSection(interaction, "TOOL REQUEST", BuildToolRequestLog(rawText, toolRequest));
 
             if (phase.AllowToolCalls && phase.AllowedToolActions is { Count: > 0 }
                 && !phase.AllowedToolActions.Contains(normalizedAction, StringComparer.OrdinalIgnoreCase))
             {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Result ({phase.Name}): error. Tool action '{toolRequest.ResolvedAction}' is not allowed in this phase.",
-                    ct);
-                currentMessages =
-                [
-                    CreateToolMessage($"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}.")
-                ];
+                var disallowedActionPayload = $"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}.";
+                AppendInteractionSection(interaction, "VALIDATION", $"Rejected: tool action '{toolRequest.ResolvedAction}' is not allowed in this phase.");
+                AppendInteractionSection(interaction, "NEXT INPUT [tool]", disallowedActionPayload);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateToolMessage(disallowedActionPayload)];
                 continue;
             }
 
             if (!phase.AllowToolCalls)
             {
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Tool call blocked ({phase.Name}): '{toolRequest.ResolvedAction}'. This phase requires a pure Markdown response with no tool calls.",
-                    ct);
-
                 const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
-                currentMessages =
-                [
-                    CreateUserMessage(retryMessage)
-                ];
+                AppendInteractionSection(interaction, "VALIDATION", $"Rejected: tool call '{toolRequest.ResolvedAction}' returned in a no-tool phase.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
 
@@ -391,20 +367,19 @@ internal static class FileAwareAgentRunner
                     await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
                     var inputPayload = await payloadStore.GetInputAsync(workflowRunId, ct);
                     state.WorkflowInputLoaded = true;
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {inputPayload.InputPayloadJson.Length}.", ct);
-
                     var toolPayload = $"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}";
-                    currentMessages =
-                    [
-                        CreateToolMessage(toolPayload)
-                    ];
+                    AppendInteractionSection(interaction, "TOOL RESULT", $"get_workflow_input -> {inputPayload.InputPayloadJson.Length} chars.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", SanitizeModelMessageForLog(toolPayload));
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateToolMessage(toolPayload)];
                     continue;
                 }
                 case "find_available_files":
                 {
                     if (state.FilesAlreadyListed)
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): skipped repeated find_available_files call. Returning cached file list.", ct);
+                        AppendInteractionSection(interaction, "TOOL RESULT", "find_available_files -> cached file list returned.");
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                         currentMessages = [CreateToolMessage(state.AvailableFilesPayload)];
                         continue;
                     }
@@ -414,7 +389,7 @@ internal static class FileAwareAgentRunner
                     state.FilesAlreadyListed = true;
                     state.AvailableFilesPayload = fileListResult;
                     state.RepositoryDiscoveryUsed = true;
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): {matchingPaths.Count} file path(s) returned.", ct);
+                    AppendInteractionSection(interaction, "TOOL RESULT", $"find_available_files -> {matchingPaths.Count} file path(s) returned.");
 
                     if (phase.AutoLoadAllAvailableFilesAfterFindAvailableFiles)
                     {
@@ -425,40 +400,28 @@ internal static class FileAwareAgentRunner
                             pendingMessages.Add(CreateToolMessage(payload));
                         }
 
-                        await logs.AppendLineAsync(
-                            workflowRunId,
-                            $"Result ({phase.Name}): repository evidence acquisition loaded automatically. Batches prepared: {autoLoadResult.BatchCount}. Files reviewed: {autoLoadResult.FilesReviewed}.",
-                            ct);
+                        AppendInteractionSection(interaction, "RESULT", $"Repository evidence loaded automatically. Batches prepared: {autoLoadResult.BatchCount}; files reviewed: {autoLoadResult.FilesReviewed}.");
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                         return "Repository evidence acquisition completed.";
                     }
 
+                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", SummarizeFileListForLog(fileListResult));
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                     currentMessages = BuildPostToolMessages(fileListResult);
                     continue;
                 }
                 case "get_next_file_batch":
                 {
-                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex, nextFileBatchNumber);
+                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
                     nextUnreadFileIndex = batch.NextUnreadFileIndex;
-                    if (batch.Files.Count > 0)
-                    {
-                        nextFileBatchNumber++;
-                    }
 
                     foreach (var file in batch.Files)
                     {
                         state.ReadPaths.Add(file.NormalizedPath);
                     }
 
-                    await logs.AppendLineAsync(
-                        workflowRunId,
-                        $"Tool result ({phase.Name}): get_next_file_batch -> batch {batch.BatchNumber}/{batch.TotalBatchesEstimate}; files={batch.Files.Count}; hasMore={(batch.HasMore ? "yes" : "no")}; payloadChars={batch.Payload.Length}.",
-                        ct);
-                    await logs.AppendBlockAsync(
-                        workflowRunId,
-                        $"Tool response detail ({phase.Name}) get_next_file_batch batch {batch.BatchNumber}",
-                        BuildFilePayloadMetadataLog(batch.Payload),
-                        ct);
-
+                    AppendInteractionSection(interaction, "TOOL RESULT", BuildBatchResultLog(batch));
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                     currentMessages = BuildPostToolMessages(batch.Payload);
 
                     if (phase.AutoCompleteWhenAllAvailableFilesRead &&
@@ -468,7 +431,7 @@ internal static class FileAwareAgentRunner
                     {
                         await logs.AppendLineAsync(
                             workflowRunId,
-                            $"Result ({phase.Name}): repository evidence acquisition completed automatically after all allowed files were reviewed.",
+                            $"{phase.Name}: repository evidence acquisition completed after all allowed files were reviewed.",
                             ct);
                         return "Repository evidence acquisition completed.";
                     }
@@ -480,22 +443,22 @@ internal static class FileAwareAgentRunner
                 {
                     if (!state.FilesAlreadyListed)
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. get_file cannot be used before find_available_files.", ct);
-                        currentMessages =
-                        [
-                            CreateToolMessage("ERROR: call find_available_files first.")
-                        ];
+                        const string toolPayload = "ERROR: call find_available_files first.";
+                        AppendInteractionSection(interaction, "TOOL RESULT", "get_file rejected: find_available_files has not been called yet.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(toolPayload)];
                         continue;
                     }
 
                     var requestedPath = toolRequest.ResolvedPath;
                     if (string.IsNullOrWhiteSpace(requestedPath))
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. get_file requires a non-empty 'path'.", ct);
-                        currentMessages =
-                        [
-                            CreateToolMessage("ERROR: get_file requires a non-empty 'path' with an exact full physical path previously returned by find_available_files.")
-                        ];
+                        var toolPayload = "ERROR: get_file requires a non-empty 'path' with an exact full physical path previously returned by find_available_files.";
+                        AppendInteractionSection(interaction, "TOOL RESULT", "get_file rejected: missing path.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(toolPayload)];
                         continue;
                     }
 
@@ -503,19 +466,20 @@ internal static class FileAwareAgentRunner
                     var fileRead = TryReadFileByPhysicalPath(availableFileIndex, requestedPath);
                     if (fileRead is null)
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File path is not allowed for this run or the file does not exist.", ct);
-                        currentMessages =
-                        [
-                            CreateToolMessage("ERROR: path not allowed. Use only an exact full physical path returned by find_available_files for this run.")
-                        ];
+                        var toolPayload = "ERROR: path not allowed. Use only an exact full physical path returned by find_available_files for this run.";
+                        AppendInteractionSection(interaction, "TOOL RESULT", $"get_file rejected: path is not allowed or does not exist: {requestedPath}.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(toolPayload)];
                         continue;
                     }
 
                     state.ReadPaths.Add(fileRead.NormalizedPath);
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}. Complete file loaded with no truncation.", ct);
-
-                    var toolPayload = BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content);
-                    currentMessages = BuildPostToolMessages(toolPayload);
+                    var toolPayloadForFile = BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content);
+                    AppendInteractionSection(interaction, "TOOL RESULT", $"get_file -> {fileRead.FullPath} ({fileRead.Content.Length} chars). Complete file loaded.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", BuildFilePayloadMetadataLog(toolPayloadForFile));
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = BuildPostToolMessages(toolPayloadForFile);
                     continue;
                 }
                 case "write_file":
@@ -525,23 +489,32 @@ internal static class FileAwareAgentRunner
 
                     if (string.IsNullOrWhiteSpace(requestedPath))
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires a non-empty 'path'.", ct);
-                        currentMessages = [CreateToolMessage(BuildWriteFilePathErrorMessage(writableFiles))];
+                        var writePathErrorPayload = BuildWriteFilePathErrorMessage(writableFiles);
+                        AppendInteractionSection(interaction, "TOOL RESULT", "write_file rejected: missing path.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writePathErrorPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(writePathErrorPayload)];
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(content))
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. write_file requires non-empty 'content'.", ct);
-                        currentMessages = [CreateToolMessage(BuildWriteFileContentErrorMessage())];
+                        var writeContentErrorPayload = BuildWriteFileContentErrorMessage();
+                        AppendInteractionSection(interaction, "TOOL RESULT", "write_file rejected: empty content.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeContentErrorPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(writeContentErrorPayload)];
                         continue;
                     }
 
                     requestedPath = requestedPath.Trim();
                     if (writableFiles is null || !writableFiles.TryGetValue(requestedPath, out var fullWritePath))
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. File path is not approved for writes in this workflow.", ct);
-                        currentMessages = [CreateToolMessage(BuildWriteFileNotApprovedErrorMessage(writableFiles))];
+                        var writeNotApprovedPayload = BuildWriteFileNotApprovedErrorMessage(writableFiles);
+                        AppendInteractionSection(interaction, "TOOL RESULT", $"write_file rejected: path is not approved: {requestedPath}.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeNotApprovedPayload);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateToolMessage(writeNotApprovedPayload)];
                         continue;
                     }
 
@@ -554,20 +527,22 @@ internal static class FileAwareAgentRunner
                     var normalizedContent = content.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd() + Environment.NewLine;
                     await File.WriteAllTextAsync(fullWritePath, normalizedContent, ct);
                     writtenPathsThisPhase.Add(requestedPath);
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Wrote {normalizedContent.Length} character(s) to '{requestedPath}'.", ct);
-                    var toolPayload = $"OK: wrote '{requestedPath}'.";
-                    currentMessages = [CreateToolMessage(toolPayload)];
+                    var writeSuccessPayload = $"OK: wrote '{requestedPath}'.";
+                    AppendInteractionSection(interaction, "TOOL RESULT", $"write_file -> wrote {normalizedContent.Length} chars to '{requestedPath}'.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeSuccessPayload);
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateToolMessage(writeSuccessPayload)];
                     continue;
                 }
                 case "save_workflow_output":
                 {
                     if (toolRequest.ResolvedOutput is not JsonElement output)
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. save_workflow_output requires an 'output' object.", ct);
-                        currentMessages =
-                        [
-                            CreateUserMessage("save_workflow_output requires an 'output' JSON object. Retry with a valid output payload.")
-                        ];
+                        var retryMessage = "save_workflow_output requires an 'output' JSON object. Retry with a valid output payload.";
+                        AppendInteractionSection(interaction, "TOOL RESULT", "save_workflow_output rejected: missing output object.");
+                        AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateUserMessage(retryMessage)];
                         continue;
                     }
 
@@ -576,27 +551,31 @@ internal static class FileAwareAgentRunner
                         await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
                         ValidateWorkflowOutputPayload(output);
                         var outputJson = output.GetRawText();
-                        await logs.AppendBlockAsync(workflowRunId, $"Workflow output payload ({phase.Name})", outputJson, ct);
                         await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
+                        AppendInteractionSection(interaction, "TOOL RESULT", $"save_workflow_output -> saved output for workflow run {workflowRunId}.");
+                        AppendInteractionSection(interaction, "WORKFLOW OUTPUT", outputJson);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
                         return outputJson;
                     }
                     catch (Exception ex)
                     {
-                        await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error while saving workflow output. {ex.Message}", ct);
-                        currentMessages =
-                        [
-                            CreateUserMessage($"save_workflow_output failed validation: {ex.Message} Retry with a valid output object.")
-                        ];
+                        var retryMessage = $"save_workflow_output failed validation: {ex.Message} Retry with a valid output object.";
+                        AppendInteractionSection(interaction, "TOOL RESULT", $"save_workflow_output failed validation: {ex.Message}");
+                        AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        currentMessages = [CreateUserMessage(retryMessage)];
                         continue;
                     }
                 }
                 default:
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): error. Unsupported tool action '{toolRequest.ResolvedAction}'.", ct);
-                    currentMessages =
-                    [
-                        CreateToolMessage($"ERROR: unsupported tool action '{toolRequest.ResolvedAction}'. Allowed actions for this phase must be followed exactly.")
-                    ];
+                {
+                    var toolPayload = $"ERROR: unsupported tool action '{toolRequest.ResolvedAction}'. Allowed actions for this phase must be followed exactly.";
+                    AppendInteractionSection(interaction, "TOOL RESULT", $"Unsupported tool action '{toolRequest.ResolvedAction}'.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateToolMessage(toolPayload)];
                     continue;
+                }
             }
         }
 
@@ -604,63 +583,187 @@ internal static class FileAwareAgentRunner
     }
 
 
-    private static async Task LogAgentResponseAsync(
-        IWorkflowRunLogStore logs,
-        Guid workflowRunId,
-        AgentPhaseDefinition phase,
-        int attempt,
-        string rawText,
-        ToolResponseAnalysis analysis,
-        CancellationToken ct)
+    private static string BuildInvalidResponseRetryMessage(AgentPhaseDefinition phase)
     {
-        switch (analysis.State)
+        if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly &&
+            phase.AllowedToolActions is { Count: 1 } &&
+            phase.AllowedToolActions.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase))
         {
-            case ToolResponseState.SingleToolObject when analysis.SingleToolRequest is not null:
-                await logs.AppendLineAsync(
-                    workflowRunId,
-                    $"Model response ({phase.Name}) attempt {attempt}: tool request '{analysis.SingleToolRequest.ResolvedAction}'.",
-                    ct);
-                await logs.AppendBlockAsync(
-                    workflowRunId,
-                    $"Model response detail ({phase.Name}) attempt {attempt}",
-                    BuildToolRequestLog(rawText, analysis.SingleToolRequest),
-                    ct);
-                return;
+            return """
+INVALID RESPONSE.
 
-            case ToolResponseState.MultipleToolObjects:
-                await logs.AppendLineAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}: invalid multiple tool requests.", ct);
-                await logs.AppendBlockAsync(workflowRunId, $"Invalid model response detail ({phase.Name}) attempt {attempt}", rawText, ct);
-                return;
+Return EXACTLY ONE JSON object and nothing else:
+{"tool":"get_next_file_batch","args":{}}
 
-            case ToolResponseState.MixedToolAndText:
-                await logs.AppendLineAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}: invalid mixed tool request and text.", ct);
-                await logs.AppendBlockAsync(workflowRunId, $"Invalid model response detail ({phase.Name}) attempt {attempt}", rawText, ct);
-                return;
+Rules:
+- one object only
+- no additional text
+- no multiple tool calls
+""".Trim();
         }
 
-        if (!string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
+        if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly &&
+            phase.AllowedToolActions is { Count: > 0 })
         {
-            await logs.AppendLineAsync(
-                workflowRunId,
-                $"Model response ({phase.Name}) attempt {attempt}: Markdown artifact candidate for '{phase.SavedMarkdownArtifactFileName}' ({rawText.Length} chars).",
-                ct);
-            await logs.AppendBlockAsync(
-                workflowRunId,
-                $"Artifact candidate detail ({phase.Name}) {phase.SavedMarkdownArtifactFileName}",
-                rawText,
-                ct);
-            return;
+            return $"INVALID RESPONSE. Return exactly one JSON tool-call object and nothing else. Allowed tool actions: {string.Join(", ", phase.AllowedToolActions)}.";
         }
 
-        if (rawText.Length > 6000)
-        {
-            await logs.AppendLineAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}: text response accepted for validation ({rawText.Length} chars).", ct);
-            return;
-        }
-
-        await logs.AppendBlockAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}", rawText, ct);
+        return "INVALID RESPONSE. Return either one valid JSON tool-call object or the expected final Markdown/text response for this phase, but do not mix both.";
     }
 
+    private static StringBuilder BeginInteractionLog(string phaseName, int interactionNumber, IReadOnlyList<ChatMessage> inputMessages)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"{phaseName} - interaction {interactionNumber}");
+        AppendInteractionSection(sb, "INPUT", BuildInputMessagesLog(inputMessages));
+        return sb;
+    }
+
+    private static void AppendInteractionSection(StringBuilder sb, string title, string content)
+    {
+        if (sb.Length > 0 && !sb.ToString().EndsWith("\n\n", StringComparison.Ordinal))
+        {
+            sb.AppendLine();
+        }
+
+        sb.AppendLine(title);
+        var cleaned = CleanLogText(content);
+        if (!string.IsNullOrWhiteSpace(cleaned))
+        {
+            sb.AppendLine(cleaned);
+        }
+    }
+
+    private static string BuildInputMessagesLog(IReadOnlyList<ChatMessage> messages)
+    {
+        if (messages.Count == 0)
+        {
+            return "No input messages.";
+        }
+
+        var sb = new StringBuilder();
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var content = GetChatMessageText(message);
+            var source = InferMessageSource(content);
+            var summary = SummarizeInputMessageForLog(content);
+            sb.AppendLine($"Message {index + 1}/{messages.Count} [{message.Role}; {source}; {content.Length} chars]");
+            sb.AppendLine(summary);
+            if (index < messages.Count - 1)
+            {
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string SummarizeInputMessageForLog(string content)
+    {
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildBatchHeaderSummary(content);
+        }
+
+        if (trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildFilePayloadMetadataLog(content);
+        }
+
+        if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildArtifactContextMetadataLog(content);
+        }
+
+        if (trimmed.StartsWith("WORKFLOW INPUT FOR", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Workflow input payload queued ({content.Length} chars).";
+        }
+
+        return SanitizeModelMessageForLog(content);
+    }
+
+    private static string BuildBatchHeaderSummary(string payload)
+    {
+        var batch = ExtractHeaderValue(payload, "BATCH INDEX") ?? "?";
+        var total = ExtractHeaderValue(payload, "TOTAL BATCHES") ?? "?";
+        var hasMore = ExtractHeaderValue(payload, "HAS MORE") ?? "?";
+        var fileCount = ExtractHeaderValue(payload, "FILES IN BATCH") ?? "?";
+        return $"Tool result from previous interaction: batch {batch}/{total}; files={fileCount}; hasMore={hasMore}.";
+    }
+
+    private static string BuildBatchResultLog(FileBatchResult batch)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"get_next_file_batch -> batch {batch.BatchNumber}/{batch.TotalBatchesEstimate}; files={batch.Files.Count}; hasMore={(batch.HasMore ? "yes" : "no")}; payloadChars={batch.Payload.Length}.");
+
+        if (batch.Files.Count > 0)
+        {
+            var preview = batch.Files.Take(8).Select(file => $"- {Path.GetFileName(file.FullPath)} | {file.Content.Length} chars | {file.NormalizedPath}");
+            foreach (var line in preview)
+            {
+                sb.AppendLine(line);
+            }
+
+            if (batch.Files.Count > 8)
+            {
+                sb.AppendLine($"- ... {batch.Files.Count - 8} more file(s) omitted from log preview.");
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string SummarizeFileListForLog(string fileListResult)
+    {
+        var lines = fileListResult.Replace("\r\n", "\n").Replace("\r", "\n")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0)
+        {
+            return "No files returned.";
+        }
+
+        var preview = lines.Take(12).ToList();
+        var sb = new StringBuilder();
+        sb.AppendLine($"File list returned: {lines.Length} path(s).");
+        foreach (var line in preview)
+        {
+            sb.AppendLine($"- {line}");
+        }
+
+        if (lines.Length > preview.Count)
+        {
+            sb.AppendLine($"- ... {lines.Length - preview.Count} more path(s) omitted from log preview.");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string? ExtractHeaderValue(string payload, string header)
+    {
+        foreach (var rawLine in payload.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (!line.StartsWith(header + ":", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return line[(header.Length + 1)..].Trim();
+        }
+
+        return null;
+    }
+
+    private static string CleanLogText(string content)
+    {
+        var normalized = content.Replace("\r\n", "\n").Replace("\r", "\n").Trim();
+        normalized = Regex.Replace(normalized, @"[ \t]+$", string.Empty, RegexOptions.Multiline);
+        normalized = Regex.Replace(normalized, @"\n{3,}", "\n\n");
+        return normalized;
+    }
 
     private static async Task LogModelInputMessagesAsync(
         IWorkflowRunLogStore logs,
@@ -670,49 +773,26 @@ internal static class FileAwareAgentRunner
         IReadOnlyList<ChatMessage> messages,
         CancellationToken ct)
     {
-        var roles = string.Join(", ", messages.Select(message => message.Role.ToString()));
         await logs.AppendLineAsync(
             workflowRunId,
-            $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent [{roles}].",
+            $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent.",
             ct);
 
         for (var index = 0; index < messages.Count; index++)
         {
             var message = messages[index];
             var content = GetChatMessageText(message);
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                continue;
-            }
-
             var source = InferMessageSource(content);
-            if (string.Equals(source, "phase-prompt", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             var format = InferMessageFormat(content);
-            var title = $"Model input detail ({phaseName}) attempt {attempt} message {index + 1}/{messages.Count} role={message.Role} source={source} format={format}";
-            await logs.AppendBlockAsync(workflowRunId, title, SanitizeModelMessageForLog(content), ct);
+            var safeContent = SanitizeModelMessageForLog(content);
+
+            await logs.AppendBlockAsync(
+                workflowRunId,
+                $"Model message OUT [{phaseName}] attempt={attempt} index={index + 1}/{messages.Count} role={message.Role} source={source} format={format} chars={content.Length}",
+                safeContent,
+                ct);
         }
     }
-
-    private static async Task LogPhasePromptAsync(
-        IWorkflowRunLogStore logs,
-        Guid workflowRunId,
-        string phaseName,
-        ChatMessage phasePromptMessage,
-        CancellationToken ct)
-    {
-        var content = GetChatMessageText(phasePromptMessage);
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return;
-        }
-
-        await logs.AppendBlockAsync(workflowRunId, $"Phase prompt ({phaseName})", content, ct);
-    }
-
 
     private static string GetChatMessageText(ChatMessage message)
         => message.Text ?? string.Empty;
@@ -768,37 +848,6 @@ internal static class FileAwareAgentRunner
         return $"Artifact context queued into model message.\nArtifact: {artifactName}\nArtifact content chars: {artifactContentLength}\nFull message chars: {content.Length}\nContent omitted from log.";
     }
 
-    private static string BuildToolRequestSummary(string phaseName, string rawText, ToolRequest request)
-    {
-        var action = request.ResolvedAction?.Trim() ?? "<unknown>";
-        if (string.Equals(action, "write_file", StringComparison.OrdinalIgnoreCase))
-        {
-            return $"Tool request ({phaseName}): write_file path='{request.ResolvedPath ?? "<null>"}' contentLength={request.ResolvedContent?.Length ?? 0}.";
-        }
-
-        return $"Tool request ({phaseName}): {action}.";
-    }
-
-    private static string BuildInvalidResponseRetryMessage(AgentPhaseDefinition phase)
-    {
-        if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly &&
-            phase.AllowedToolActions?.Count == 1 &&
-            string.Equals(phase.AllowedToolActions[0], "get_next_file_batch", StringComparison.OrdinalIgnoreCase))
-        {
-            return "INVALID RESPONSE.\n\nReturn exactly this single JSON object and nothing else:\n{\"tool\":\"get_next_file_batch\",\"args\":{}}\n\nRules:\n- one object only\n- no second tool call\n- no Markdown\n- no prose before or after";
-        }
-
-        if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
-        {
-            var allowed = phase.AllowedToolActions is { Count: > 0 }
-                ? string.Join(", ", phase.AllowedToolActions)
-                : "the tool required by this phase";
-            return $"INVALID RESPONSE. Return exactly one JSON tool-call object for: {allowed}. No Markdown, no prose, no second object.";
-        }
-
-        return "INVALID RESPONSE. Return either exactly one JSON tool-call object OR the final Markdown output. Never mix tool calls with Markdown/prose, and never return more than one tool-call object.";
-    }
-
     private static string BuildToolRequestLog(string rawText, ToolRequest request)
     {
         var action = request.ResolvedAction;
@@ -821,36 +870,77 @@ internal static class FileAwareAgentRunner
 
     private static string BuildFilePayloadMetadataLog(string payload)
     {
-        var sb = new StringBuilder();
         var normalized = payload.Replace("\r\n", "\n").Replace("\r", "\n");
-        var lines = normalized.Split('\n');
-        var skippingContent = false;
+        var sb = new StringBuilder();
 
-        foreach (var rawLine in lines)
+        if (normalized.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase))
         {
-            var line = rawLine.TrimEnd();
-            if (skippingContent)
-            {
-                if (line.Equals("--- END FILE ---", StringComparison.OrdinalIgnoreCase))
-                {
-                    skippingContent = false;
-                    sb.AppendLine(line);
-                }
-
-                continue;
-            }
-
-            if (line.Equals("CONTENT:", StringComparison.OrdinalIgnoreCase))
-            {
-                sb.AppendLine("CONTENT: <omitted from log>");
-                skippingContent = true;
-                continue;
-            }
-
-            sb.AppendLine(line);
+            var batch = ExtractHeaderValue(normalized, "BATCH INDEX") ?? "?";
+            var total = ExtractHeaderValue(normalized, "TOTAL BATCHES") ?? "?";
+            var hasMore = ExtractHeaderValue(normalized, "HAS MORE") ?? "?";
+            var fileCount = ExtractHeaderValue(normalized, "FILES IN BATCH") ?? "?";
+            sb.AppendLine($"BATCH {batch}/{total} | files={fileCount} | hasMore={hasMore} | payloadChars={payload.Length}");
         }
 
-        return sb.ToString().TrimEnd();
+        string? file = null;
+        string? normalizedPath = null;
+        string? chars = null;
+        foreach (var rawLine in normalized.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendCurrentFile();
+                file = line[5..].Trim();
+                normalizedPath = null;
+                chars = null;
+                continue;
+            }
+
+            if (line.StartsWith("NORMALIZED PATH:", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedPath = line[16..].Trim();
+                continue;
+            }
+
+            if (line.StartsWith("CHARACTERS:", StringComparison.OrdinalIgnoreCase))
+            {
+                chars = line[11..].Trim();
+                continue;
+            }
+
+            if (line.Equals("--- END FILE ---", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendCurrentFile();
+            }
+        }
+
+        AppendCurrentFile();
+        return CleanLogText(sb.ToString());
+
+        void AppendCurrentFile()
+        {
+            if (string.IsNullOrWhiteSpace(file))
+            {
+                return;
+            }
+
+            sb.Append("FILE: ").Append(file);
+            if (!string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                sb.Append(" | normalized=").Append(normalizedPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(chars))
+            {
+                sb.Append(" | chars=").Append(chars);
+            }
+
+            sb.AppendLine(" | content=<omitted>");
+            file = null;
+            normalizedPath = null;
+            chars = null;
+        }
     }
 
     private static IReadOnlyList<ChatMessage> BuildPhaseMessages(
@@ -1147,19 +1237,17 @@ internal static class FileAwareAgentRunner
     {
         var payloads = new List<string>();
         var nextUnreadFileIndex = 0;
-        var nextBatchNumber = 1;
         var batchCount = 0;
         var reviewedThisLoad = 0;
         while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
         {
-            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex, nextBatchNumber);
+            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
             if (batch.Files.Count == 0)
             {
                 break;
             }
 
             batchCount++;
-            nextBatchNumber++;
             nextUnreadFileIndex = batch.NextUnreadFileIndex;
             payloads.Add(batch.Payload);
             foreach (var file in batch.Files)
@@ -1260,7 +1348,7 @@ internal static class FileAwareAgentRunner
         return string.Join(Environment.NewLine, fullPaths);
     }
 
-    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex, int batchNumber)
+    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
     {
         if (nextUnreadFileIndex < 0)
         {
@@ -1270,7 +1358,7 @@ internal static class FileAwareAgentRunner
         if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
         {
             var emptyPayload = "END OF FILE BATCHES";
-            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, batchNumber, 0);
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
         }
 
         var files = new List<FileReadResult>();
@@ -1310,6 +1398,7 @@ internal static class FileAwareAgentRunner
         }
 
         var totalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex);
+        var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
         var hasMore = currentIndex < availableFileIndex.FullPaths.Count;
         var payloadText = payload.Length == 0
             ? $"BATCH INDEX: {batchNumber}\nTOTAL BATCHES: {totalBatchesEstimate}\nHAS MORE: {(hasMore ? "yes" : "no")}\nFILES IN BATCH: 0\n\nEND OF FILE BATCHES"
@@ -1416,7 +1505,7 @@ internal static class FileAwareAgentRunner
                 break;
             }
 
-            if (batch.NextIndex > startIndex)
+            if (batch.NextIndex >= startIndex)
             {
                 return batchNumber;
             }
@@ -1463,94 +1552,7 @@ internal static class FileAwareAgentRunner
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, IReadOnlyDictionary<string, string>? writableFiles)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine($"PHASE {phaseIndex + 1} OF {totalPhases}: {phase.Name}");
-        sb.AppendLine();
-        sb.AppendLine(phase.PurposeSummary.Trim());
-        sb.AppendLine();
-        sb.AppendLine(phase.Prompt.TrimEnd());
-        sb.AppendLine();
-        sb.AppendLine("PHASE RULES:");
-        if (phase.AllowToolCalls)
-        {
-            if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
-            {
-                sb.AppendLine("- Return exactly one JSON tool-call object per response and nothing else.");
-            }
-            else
-            {
-                sb.AppendLine("- Return either one JSON tool-call object or the final plain-text phase result, never both.");
-            }
-            sb.AppendLine("- Tool response payloads are plain text unless the phase prompt explicitly states another response format.");
-            if (phase.AllowedToolActions is { Count: > 0 })
-            {
-                sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
-            }
-            else
-            {
-                sb.AppendLine("- Use only the tool actions required by the phase prompt.");
-            }
-
-            if (phase.AllowedToolActions?.Contains("find_available_files", StringComparer.OrdinalIgnoreCase) == true)
-            {
-                sb.AppendLine("- `find_available_files` takes no parameters and returns only file paths, one per line.");
-            }
-
-            if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
-            {
-                sb.AppendLine("- `get_next_file_batch` takes no parameters.");
-                sb.AppendLine("- Call shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
-                sb.AppendLine("- Response format: text/plain.");
-                sb.AppendLine("- The first lines of each tool response are: `BATCH INDEX: <number>`, `TOTAL BATCHES: <number>`, `HAS MORE: yes|no`, `FILES IN BATCH: <number>`.");
-                sb.AppendLine("- The remainder of the response is a sequence of complete file blocks using: `FILE:`, `NORMALIZED PATH:`, `COMPLETE FILE: yes`, `CHARACTERS:`, `CONTENT:`, `--- END FILE ---`.");
-                sb.AppendLine("- Files are never truncated or split across batches.");
-            }
-
-            if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)
-            {
-                sb.AppendLine("- `get_file` requires an exact full physical path returned earlier by `find_available_files`.");
-            }
-
-            if (phase.AllowedToolActions?.Contains("write_file", StringComparer.OrdinalIgnoreCase) == true
-                && writableFiles is not null && writableFiles.Count > 0)
-            {
-                sb.AppendLine("- `write_file` may be used only with one approved stable documentation path exactly as listed in the prompt.");
-            }
-        }
-        else
-        {
-            sb.AppendLine("- Return only a concise plain Markdown phase summary.");
-            sb.AppendLine("- Tool calls are forbidden in this phase.");
-            sb.AppendLine("- Do not return JSON.");
-        }
-
-        sb.AppendLine("- Do not include markdown fences.");
-        if (phase.ResponseMode != AgentPhaseResponseMode.ToolCallsOnly)
-        {
-            sb.AppendLine("- Keep phase summaries concrete and evidence-based.");
-        }
-
-        if (phase.RequiresSavedOutput)
-        {
-            sb.AppendLine("- This is the final phase: finish with the final plain-text result for the workflow.");
-            sb.AppendLine("- You may use allowed tools earlier in this phase if needed before the final response.");
-        }
-        else if (phase.RequireCompletionValidation)
-        {
-            sb.AppendLine("- Before you finish this phase, gather enough direct evidence to support your final plain-text response.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(phase.SavedMarkdownArtifactFileName))
-        {
-            sb.AppendLine($"- When you finish this phase, return only the Markdown artifact content. The system will save it as '{phase.SavedMarkdownArtifactFileName}'.");
-        }
-
-        if (phase.RequireAllAvailableFilesRead)
-        {
-            sb.AppendLine("- This phase must review the complete allowed repository context set before it can finish.");
-        }
-
-        return sb.ToString();
+        return phase.Prompt.TrimEnd();
     }
 
     private static string BuildSavedMarkdownContextMessage(string fileName, string content)

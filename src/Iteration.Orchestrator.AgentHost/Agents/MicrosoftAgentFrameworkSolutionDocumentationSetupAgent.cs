@@ -46,7 +46,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             throw new InvalidOperationException("Documentation setup requires at least one allowed context file.");
         }
 
-        await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup initialized.", ct);
+        await _logs.AppendLineAsync(request.WorkflowRunId, "Documentation setup workflow prepared for prompt-driven execution.", ct);
 
         try
         {
@@ -184,14 +184,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         sb.AppendLine(agentDefinition.PromptText.Trim());
         sb.AppendLine();
         sb.AppendLine("Follow the current phase prompt exactly.");
-        sb.AppendLine("Use only direct file evidence. Do not invent drift, repository state, questions, or write actions.");
+        sb.AppendLine("Use only direct evidence. Do not invent drift, repository state, questions, or write actions.");
         return sb.ToString().TrimEnd();
     }
 
     private static string BuildBootstrapPrompt(SolutionDocumentationSetupRequest request, IReadOnlyList<(string LogicalPath, string PhysicalPath)> writeTargets)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 1 of setup-documentation.");
         sb.AppendLine("Goal: define the documentation contract only.");
         sb.AppendLine("Return Markdown only.");
         sb.AppendLine("Output exactly:");
@@ -220,56 +219,28 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
     private static string BuildRepositoryAcquisitionPrompt()
     {
         return """
-This is Prompt 2A of setup-documentation.
-
 Goal:
-Read the full allowed repository evidence set for this solution using only `get_next_file_batch`.
+Load the full allowed repository evidence set using `get_next_file_batch` only.
 
-Tool request format:
-- Return exactly one tool-call JSON object per response in this shape:
-  {"tool":"get_next_file_batch","args":{}}
-- `get_next_file_batch` takes no parameters.
+Return exactly one tool call per response:
+{"tool":"get_next_file_batch","args":{}}
 
-Tool response format:
-- Response type: text/plain.
-- The first lines of each tool response are:
-  - `BATCH INDEX: <number>`
-  - `TOTAL BATCHES: <number>`
-  - `HAS MORE: yes|no`
-  - `FILES IN BATCH: <number>`
-- After that, the response contains one or more complete file blocks in this format:
-  - `FILE: <full physical path>`
-  - `NORMALIZED PATH: <normalized repository path>`
-  - `COMPLETE FILE: yes`
-  - `CHARACTERS: <number>`
-  - `CONTENT:`
-  - full raw file content
-  - `--- END FILE ---`
-- Files are never truncated or split across batches.
-- You do not need discovery first.
+After each tool result:
+- if `HAS MORE: yes`, call `get_next_file_batch` exactly once again
+- if `HAS MORE: no`, stop this phase
 
-Execution contract:
-- This is a read-only evidence-acquisition phase.
-- The only allowed tool in this phase is `get_next_file_batch`.
-- In each response, return exactly one tool-call JSON object and nothing else.
-- After you return a tool-call JSON object, stop your response immediately.
-- Do not include more than one `get_next_file_batch` call in the same response.
-- Do not request the next batch until the previous tool response has been returned to you by the system.
-- After each tool result, read `HAS MORE` from that latest plain-text tool response.
-- If the latest tool response says `HAS MORE: yes`, return exactly one new `get_next_file_batch` call.
-- If the latest tool response says `HAS MORE: no`, stop requesting batches.
-- Do not predict, pre-plan, or emit future tool calls before receiving each tool response.
-- Do not skip batches.
-- Do not stop early.
-- Do not return Markdown, prose, summaries, or conclusions in this phase.
+Rules:
+- no prose
+- no Markdown
+- no multiple tool calls
+- do not call again before receiving the previous tool result
+- do not skip batches
 """;
     }
 
     private static string BuildDocumentationContextPrompt()
     {
         return """
-This is Prompt 2B of setup-documentation.
-
 Goal:
 Build the repository-state Markdown using ONLY the repository evidence loaded in Prompt 2A.
 
@@ -299,7 +270,6 @@ Return Markdown only using exactly this structure:
     private static string BuildDecisionPrompt(IReadOnlyList<(string LogicalPath, string PhysicalPath)> writeTargets)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 3 of setup-documentation.");
         sb.AppendLine("Goal: decide the documentation mode and per-document actions only. Do not write files in this step.");
         sb.AppendLine("Use the repository-state Markdown from Prompt 2B as the baseline understanding of the current solution.");
         sb.AppendLine();
@@ -328,7 +298,6 @@ Return Markdown only using exactly this structure:
     private static string BuildSingleWritePrompt(int stepNumber, string logicalPath, string physicalPath)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"This is Prompt {stepNumber + 3} of setup-documentation.");
         sb.AppendLine($"Goal: handle only `{logicalPath}` in this step.");
         sb.AppendLine();
         sb.AppendLine("Current write target:");
@@ -357,8 +326,6 @@ Return Markdown only using exactly this structure:
     private static string BuildFinalSummaryPrompt()
     {
         return """
-This is the final prompt of setup-documentation.
-
 Goal:
 Return the final workflow result only after all prior write steps are complete.
 
