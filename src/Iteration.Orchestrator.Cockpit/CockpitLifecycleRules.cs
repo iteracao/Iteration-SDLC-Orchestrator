@@ -68,7 +68,7 @@ internal static class CockpitLifecycleRules
         => status == 2;
 
     public static bool CanViewWorkflowArtifacts(int status, bool isFinalDecisionRun)
-        => status is 2 or 4 or 6 || isFinalDecisionRun;
+        => status is 2 or 3 or 4 or 6 || isFinalDecisionRun;
 
     public static string GetRequirementBadgeLabel(string? requirementStatus)
     {

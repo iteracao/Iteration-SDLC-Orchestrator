@@ -823,6 +823,7 @@ else
     private static string? GetWorkflowReportFileName(WorkflowRunRow run)
         => run.WorkflowCode switch
         {
+            "setup-documentation" => "setup-documentation-report.md",
             "analyze-request" => "analysis-report.md",
             "design-solution-change" => "design-report.json",
             "plan-implementation" => "implementation-plan.json",

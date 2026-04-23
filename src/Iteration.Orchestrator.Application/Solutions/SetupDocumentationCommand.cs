@@ -78,7 +78,7 @@ public sealed class SetupDocumentationHandler
         var visibleFiles = await RepositoryPromptInputDiscovery.LoadVisibleRepositoryFilesAsync(target.RepositoryPath, ct);
         var stableDocumentTargets = StableDocumentationCatalog.GetCanonicalRelativePaths();
         var existingStableDocumentPaths = StableDocumentationCatalog.GetExistingRepositoryRelativePaths(target.RepositoryPath, target.Code)
-            .Select(path => ToWorkspaceRelativePath(path, target.Code))
+            .Select(path => NormalizeStableDocumentRelativePath(path, target.RepositoryPath, target.Code))
             .ToArray();
         var stableDocumentContextFiles = StableDocumentationCatalog.GetExistingRepositoryRelativePaths(target.RepositoryPath, target.Code);
         var localRepositoryDocumentationFiles = RepositoryPromptInputDiscovery.GetLocalRepositoryDocumentationFiles(visibleFiles);
@@ -250,18 +250,33 @@ public sealed class SetupDocumentationHandler
         .Select(rule => new WorkflowFileReference(
             rule.Path,
             "rule",
-            null,
+            string.Empty,
             "profile-rule"))
         .ToArray();
 
-    private static string ToWorkspaceRelativePath(string fullPath, string solutionCode)
+    private static string NormalizeStableDocumentRelativePath(string path, string repositoryPath, string solutionCode)
     {
-        var normalized = fullPath.Replace('\\', '/');
-        var marker = $"/AI/solutions/{solutionCode}/";
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        var normalized = path.Replace('\\', '/').Trim();
+        var knowledgeRoot = StableDocumentationCatalog.BuildKnowledgeRoot(repositoryPath, solutionCode).Replace('\\', '/').TrimEnd('/');
+        if (Path.IsPathRooted(path))
+        {
+            var fullPath = Path.GetFullPath(path).Replace('\\', '/');
+            if (fullPath.StartsWith(knowledgeRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath[(knowledgeRoot.Length + 1)..];
+            }
+        }
+
+        var marker = $"AI/solutions/{solutionCode}/";
         var index = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
         if (index < 0)
         {
-            return Path.GetFileName(fullPath);
+            return normalized;
         }
 
         return normalized[(index + marker.Length)..];
