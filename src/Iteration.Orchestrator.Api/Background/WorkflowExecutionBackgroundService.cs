@@ -23,6 +23,8 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await RecoverOrphanedRunsAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             Guid workflowRunId;
@@ -32,6 +34,7 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
+                _logger.LogInformation("Background workflow execution loop stopping due to host cancellation.");
                 break;
             }
 
@@ -39,6 +42,7 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var executor = scope.ServiceProvider.GetRequiredService<IWorkflowRunExecutor>();
+                var terminalStateCoordinator = scope.ServiceProvider.GetRequiredService<WorkflowRunTerminalStateCoordinator>();
                 var executionToken = _cancellationRegistry.Register(workflowRunId, stoppingToken);
 
                 try
@@ -48,10 +52,19 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
                 finally
                 {
                     _cancellationRegistry.Complete(workflowRunId);
+                    await terminalStateCoordinator.EnsureTerminalStateAsync(
+                        workflowRunId,
+                        cancellationRequested: executionToken.IsCancellationRequested,
+                        executionToken.IsCancellationRequested ? WorkflowFailureCatalog.HostShutdownCancelled : WorkflowFailureCatalog.ExecutorExitedWithoutTerminalState,
+                        executionToken.IsCancellationRequested
+                            ? "Background workflow execution stopped because the host requested cancellation."
+                            : "Background workflow execution finished without a terminal workflow state.",
+                        CancellationToken.None);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
+                _logger.LogInformation("Background workflow execution stopped for run {WorkflowRunId} because the host is shutting down.", workflowRunId);
                 break;
             }
             catch (OperationCanceledException)
@@ -62,6 +75,21 @@ public sealed class WorkflowExecutionBackgroundService : BackgroundService
             {
                 _logger.LogError(ex, "Background workflow execution failed for run {WorkflowRunId}.", workflowRunId);
             }
+        }
+    }
+
+    private async Task RecoverOrphanedRunsAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var terminalStateCoordinator = scope.ServiceProvider.GetRequiredService<WorkflowRunTerminalStateCoordinator>();
+        var recoveredCount = await terminalStateCoordinator.RecoverOrphanedRunsAsync(
+            WorkflowFailureCatalog.OrphanedActiveRunRecovered,
+            "Recovered an orphaned workflow run that was left pending or running when background execution restarted.",
+            ct);
+
+        if (recoveredCount > 0)
+        {
+            _logger.LogWarning("Recovered {RecoveredCount} orphaned workflow run(s) during background service startup.", recoveredCount);
         }
     }
 }

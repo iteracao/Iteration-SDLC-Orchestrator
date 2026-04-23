@@ -76,6 +76,9 @@ public partial class Index : ComponentBase, IDisposable
     private WorkflowLogContent? _activeWorkflowLog;
     private WorkflowLogContent? _documentationWorkflowLog;
     private Guid? _currentDocumentationWorkflowRunId;
+    private Guid? _documentationWorkflowRefreshRunId;
+    private bool _documentationWorkflowWasInProgress;
+    private bool _documentationWorkflowFinalRefreshPending;
     private WorkflowArtifactContent? _activeWorkflowArtifact;
     private WorkflowRunDetail? _activeWorkflowRunDetails;
     private bool _activeWorkflowRunDetailsLoading;
@@ -303,9 +306,20 @@ public partial class Index : ComponentBase, IDisposable
                 shouldRender = true;
             }
 
-            if (_documentationWorkflowModalOpen && _currentDocumentationWorkflowRunId.HasValue && IsDocumentationWorkflowInProgress(CurrentDocumentationWorkflowRun))
+            UpdateDocumentationWorkflowRefreshState();
+
+            if (_documentationWorkflowModalOpen && _currentDocumentationWorkflowRunId.HasValue)
             {
-                shouldRender = await RefreshDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId, showLoadingIndicator: false) || shouldRender;
+                var currentDocumentationRun = CurrentDocumentationWorkflowRun;
+                var shouldRefreshDocumentationLog = IsDocumentationWorkflowInProgress(currentDocumentationRun) || _documentationWorkflowFinalRefreshPending;
+                if (shouldRefreshDocumentationLog)
+                {
+                    shouldRender = await RefreshDocumentationWorkflowLogAsync(_currentDocumentationWorkflowRunId, showLoadingIndicator: false) || shouldRender;
+                    if (!IsDocumentationWorkflowInProgress(currentDocumentationRun))
+                    {
+                        _documentationWorkflowFinalRefreshPending = false;
+                    }
+                }
             }
 
             if (!string.Equals(previousLoadError, _loadError, StringComparison.Ordinal))
@@ -736,6 +750,9 @@ public partial class Index : ComponentBase, IDisposable
         _documentationWorkflowModalOpen = false;
         _documentationWorkflowMessage = null;
         _currentDocumentationWorkflowRunId = null;
+        _documentationWorkflowRefreshRunId = null;
+        _documentationWorkflowWasInProgress = false;
+        _documentationWorkflowFinalRefreshPending = false;
     }
 
     private void ResetDocumentationWorkflowModalState()
@@ -746,6 +763,9 @@ public partial class Index : ComponentBase, IDisposable
         _documentationWorkflowLogLoading = false;
         _startingDocumentationWorkflow = false;
         _currentDocumentationWorkflowRunId = null;
+        _documentationWorkflowRefreshRunId = null;
+        _documentationWorkflowWasInProgress = false;
+        _documentationWorkflowFinalRefreshPending = false;
     }
 
     private WorkflowRunRow? GetCurrentDocumentationWorkflowRun()
@@ -820,6 +840,42 @@ public partial class Index : ComponentBase, IDisposable
             .OrderByDescending(x => x.StartedUtc)
             .Select(x => (Guid?)x.Id)
             .FirstOrDefault();
+    }
+
+    private void UpdateDocumentationWorkflowRefreshState()
+    {
+        if (!_documentationWorkflowModalOpen || !_currentDocumentationWorkflowRunId.HasValue)
+        {
+            _documentationWorkflowRefreshRunId = null;
+            _documentationWorkflowWasInProgress = false;
+            _documentationWorkflowFinalRefreshPending = false;
+            return;
+        }
+
+        var run = CurrentDocumentationWorkflowRun;
+        if (run is null)
+        {
+            _documentationWorkflowRefreshRunId = null;
+            _documentationWorkflowWasInProgress = false;
+            _documentationWorkflowFinalRefreshPending = false;
+            return;
+        }
+
+        var isInProgress = IsDocumentationWorkflowInProgress(run);
+        if (_documentationWorkflowRefreshRunId != run.Id)
+        {
+            _documentationWorkflowRefreshRunId = run.Id;
+            _documentationWorkflowWasInProgress = isInProgress;
+            _documentationWorkflowFinalRefreshPending = false;
+            return;
+        }
+
+        if (_documentationWorkflowWasInProgress && !isInProgress)
+        {
+            _documentationWorkflowFinalRefreshPending = true;
+        }
+
+        _documentationWorkflowWasInProgress = isInProgress;
     }
 
     private void CloseDrawer()

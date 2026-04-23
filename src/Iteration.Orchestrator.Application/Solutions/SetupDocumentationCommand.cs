@@ -156,7 +156,6 @@ public sealed class SetupDocumentationHandler
 
             taskRun.Succeed(outputJson);
             run.Complete("setup-documentation-completed");
-            run.Validate("setup-documentation-validated");
 
             await _db.SaveChangesAsync(ct);
             await _logs.AppendLineAsync(run.Id, "Documentation setup workflow completed successfully.", ct);
@@ -164,22 +163,29 @@ public sealed class SetupDocumentationHandler
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             await _logs.AppendLineAsync(run.Id, "Documentation setup workflow execution was cancelled by the background execution token.", CancellationToken.None);
-            taskRun.Fail("Documentation setup workflow execution cancelled by the background execution token.");
+            await _logs.AppendKeyValuesAsync(run.Id, "Cancellation", new Dictionary<string, string?>
+            {
+                ["FailureCode"] = WorkflowFailureCatalog.WorkflowExecutionCancelled,
+                ["Message"] = "Documentation setup workflow execution cancelled by the background execution token."
+            }, CancellationToken.None);
+            taskRun.Fail(WorkflowFailureCatalog.Format(WorkflowFailureCatalog.WorkflowExecutionCancelled, "Documentation setup workflow execution cancelled by the background execution token."));
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
         catch (Exception ex)
         {
+            var failure = WorkflowFailureCatalog.Classify(ex);
             await _artifacts.SaveTextAsync(run.Id, "workflow-exception.txt", ex.ToString(), CancellationToken.None);
             await _logs.AppendLineAsync(run.Id, "Documentation setup workflow failed.", CancellationToken.None);
             await _logs.AppendKeyValuesAsync(run.Id, "Error", new Dictionary<string, string?>
             {
+                ["FailureCode"] = failure.Code,
                 ["Type"] = ex.GetType().Name,
-                ["Message"] = ex.Message
+                ["Message"] = failure.Message
             }, CancellationToken.None);
             await _logs.AppendBlockAsync(run.Id, "Exception", ex.ToString(), CancellationToken.None);
-            taskRun.Fail(ex.Message);
-            run.Fail(run.CurrentStage, ex.Message);
+            taskRun.Fail(WorkflowFailureCatalog.Format(failure.Code, failure.Message));
+            run.Fail(run.CurrentStage, WorkflowFailureCatalog.Format(failure.Code, failure.Message));
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }

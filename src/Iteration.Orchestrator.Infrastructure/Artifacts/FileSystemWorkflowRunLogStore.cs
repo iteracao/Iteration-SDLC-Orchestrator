@@ -1,10 +1,13 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Iteration.Orchestrator.Application.Abstractions;
 
 namespace Iteration.Orchestrator.Infrastructure.Artifacts;
 
 public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
 {
+    private static readonly Regex ExcessBlankLinesRegex = new("\n{3,}", RegexOptions.Compiled);
+
     private readonly string _rootPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -66,12 +69,34 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         await _gate.WaitAsync(ct);
         try
         {
-            await File.AppendAllTextAsync(path, content, ct);
+            var normalizedContent = NormalizeLogContent(content, File.Exists(path));
+            await File.AppendAllTextAsync(path, normalizedContent, ct);
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    private static string NormalizeLogContent(string content, bool hasExistingContent)
+    {
+        var normalized = (content ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        normalized = ExcessBlankLinesRegex.Replace(normalized, "\n\n");
+
+        if (hasExistingContent)
+        {
+            normalized = normalized.TrimStart('\n');
+            if (!normalized.StartsWith("\n", StringComparison.Ordinal))
+            {
+                normalized = "\n" + normalized;
+            }
+        }
+        else
+        {
+            normalized = normalized.TrimStart('\n');
+        }
+
+        return normalized.Replace("\n", Environment.NewLine);
     }
 
     private string GetPath(Guid workflowRunId)

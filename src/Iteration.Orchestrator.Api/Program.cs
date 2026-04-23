@@ -85,6 +85,7 @@ builder.Services.AddScoped<StartImplementSolutionChangeRunHandler>();
 builder.Services.AddScoped<ValidateWorkflowRunHandler>();
 builder.Services.AddScoped<CancelWorkflowRunHandler>();
 builder.Services.AddScoped<WorkflowLifecycleService>();
+builder.Services.AddScoped<WorkflowRunTerminalStateCoordinator>();
 builder.Services.AddScoped<IWorkflowRunExecutor, WorkflowRunExecutor>();
 
 builder.Services.AddSingleton<IWorkflowExecutionQueue, InMemoryWorkflowExecutionQueue>();

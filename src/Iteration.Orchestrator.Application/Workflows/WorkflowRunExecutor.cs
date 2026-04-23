@@ -13,6 +13,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
     private readonly StartPlanImplementationRunHandler _planHandler;
     private readonly StartImplementSolutionChangeRunHandler _implementationHandler;
     private readonly IWorkflowRunLogStore _logs;
+    private readonly WorkflowRunTerminalStateCoordinator _terminalStateCoordinator;
 
     public WorkflowRunExecutor(
         IAppDbContext db,
@@ -21,7 +22,8 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         StartDesignSolutionRunHandler designHandler,
         StartPlanImplementationRunHandler planHandler,
         StartImplementSolutionChangeRunHandler implementationHandler,
-        IWorkflowRunLogStore logs)
+        IWorkflowRunLogStore logs,
+        WorkflowRunTerminalStateCoordinator terminalStateCoordinator)
     {
         _db = db;
         _analyzeHandler = analyzeHandler;
@@ -30,6 +32,7 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         _planHandler = planHandler;
         _implementationHandler = implementationHandler;
         _logs = logs;
+        _terminalStateCoordinator = terminalStateCoordinator;
     }
 
     public async Task ExecuteAsync(Guid workflowRunId, CancellationToken ct)
@@ -67,34 +70,47 @@ public sealed class WorkflowRunExecutor : IWorkflowRunExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await _logs.AppendLineAsync(workflowRunId, "Workflow executor observed cancellation and stopped execution.", CancellationToken.None);
+            var reason = "Workflow executor observed cancellation and stopped execution.";
+            await _logs.AppendLineAsync(workflowRunId, reason, CancellationToken.None);
+            await _terminalStateCoordinator.EnsureTerminalStateAsync(
+                workflowRunId,
+                cancellationRequested: true,
+                WorkflowFailureCatalog.WorkflowExecutionCancelled,
+                reason,
+                CancellationToken.None);
+            throw;
         }
         catch (Exception ex)
         {
+            var failure = WorkflowFailureCatalog.Classify(ex);
             await _logs.AppendLineAsync(workflowRunId, "Workflow executor caught a top-level failure.", CancellationToken.None);
+            await _logs.AppendKeyValuesAsync(workflowRunId, "Executor failure", new Dictionary<string, string?>
+            {
+                ["WorkflowRunId"] = workflowRunId.ToString(),
+                ["WorkflowCode"] = run.WorkflowCode,
+                ["FailureCode"] = failure.Code,
+                ["ExceptionType"] = ex.GetType().Name,
+                ["Message"] = failure.Message
+            }, CancellationToken.None);
             await _logs.AppendBlockAsync(workflowRunId, "Executor exception", ex.ToString(), CancellationToken.None);
-            await MarkFailedAsync(run, ex.Message, ct);
+            await _terminalStateCoordinator.EnsureTerminalStateAsync(
+                workflowRunId,
+                cancellationRequested: false,
+                failure.Code,
+                failure.Message,
+                CancellationToken.None);
             throw;
         }
-    }
-
-    private async Task MarkFailedAsync(Domain.Workflows.WorkflowRun run, string reason, CancellationToken ct)
-    {
-        if (run.Status != Domain.Workflows.WorkflowRunStatus.Pending
-            && run.Status != Domain.Workflows.WorkflowRunStatus.Running)
+        finally
         {
-            return;
+            await _terminalStateCoordinator.EnsureTerminalStateAsync(
+                workflowRunId,
+                cancellationRequested: ct.IsCancellationRequested,
+                ct.IsCancellationRequested ? WorkflowFailureCatalog.WorkflowExecutionCancelled : WorkflowFailureCatalog.ExecutorExitedWithoutTerminalState,
+                ct.IsCancellationRequested
+                    ? "Workflow execution was cancelled before a terminal workflow state was persisted."
+                    : "Workflow executor exited without reaching a terminal workflow state.",
+                CancellationToken.None);
         }
-
-        run.Fail(run.CurrentStage, reason);
-        await _logs.AppendLineAsync(run.Id, $"Workflow marked as failed. Reason: {reason}", CancellationToken.None);
-
-        if (run.BacklogItemId.HasValue && string.Equals(run.WorkflowCode, "implement-solution-change", StringComparison.OrdinalIgnoreCase))
-        {
-            var backlogItem = await _db.BacklogItems.FirstOrDefaultAsync(x => x.Id == run.BacklogItemId.Value, ct);
-            backlogItem?.MarkImplementationError();
-        }
-
-        await _db.SaveChangesAsync(CancellationToken.None);
     }
 }
