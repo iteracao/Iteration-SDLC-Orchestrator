@@ -252,9 +252,13 @@ Execution contract:
 - This is a read-only evidence-acquisition phase.
 - The only allowed tool in this phase is `get_next_file_batch`.
 - In each response, return exactly one tool-call JSON object and nothing else.
-- After each tool result, read `HAS MORE` from the plain-text tool response.
-- Continue calling `get_next_file_batch` while `HAS MORE: yes`.
-- Stop only when `HAS MORE: no`.
+- After you return a tool-call JSON object, stop your response immediately.
+- Do not include more than one `get_next_file_batch` call in the same response.
+- Do not request the next batch until the previous tool response has been returned to you by the system.
+- After each tool result, read `HAS MORE` from that latest plain-text tool response.
+- If the latest tool response says `HAS MORE: yes`, return exactly one new `get_next_file_batch` call.
+- If the latest tool response says `HAS MORE: no`, stop requesting batches.
+- Do not predict, pre-plan, or emit future tool calls before receiving each tool response.
 - Do not skip batches.
 - Do not stop early.
 - Do not return Markdown, prose, summaries, or conclusions in this phase.

@@ -210,12 +210,14 @@ internal static class FileAwareAgentRunner
         IReadOnlyDictionary<string, string>? writableFiles)
     {
         var currentMessages = BuildPhaseMessages(phase, phaseIndex, totalPhases, pendingMessages, writableFiles);
+        await LogPhasePromptAsync(logs, workflowRunId, phase.Name, currentMessages.Last(), ct);
         if (pendingMessages.Count > 0)
         {
             await logs.AppendLineAsync(workflowRunId, $"Pending model messages carried into {phase.Name}: {pendingMessages.Count}.", ct);
         }
         pendingMessages.Clear();
         var nextUnreadFileIndex = 0;
+        var nextFileBatchNumber = 1;
         var writtenPathsThisPhase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
@@ -435,8 +437,12 @@ internal static class FileAwareAgentRunner
                 }
                 case "get_next_file_batch":
                 {
-                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex, nextFileBatchNumber);
                     nextUnreadFileIndex = batch.NextUnreadFileIndex;
+                    if (batch.Files.Count > 0)
+                    {
+                        nextFileBatchNumber++;
+                    }
 
                     foreach (var file in batch.Files)
                     {
@@ -445,7 +451,12 @@ internal static class FileAwareAgentRunner
 
                     await logs.AppendLineAsync(
                         workflowRunId,
-                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
+                        $"Tool result ({phase.Name}): get_next_file_batch -> batch {batch.BatchNumber}/{batch.TotalBatchesEstimate}; files={batch.Files.Count}; hasMore={(batch.HasMore ? "yes" : "no")}; payloadChars={batch.Payload.Length}.",
+                        ct);
+                    await logs.AppendBlockAsync(
+                        workflowRunId,
+                        $"Tool response detail ({phase.Name}) get_next_file_batch batch {batch.BatchNumber}",
+                        BuildFilePayloadMetadataLog(batch.Payload),
                         ct);
 
                     currentMessages = BuildPostToolMessages(batch.Payload);
@@ -609,14 +620,21 @@ internal static class FileAwareAgentRunner
                     workflowRunId,
                     $"Model response ({phase.Name}) attempt {attempt}: tool request '{analysis.SingleToolRequest.ResolvedAction}'.",
                     ct);
+                await logs.AppendBlockAsync(
+                    workflowRunId,
+                    $"Model response detail ({phase.Name}) attempt {attempt}",
+                    BuildToolRequestLog(rawText, analysis.SingleToolRequest),
+                    ct);
                 return;
 
             case ToolResponseState.MultipleToolObjects:
                 await logs.AppendLineAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}: invalid multiple tool requests.", ct);
+                await logs.AppendBlockAsync(workflowRunId, $"Invalid model response detail ({phase.Name}) attempt {attempt}", rawText, ct);
                 return;
 
             case ToolResponseState.MixedToolAndText:
                 await logs.AppendLineAsync(workflowRunId, $"Model response ({phase.Name}) attempt {attempt}: invalid mixed tool request and text.", ct);
+                await logs.AppendBlockAsync(workflowRunId, $"Invalid model response detail ({phase.Name}) attempt {attempt}", rawText, ct);
                 return;
         }
 
@@ -625,6 +643,11 @@ internal static class FileAwareAgentRunner
             await logs.AppendLineAsync(
                 workflowRunId,
                 $"Model response ({phase.Name}) attempt {attempt}: Markdown artifact candidate for '{phase.SavedMarkdownArtifactFileName}' ({rawText.Length} chars).",
+                ct);
+            await logs.AppendBlockAsync(
+                workflowRunId,
+                $"Artifact candidate detail ({phase.Name}) {phase.SavedMarkdownArtifactFileName}",
+                rawText,
                 ct);
             return;
         }
@@ -652,6 +675,42 @@ internal static class FileAwareAgentRunner
             workflowRunId,
             $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent [{roles}].",
             ct);
+
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var content = GetChatMessageText(message);
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                continue;
+            }
+
+            var source = InferMessageSource(content);
+            if (string.Equals(source, "phase-prompt", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var format = InferMessageFormat(content);
+            var title = $"Model input detail ({phaseName}) attempt {attempt} message {index + 1}/{messages.Count} role={message.Role} source={source} format={format}";
+            await logs.AppendBlockAsync(workflowRunId, title, SanitizeModelMessageForLog(content), ct);
+        }
+    }
+
+    private static async Task LogPhasePromptAsync(
+        IWorkflowRunLogStore logs,
+        Guid workflowRunId,
+        string phaseName,
+        ChatMessage phasePromptMessage,
+        CancellationToken ct)
+    {
+        var content = GetChatMessageText(phasePromptMessage);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        await logs.AppendBlockAsync(workflowRunId, $"Phase prompt ({phaseName})", content, ct);
     }
 
 
@@ -1088,17 +1147,19 @@ internal static class FileAwareAgentRunner
     {
         var payloads = new List<string>();
         var nextUnreadFileIndex = 0;
+        var nextBatchNumber = 1;
         var batchCount = 0;
         var reviewedThisLoad = 0;
         while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
         {
-            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex, nextBatchNumber);
             if (batch.Files.Count == 0)
             {
                 break;
             }
 
             batchCount++;
+            nextBatchNumber++;
             nextUnreadFileIndex = batch.NextUnreadFileIndex;
             payloads.Add(batch.Payload);
             foreach (var file in batch.Files)
@@ -1199,7 +1260,7 @@ internal static class FileAwareAgentRunner
         return string.Join(Environment.NewLine, fullPaths);
     }
 
-    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
+    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex, int batchNumber)
     {
         if (nextUnreadFileIndex < 0)
         {
@@ -1209,7 +1270,7 @@ internal static class FileAwareAgentRunner
         if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
         {
             var emptyPayload = "END OF FILE BATCHES";
-            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, batchNumber, 0);
         }
 
         var files = new List<FileReadResult>();
@@ -1249,7 +1310,6 @@ internal static class FileAwareAgentRunner
         }
 
         var totalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex);
-        var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
         var hasMore = currentIndex < availableFileIndex.FullPaths.Count;
         var payloadText = payload.Length == 0
             ? $"BATCH INDEX: {batchNumber}\nTOTAL BATCHES: {totalBatchesEstimate}\nHAS MORE: {(hasMore ? "yes" : "no")}\nFILES IN BATCH: 0\n\nEND OF FILE BATCHES"
