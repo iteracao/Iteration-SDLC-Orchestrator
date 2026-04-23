@@ -226,35 +226,21 @@ This is Prompt 2A of setup-documentation.
 Goal:
 Read the full allowed repository evidence set for this solution using only `get_next_file_batch`.
 
-Tool usage:
-- Call shape:
-  {"tool":"get_next_file_batch","args":{}}
-- `get_next_file_batch` takes no parameters.
-- Return exactly one allowed tool-call JSON object per response.
-- Do not return Markdown, prose, summaries, conclusions, or explanations in this phase.
-
-Tool response:
-- `get_next_file_batch` returns JSON with this structure:
-  - `batchIndex` (number): current batch number (1-based)
-  - `totalBatches` (number): total number of batches in this run
-  - `hasMore` (boolean): true if more batches remain, false if this is the last batch
-  - `files` (array): files returned in this batch
-    - `path` (string): full relative repository path
-    - `content` (string): full raw file contents
-- Each response already includes full file identification and complete file contents for the next unread batch.
+What the batch tool returns:
+- Each `get_next_file_batch` response already includes full file identification and complete file contents for the next unread batch.
 - You do not need discovery first.
 - The system log records batch usage separately; do not summarize the batch contents here.
 
 Execution contract:
 - This is a read-only evidence-acquisition phase.
 - The only allowed tool in this phase is `get_next_file_batch`.
-- After each call, read `batchIndex` and `totalBatches` to track progress.
-- Continue calling `get_next_file_batch` while `hasMore` is true.
-- Stop only when `hasMore` is false.
+- Call `get_next_file_batch` repeatedly until all batches are consumed.
 - Required number of executions = total number of batches for this run.
+- Treat the batch counter returned by the tool as authoritative for progress.
 - Do not skip batches.
 - Do not stop early.
-- Interpret fields exactly as defined. Do not infer or reinterpret structure.
+- Do not return Markdown, prose, summaries, or conclusions in this phase.
+- Return exactly one allowed tool-call JSON object per response.
 """;
     }
 

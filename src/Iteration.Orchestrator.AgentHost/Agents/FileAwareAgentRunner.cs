@@ -434,7 +434,7 @@ internal static class FileAwareAgentRunner
 
                     await logs.AppendLineAsync(
                         workflowRunId,
-                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatchesEstimate}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
+                        $"Result ({phase.Name}): batch {batch.BatchNumber} of {batch.TotalBatches}. Files returned: {batch.Files.Count}. Has more: {(batch.HasMore ? "yes" : "no")}.",
                         ct);
 
                     foreach (var logLine in DescribeBatchFilesForLog(batch.Files))
@@ -1068,7 +1068,7 @@ internal static class FileAwareAgentRunner
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatchesEstimate = EstimateRemainingBatchCount(availableFileIndex, nextUnreadFileIndex);
+        var totalBatches = EstimateTotalBatchCount(availableFileIndex);
         var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
 
         return new FileBatchResult(
@@ -1077,7 +1077,7 @@ internal static class FileAwareAgentRunner
             currentIndex,
             currentIndex < availableFileIndex.FullPaths.Count,
             batchNumber,
-            totalBatchesEstimate);
+            totalBatches);
     }
 
 
@@ -1117,12 +1117,9 @@ internal static class FileAwareAgentRunner
         return block.ToString().TrimEnd();
     }
 
-    private static int EstimateRemainingBatchCount(AvailableFileIndex availableFileIndex, int startIndex)
+    private static int EstimateTotalBatchCount(AvailableFileIndex availableFileIndex)
     {
-        if (startIndex < 0)
-        {
-            startIndex = 0;
-        }
+        const int startIndex = 0;
 
         if (startIndex >= availableFileIndex.FullPaths.Count)
         {
@@ -1223,18 +1220,12 @@ internal static class FileAwareAgentRunner
             if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
             {
                 sb.AppendLine("- Return exactly one JSON tool call object per response.");
-                sb.AppendLine("- Do not return a final plain-text phase result in this phase.");
-            }
-            else if (phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
-            {
-                sb.AppendLine("- Return only the final plain-text phase result.");
-                sb.AppendLine("- Do not return JSON tool calls in this phase.");
+                sb.AppendLine("- Do not return any Markdown, prose, summaries, or final phase result in this phase.");
             }
             else
             {
                 sb.AppendLine("- Return either one JSON tool call object or the final plain-text phase result.");
             }
-
             if (phase.AllowedToolActions is { Count: > 0 })
             {
                 sb.AppendLine($"- Allowed tool actions in this phase: {string.Join(", ", phase.AllowedToolActions)}.");
@@ -1251,11 +1242,11 @@ internal static class FileAwareAgentRunner
 
             if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
             {
-                sb.AppendLine("- `get_next_file_batch` takes no parameters.");
-                sb.AppendLine("- Call shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
-                sb.AppendLine("- It returns the next unread batch of allowed files as JSON with `batchIndex`, `totalBatches`, `hasMore`, and `files[]`.");
-                sb.AppendLine("- Each `files[]` entry contains `path` (full relative repository path) and `content` (full raw file contents).");
-                sb.AppendLine("- Files are never truncated or split across batches.");
+                sb.AppendLine("- `get_next_file_batch` takes no parameters. Return exactly one JSON object in this shape: {\"tool\":\"get_next_file_batch\",\"args\":{}}.");
+                sb.AppendLine("- The tool returns JSON with: batchIndex (current 1-based batch), totalBatches (fixed total batch count for the full run), hasMore (whether another batch exists), and files[].");
+                sb.AppendLine("- Each files[] entry contains path (full relative repository path) and content (full raw file contents). Files are never truncated or split across batches.");
+                sb.AppendLine("- After each tool result, if hasMore is true, return one more single get_next_file_batch tool call in the next response. If hasMore is false, stop.");
+                sb.AppendLine("- Never return more than one tool call in the same response.");
             }
 
             if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)
@@ -1443,7 +1434,7 @@ internal static class FileAwareAgentRunner
         int NextUnreadFileIndex,
         bool HasMore,
         int BatchNumber,
-        int TotalBatchesEstimate);
+        int TotalBatches);
 
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,
