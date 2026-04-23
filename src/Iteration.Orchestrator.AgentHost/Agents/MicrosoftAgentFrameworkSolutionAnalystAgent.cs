@@ -67,18 +67,34 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: "Establish analysis behavior and workflow intent only.",
-                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive),
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    AllowToolCalls: false,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
-                    Name: "Prompt 2",
-                    Prompt: BuildRepositoryStructurePrompt(),
+                    Name: "Prompt 2A",
+                    Prompt: BuildRepositoryAcquisitionPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Review the full repository documentation and source tree, then generate the saved repository-state Markdown.",
+                    PurposeSummary: "Load the full repository documentation and source evidence before analysis.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
+                    AllowedToolActions: ["find_available_files", "get_next_file_batch", "get_file"],
+                    RequireAllAvailableFilesRead: true,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOnly,
+                    AutoCompleteWhenAllAvailableFilesRead: true),
+                new FileAwareAgentRunner.AgentPhaseDefinition(
+                    Name: "Prompt 2B",
+                    Prompt: BuildRepositorySynthesisPrompt(),
+                    RequiresSavedOutput: false,
+                    AllowRepositoryDiscovery: false,
+                    PurposeSummary: "Generate the saved repository-state Markdown from the fully reviewed repository evidence.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: true,
+                    AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
                     InjectSavedMarkdownIntoNextPhase: true,
-                    RequireAllAvailableFilesRead: true),
+                    RequireAllAvailableFilesRead: true,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalAnalysisPrompt(request),
@@ -87,7 +103,8 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                     PurposeSummary: "Read relevant files by full physical path and produce the final Markdown analysis report.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireWorkflowInput: false,
-                    RequireCompletionValidation: true)
+                    RequireCompletionValidation: true,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOrMarkdown)
             };
 
             var instructions = BuildInstructions(agentDefinition);
@@ -146,23 +163,23 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
         sb.AppendLine(agentDefinition.PromptText.Trim());
         sb.AppendLine();
         sb.AppendLine("Execution mode:");
-        sb.AppendLine("- This analyze workflow runs as a three-prompt sequence.");
+        sb.AppendLine("- This analyze workflow runs as a four-prompt sequence.");
         sb.AppendLine("- Prompt 1 is behavior only.");
-        sb.AppendLine("- Prompt 2 is the repository understanding step.");
-        sb.AppendLine($"- Prompt 2 must review the full allowed repository context and produce Markdown that is saved as {RepositoryStateArtifactFileName}.");
-        sb.AppendLine("- Prompt 3 is the terminal requirement analysis step and must use the repository understanding produced in Prompt 2.");
+        sb.AppendLine("- Prompt 2A is the repository evidence acquisition step.");
+        sb.AppendLine($"- Prompt 2B must produce the repository understanding Markdown that is saved as {RepositoryStateArtifactFileName}.");
+        sb.AppendLine("- Prompt 4 is the terminal requirement analysis step and must use the repository understanding produced in Prompt 2B.");
         sb.AppendLine("- Do not call get_workflow_input or save_workflow_output.");
         sb.AppendLine("- When using a tool, return exactly one JSON object with an 'action' property.");
         sb.AppendLine("- Allowed tool actions are find_available_files, get_next_file_batch, and get_file.");
         sb.AppendLine("- Always call find_available_files first. It returns the allowed full physical path list for this run.");
-        sb.AppendLine("- In Prompt 2, repeatedly call get_next_file_batch until all repository context batches are reviewed.");
+        sb.AppendLine("- In Prompt 2A, repeatedly call get_next_file_batch until all repository context batches are reviewed.");
         sb.AppendLine("- Use get_file only with exact full physical paths from find_available_files when you need targeted follow-up evidence.");
         return sb.ToString().TrimEnd();
     }
 
     private static string BuildBootstrapPrompt()
         => """
-This is Prompt 1 of 3 for analyze-request.
+This is Prompt 1 of 4 for analyze-request.
 
 Purpose:
 Establish analysis behavior and workflow intent.
@@ -182,8 +199,9 @@ You will:
 
 Execution flow:
 - Prompt 1: behavior only (this prompt)
-- Prompt 2: repository and documentation awareness
-- Prompt 3: requirement analysis and final report
+- Prompt 2A: repository evidence acquisition
+- Prompt 2B: repository understanding synthesis
+- Prompt 4: requirement analysis and final report
 
 For this prompt:
 Return a very short Markdown note with:
@@ -192,22 +210,34 @@ Return a very short Markdown note with:
 ## Boundaries To Preserve
 """;
 
-    private static string BuildRepositoryStructurePrompt()
+    private static string BuildRepositoryAcquisitionPrompt()
+        => """
+This is Prompt 2A of 4 for analyze-request.
+
+Purpose:
+Load the full allowed repository context before requirement analysis.
+
+Rules:
+- This is an evidence-acquisition step only.
+- Do NOT analyze the requirement yet.
+- Do NOT design or plan changes.
+- Call `find_available_files` first.
+- Then repeatedly call `get_next_file_batch` until no unread allowed files remain.
+- Use `get_file` only for targeted follow-up reads on specific allowed files.
+- Return exactly one allowed tool-call JSON object per response.
+- Do not return Markdown, prose, or conclusions in this phase.
+""";
+
+    private static string BuildRepositorySynthesisPrompt()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 2 of 3 for analyze-request.");
+        sb.AppendLine("This is Prompt 2B of 4 for analyze-request.");
         sb.AppendLine("Purpose: build the saved repository understanding for the current solution before requirement analysis.");
         sb.AppendLine();
-        sb.AppendLine("This is a repository understanding step only.");
+        sb.AppendLine("This is a repository understanding synthesis step only.");
         sb.AppendLine("Do NOT analyze the requirement yet.");
         sb.AppendLine("Do NOT design or plan changes.");
-        sb.AppendLine();
-        sb.AppendLine("REPOSITORY CONTEXT RULES");
-        sb.AppendLine("- The allowed repository context for this step is ALL `.md` files and ALL files under `src/`.");
-        sb.AppendLine("- First call `find_available_files` to confirm the full allowed file set.");
-        sb.AppendLine("- Then repeatedly call `get_next_file_batch` until the full allowed repository context has been reviewed.");
-        sb.AppendLine("- Use `get_file` only for targeted follow-up reads when a specific file needs closer confirmation.");
-        sb.AppendLine("- Your final response for this step must be Markdown only. The system will save it to disk as `repository-state.md` and pass it to Prompt 3.");
+        sb.AppendLine("Tool calls are forbidden in this phase.");
         sb.AppendLine();
         sb.AppendLine("Return Markdown using exactly this structure:");
         sb.AppendLine("# Repository State");
@@ -227,8 +257,8 @@ Return a very short Markdown note with:
     private static string BuildFinalAnalysisPrompt(SolutionAnalysisRequest request)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 3 of 3 for analyze-request.");
-        sb.AppendLine("Use the saved repository understanding from Prompt 2 as the baseline understanding of the current solution, then analyze the requirement and return the final analysis report in Markdown.");
+        sb.AppendLine("This is Prompt 4 of 4 for analyze-request.");
+        sb.AppendLine("Use the saved repository understanding from Prompt 2B as the baseline understanding of the current solution, then analyze the requirement and return the final analysis report in Markdown.");
         sb.AppendLine();
         sb.AppendLine("REQUIREMENT TO ANALYZE");
         sb.AppendLine($"- Title: {request.RequirementTitle}");
@@ -237,7 +267,7 @@ Return a very short Markdown note with:
         sb.AppendLine();
         sb.AppendLine("TOOL USAGE");
         sb.AppendLine("- Start from the requirement.");
-        sb.AppendLine("- The repository-state Markdown produced in Prompt 2 is already available in your conversation context. Use it first.");
+        sb.AppendLine("- The repository-state Markdown produced in Prompt 2B is already available in your conversation context. Use it first.");
         sb.AppendLine("- Call `find_available_files` if you need to confirm or target specific follow-up evidence.");
         sb.AppendLine("- Use `get_file` only with an exact full physical path returned by `find_available_files`.");
         sb.AppendLine("- Use targeted follow-up reads only where the requirement analysis needs extra confirmation beyond the repository-state understanding.");

@@ -65,19 +65,33 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     PurposeSummary: "Establish documentation setup boundaries and authority order.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     AllowToolCalls: false,
-                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName),
+                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
-                    Name: "Prompt 2",
-                    Prompt: BuildDocumentationContextPrompt(request),
+                    Name: "Prompt 2A",
+                    Prompt: BuildDocumentationAcquisitionPrompt(),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
-                    PurposeSummary: "Review the full allowed repository context, then save the repository-state Markdown.",
+                    PurposeSummary: "Load the full allowed repository evidence set for documentation setup.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
                     AllowedToolActions: ["find_available_files", "get_next_file_batch", "get_file"],
+                    RequireAllAvailableFilesRead: true,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOnly,
+                    AutoCompleteWhenAllAvailableFilesRead: true),
+                new FileAwareAgentRunner.AgentPhaseDefinition(
+                    Name: "Prompt 2B",
+                    Prompt: BuildDocumentationSynthesisPrompt(),
+                    RequiresSavedOutput: false,
+                    AllowRepositoryDiscovery: false,
+                    PurposeSummary: "Synthesize the repository-state Markdown from the fully reviewed evidence set.",
+                    Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
+                    RequireCompletionValidation: true,
+                    AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
                     InjectSavedMarkdownIntoNextPhase: true,
-                    RequireAllAvailableFilesRead: true),
+                    RequireAllAvailableFilesRead: true,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.MarkdownOnly),
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: "Prompt 3",
                     Prompt: BuildFinalOutputPrompt(request),
@@ -88,7 +102,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequireWorkflowInput: false,
                     RequireCompletionValidation: true,
                     AllowedToolActions: ["write_file"],
-                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName)
+                    SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName,
+                    ResponseMode: FileAwareAgentRunner.AgentPhaseResponseMode.ToolCallsOrMarkdown)
             };
 
             var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
@@ -147,7 +162,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
     private static string BuildBootstrapPrompt(SolutionDocumentationSetupRequest request)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 1 of 3 for setup-documentation.");
+        sb.AppendLine("This is Prompt 1 of 4 for setup-documentation.");
         sb.AppendLine("Return Markdown only.");
         sb.AppendLine("Output exactly:");
         sb.AppendLine("# Contract");
@@ -163,27 +178,38 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildDocumentationContextPrompt(SolutionDocumentationSetupRequest request)
-    {
-        return """
-This is Prompt 2 of 3 for setup-documentation.
+    private static string BuildDocumentationAcquisitionPrompt()
+        => """
+This is Prompt 2A of 4 for setup-documentation.
 
 Goal:
-Build the initial repository-state Markdown for this solution by reviewing the full allowed evidence set.
+Load the full allowed repository evidence set for this solution.
 
 Rules:
-- This is a read-only phase.
+- This is a read-only evidence-acquisition phase.
 - Call `find_available_files` first.
-- Then repeatedly call `get_next_file_batch` until the full allowed file set has been reviewed.
-- Use `get_file` only for targeted follow-up reads when a specific file needs closer confirmation.
+- Then repeatedly call `get_next_file_batch` until no unread allowed files remain.
+- Use `get_file` only for targeted follow-up reads when a specific allowed file needs closer confirmation.
 - Use only exact full physical paths returned by `find_available_files`.
 - Never call `write_file` in this phase.
+- Do not return Markdown, prose, summaries, or conclusions in this phase.
+- Return exactly one allowed tool-call JSON object per response.
+""";
+
+    private static string BuildDocumentationSynthesisPrompt()
+        => """
+This is Prompt 2B of 4 for setup-documentation.
+
+Goal:
+Build the initial repository-state Markdown for this solution using the full evidence set already reviewed in Prompt 2A.
+
+Rules:
+- This is a synthesis phase.
+- Tool calls are forbidden in this phase.
 - Managed documents are the fixed output documents of this workflow.
 - Repository files are evidence only.
 - Drift applies only to the managed documents, based on repository evidence.
 - Do not suggest new documents or expand the managed document list.
-- Never mix tool calls and final Markdown in the same response.
-- Do not finish this phase until the full allowed evidence set has been reviewed.
 
 Return Markdown only using exactly this structure:
 # Repository State
@@ -197,13 +223,12 @@ Return Markdown only using exactly this structure:
 ## Best Practice Gaps / Risks
 ## Open Questions
 """;
-    }
 
     private static string BuildFinalOutputPrompt(SolutionDocumentationSetupRequest request)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("This is Prompt 3 of 3 for setup-documentation.");
-        sb.AppendLine("Use the repository-state Markdown from Prompt 2 as the baseline understanding of the current solution.");
+        sb.AppendLine("This is Prompt 4 of 4 for setup-documentation.");
+        sb.AppendLine("Use the repository-state Markdown from Prompt 2B as the baseline understanding of the current solution.");
         sb.AppendLine("Allowed write targets:");
         foreach (var path in request.StableDocumentTargets)
         {
@@ -212,7 +237,7 @@ Return Markdown only using exactly this structure:
         sb.AppendLine();
         sb.AppendLine("Rules:");
         sb.AppendLine("- Determine one mode before any write: ALIGNED, UPDATE, or BOOTSTRAP.");
-        sb.AppendLine("- Base the decision only on Prompt 2 evidence and the current stable document state.");
+        sb.AppendLine("- Base the decision only on Prompt 2B evidence and the current stable document state.");
         sb.AppendLine("- Absence of evidence is not evidence of absence.");
         sb.AppendLine("- ALIGNED: do not call `write_file` and mark every managed document as KEEP or NO WRITE.");
         sb.AppendLine("- UPDATE: update only required managed documents, and still include exactly one action for every managed document.");
