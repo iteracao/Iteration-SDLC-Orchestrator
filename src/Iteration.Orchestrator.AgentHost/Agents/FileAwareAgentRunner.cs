@@ -9,8 +9,7 @@ internal static class FileAwareAgentRunner
 {
     private const int MaxToolCallsPerPhase = 16;
     private const int MaxListedFiles = 512;
-    private const int MaxBatchCharacters = 90000;
-    private const int MaxFileCharactersPerBatchItem = 12000;
+    private const int TargetBatchCharacters = 90000;
     private const int MaxSearchHits = 12;
     private const int MaxToolObjectsPerResponse = 8;
 
@@ -493,9 +492,13 @@ internal static class FileAwareAgentRunner
                     }
 
                     state.ReadPaths.Add(fileRead.NormalizedPath);
-                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}.", ct);
+                    await logs.AppendLineAsync(workflowRunId, $"Result ({phase.Name}): success. Characters read: {fileRead.Content.Length}. Complete file loaded with no truncation.", ct);
 
-                    currentMessages = BuildPostToolMessages(phase, fileRead.Content, state.ReadPaths, availableFileIndex);
+                    currentMessages = BuildPostToolMessages(
+                        phase,
+                        BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content),
+                        state.ReadPaths,
+                        availableFileIndex);
                     continue;
                 }
                 case "write_file":
@@ -901,6 +904,7 @@ internal static class FileAwareAgentRunner
         var payloads = new List<string>();
         var nextUnreadFileIndex = 0;
         var batchCount = 0;
+        var reviewedThisLoad = 0;
         while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
         {
             var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
@@ -914,11 +918,14 @@ internal static class FileAwareAgentRunner
             payloads.Add(batch.Payload);
             foreach (var file in batch.Files)
             {
-                state.ReadPaths.Add(file.NormalizedPath);
+                if (state.ReadPaths.Add(file.NormalizedPath))
+                {
+                    reviewedThisLoad++;
+                }
             }
         }
 
-        return new AutoLoadRepositoryEvidenceResult(payloads, batchCount, state.ReadPaths.Count);
+        return new AutoLoadRepositoryEvidenceResult(payloads, batchCount, reviewedThisLoad);
     }
 
     private static string NormalizePath(string relativePath)
@@ -1036,27 +1043,10 @@ internal static class FileAwareAgentRunner
             }
 
             var originalContent = File.ReadAllText(fullPath);
-            var content = originalContent;
-            var wasTruncated = false;
-
-            if (content.Length > MaxFileCharactersPerBatchItem)
-            {
-                content = content[..MaxFileCharactersPerBatchItem]
-                    + $"{Environment.NewLine}{Environment.NewLine}[TRUNCATED BY SERVER: file content exceeded {MaxFileCharactersPerBatchItem} characters]";
-                wasTruncated = true;
-            }
-
             var normalizedPath = NormalizePath(fullPath);
-            var block = new StringBuilder();
-            block.AppendLine($"FILE: {fullPath}");
-            block.AppendLine($"NORMALIZED PATH: {normalizedPath}");
-            block.AppendLine($"TRUNCATED: {(wasTruncated ? "yes" : "no")}");
-            block.AppendLine("CONTENT:");
-            block.AppendLine(content);
-            block.AppendLine("--- END FILE ---");
+            var blockText = BuildFullFileBatchBlock(fullPath, normalizedPath, originalContent);
 
-            var blockText = block.ToString().TrimEnd();
-            if (files.Count > 0 && accumulatedCharacters + blockText.Length > MaxBatchCharacters)
+            if (files.Count > 0 && accumulatedCharacters + blockText.Length > TargetBatchCharacters)
             {
                 currentIndex--;
                 break;
@@ -1073,10 +1063,8 @@ internal static class FileAwareAgentRunner
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatchesEstimate = Math.Max(1, (int)Math.Ceiling((double)availableFileIndex.FullPaths.Count / Math.Max(1, files.Count)));
-        var batchNumber = files.Count == 0
-            ? 0
-            : (nextUnreadFileIndex / Math.Max(1, files.Count)) + 1;
+        var totalBatchesEstimate = EstimateRemainingBatchCount(availableFileIndex, nextUnreadFileIndex);
+        var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
 
         return new FileBatchResult(
             files,
@@ -1085,6 +1073,111 @@ internal static class FileAwareAgentRunner
             currentIndex < availableFileIndex.FullPaths.Count,
             batchNumber,
             totalBatchesEstimate);
+    }
+
+
+    private static string BuildFullFileBatchBlock(string fullPath, string normalizedPath, string content)
+    {
+        var block = new StringBuilder();
+        block.AppendLine($"FILE: {fullPath}");
+        block.AppendLine($"NORMALIZED PATH: {normalizedPath}");
+        block.AppendLine("COMPLETE FILE: yes");
+        block.AppendLine($"CHARACTERS: {content.Length}");
+        block.AppendLine("CONTENT:");
+        block.AppendLine(content);
+        block.AppendLine("--- END FILE ---");
+        return block.ToString().TrimEnd();
+    }
+
+    private static int EstimateRemainingBatchCount(AvailableFileIndex availableFileIndex, int startIndex)
+    {
+        if (startIndex < 0)
+        {
+            startIndex = 0;
+        }
+
+        if (startIndex >= availableFileIndex.FullPaths.Count)
+        {
+            return 0;
+        }
+
+        var count = 0;
+        var index = startIndex;
+        while (index < availableFileIndex.FullPaths.Count)
+        {
+            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index);
+            if (batch.NextIndex <= index)
+            {
+                break;
+            }
+
+            count++;
+            index = batch.NextIndex;
+        }
+
+        return Math.Max(1, count);
+    }
+
+    private static int CalculateBatchNumber(AvailableFileIndex availableFileIndex, int startIndex)
+    {
+        if (startIndex <= 0)
+        {
+            return 1;
+        }
+
+        var batchNumber = 1;
+        var index = 0;
+        while (index < startIndex)
+        {
+            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index);
+            if (batch.NextIndex <= index)
+            {
+                break;
+            }
+
+            if (batch.NextIndex >= startIndex)
+            {
+                return batchNumber;
+            }
+
+            batchNumber++;
+            index = batch.NextIndex;
+        }
+
+        return batchNumber;
+    }
+
+    private static BatchEstimateResult BuildNextFileBatchForEstimation(AvailableFileIndex availableFileIndex, int startIndex)
+    {
+        var accumulatedCharacters = 0;
+        var index = startIndex;
+        var fileCount = 0;
+
+        while (index < availableFileIndex.FullPaths.Count)
+        {
+            var fullPath = availableFileIndex.FullPaths[index];
+            index++;
+
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            var content = File.ReadAllText(fullPath);
+            var normalizedPath = NormalizePath(fullPath);
+            var blockLength = BuildFullFileBatchBlock(fullPath, normalizedPath, content).Length;
+
+            if (fileCount > 0 && accumulatedCharacters + blockLength > TargetBatchCharacters)
+            {
+                index--;
+                break;
+            }
+
+            accumulatedCharacters += blockLength;
+            fileCount++;
+        }
+
+        return new BatchEstimateResult(index, fileCount);
     }
 
     private static string BuildPhasePrompt(AgentPhaseDefinition phase, int phaseIndex, int totalPhases, IReadOnlyDictionary<string, string>? writableFiles)
@@ -1116,7 +1209,7 @@ internal static class FileAwareAgentRunner
 
             if (phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true)
             {
-                sb.AppendLine("- `get_next_file_batch` takes no parameters and returns the next unread batch of allowed files with their contents.");
+                sb.AppendLine("- `get_next_file_batch` takes no parameters and returns the next unread batch of allowed files with complete file contents only. Files are never truncated or split across batches.");
             }
 
             if (phase.AllowedToolActions?.Contains("get_file", StringComparer.OrdinalIgnoreCase) == true)
@@ -1309,6 +1402,8 @@ internal static class FileAwareAgentRunner
     private sealed record AvailableFileIndex(
         IReadOnlyList<string> FullPaths,
         IReadOnlyDictionary<string, string> NormalizedFullPaths);
+
+    private sealed record BatchEstimateResult(int NextIndex, int FileCount);
 
 
     private static string BuildWriteFilePathErrorMessage(IReadOnlyDictionary<string, string>? writableFiles)
