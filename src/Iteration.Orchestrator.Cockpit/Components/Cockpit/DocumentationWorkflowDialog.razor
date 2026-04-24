@@ -29,7 +29,7 @@
                     @if (LogLoading) { <MudProgressCircular Indeterminate="true" Size="Size.Small" /> }
                     else if (Log is null) { <p class="inspect-message">No workflow log loaded.</p> }
                     else if (Log.IsUnavailable && !string.IsNullOrWhiteSpace(Log.Message)) { <p class="inspect-message">@Log.Message</p> }
-                    else { <pre class="doc-pre">@Log.Content</pre> }
+                    else { <pre class="doc-pre workflow-log-pre">@Log.Content</pre> }
                 </div>
                 <div class="documentation-modal-actions">
                     <MudButton Variant="Variant.Outlined" Disabled="CopyLogDisabled" OnClick="CopyLog">Copy Log</MudButton>

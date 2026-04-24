@@ -22,7 +22,7 @@
                         </MudStack>
                     }
                     @if (ActiveWorkflowLog.IsUnavailable && !string.IsNullOrWhiteSpace(ActiveWorkflowLog.Message)) { <p class="inspect-message">@ActiveWorkflowLog.Message</p> }
-                    else { <pre class="doc-pre">@ActiveWorkflowLog.Content</pre> }
+                    else { <pre class="doc-pre workflow-log-pre">@ActiveWorkflowLog.Content</pre> }
                 }
                 else if (ActiveWorkflowArtifact is not null)
                 {

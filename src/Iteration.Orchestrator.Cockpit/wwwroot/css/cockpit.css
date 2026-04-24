@@ -123,6 +123,8 @@
 
     .documentation-modal-log {
         min-height: 220px;
+        min-width: 0;
+        max-width: 100%;
         border: 1px solid #d8dee4;
         border-radius: 6px;
         padding: 12px;
@@ -425,13 +427,25 @@
 
 
     .doc-pre {
-        white-space: pre;
-        word-break: normal;
-        overflow-wrap: normal;
+        display: block;
+        width: max-content;
+        min-width: 100%;
+        max-width: none;
+        white-space: pre !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
         margin: 0;
         font-family: Consolas, 'Courier New', monospace;
         font-size: 0.82rem;
+        line-height: 1.45;
         color: #24292f;
+        tab-size: 4;
+    }
+
+    .workflow-log-pre {
+        white-space: pre !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
     }
 
     .inspect-backdrop {
@@ -476,6 +490,7 @@
     .inspect-body {
         flex: 1 1 auto;
         min-height: 0;
+        min-width: 0;
         padding: 16px 18px 18px;
         overflow: auto;
         background: #ffffff;
