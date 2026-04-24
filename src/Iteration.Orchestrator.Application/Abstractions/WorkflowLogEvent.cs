@@ -13,6 +13,8 @@ public sealed record WorkflowLogEvent
     public int? Interaction { get; init; }
     public string? Role { get; init; }
     public string? ToolName { get; init; }
+    public string? CorrelationId { get; init; }
+    public long? DurationMs { get; init; }
     public string Summary { get; init; } = string.Empty;
     public string? PayloadPreview { get; init; }
     public int PayloadChars { get; init; }

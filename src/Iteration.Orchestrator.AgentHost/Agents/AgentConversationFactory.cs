@@ -14,6 +14,7 @@ public interface IAgentConversationFactory
     string ProviderName { get; }
     string SelectedModel { get; }
     bool IsOpenAiConfigurationComplete { get; }
+    bool SupportsNativeToolCalls { get; }
 
     IAgentConversation CreateConversation(string agentName, string instructions);
 }
@@ -44,6 +45,8 @@ public sealed class SelectedAgentConversationFactory : IAgentConversationFactory
     public string SelectedModel => _selection.Model;
 
     public bool IsOpenAiConfigurationComplete => _selection.IsOpenAiConfigurationComplete;
+
+    public bool SupportsNativeToolCalls => string.Equals(_selection.ProviderName, "OpenAI", StringComparison.OrdinalIgnoreCase);
 
     public IAgentConversation CreateConversation(string agentName, string instructions)
         => string.Equals(_selection.ProviderName, "OpenAI", StringComparison.OrdinalIgnoreCase)

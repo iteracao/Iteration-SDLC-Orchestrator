@@ -102,8 +102,10 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
             Phase = NormalizeNullable(logEvent.Phase),
             Role = NormalizeNullable(logEvent.Role),
             ToolName = NormalizeNullable(logEvent.ToolName),
+            CorrelationId = NormalizeNullable(logEvent.CorrelationId),
+            DurationMs = logEvent.DurationMs,
             Summary = NormalizeInline(logEvent.Summary),
-            PayloadPreview = BuildPreview(logEvent.PayloadPreview ?? logEvent.RawPayload),
+            PayloadPreview = BuildPreview(logEvent.PayloadPreview),
             PayloadChars = logEvent.PayloadChars > 0
                 ? logEvent.PayloadChars
                 : logEvent.RawPayload?.Length ?? logEvent.PayloadPreview?.Length ?? 0
@@ -174,6 +176,18 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
             sb.Append(logEvent.ToolName);
         }
 
+        if (!string.IsNullOrWhiteSpace(logEvent.CorrelationId))
+        {
+            sb.Append(" | cid=");
+            sb.Append(logEvent.CorrelationId);
+        }
+
+        if (logEvent.DurationMs is not null)
+        {
+            sb.Append(" | durationMs=");
+            sb.Append(logEvent.DurationMs.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(logEvent.Summary))
         {
             sb.Append(" | ");
@@ -208,10 +222,41 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
             Interaction = metadata.Interaction,
             ToolName = metadata.ToolName,
             Summary = summary,
-            PayloadPreview = BuildPreview(content),
+            PayloadPreview = BuildBlockPreview(eventType, content, isRaw),
             PayloadChars = content.Length,
             RawPayload = content
         };
+    }
+
+
+    private static string BuildBlockPreview(string eventType, string content, bool isRaw)
+    {
+        if (isRaw)
+        {
+            return "transport payload stored in RAW log only";
+        }
+
+        if (string.Equals(eventType, "interaction", StringComparison.OrdinalIgnoreCase))
+        {
+            return "interaction details omitted from highlight log; see RAW log and artifacts for payloads";
+        }
+
+        if (string.Equals(eventType, "prompt", StringComparison.OrdinalIgnoreCase))
+        {
+            return "prompt content omitted from highlight log";
+        }
+
+        if (string.Equals(eventType, "model_response", StringComparison.OrdinalIgnoreCase))
+        {
+            return "model response content omitted from highlight log";
+        }
+
+        if (string.Equals(eventType, "model_message", StringComparison.OrdinalIgnoreCase))
+        {
+            return "model message content omitted from highlight log";
+        }
+
+        return BuildPreview(content);
     }
 
     private static string BuildCompactBlockSummary(string eventType, string? title)
@@ -221,6 +266,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
             "model_sent" => "sent",
             "model_received" when (title ?? string.Empty).Contains("failure", StringComparison.OrdinalIgnoreCase) => "failure",
             "model_received" => "received",
+            "model_message" => "message",
             "tool_sent" => "sent",
             "tool_received" when (title ?? string.Empty).Contains("failure", StringComparison.OrdinalIgnoreCase) => "failure",
             "tool_received" => "received",
@@ -320,6 +366,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         var normalized = title ?? string.Empty;
         if (normalized.Contains("interaction", StringComparison.OrdinalIgnoreCase)) return "interaction";
         if (normalized.Contains("response", StringComparison.OrdinalIgnoreCase)) return "model_response";
+        if (normalized.Contains("model message", StringComparison.OrdinalIgnoreCase)) return "model_message";
         if (normalized.Contains("prompt", StringComparison.OrdinalIgnoreCase)) return "prompt";
         return "block";
     }

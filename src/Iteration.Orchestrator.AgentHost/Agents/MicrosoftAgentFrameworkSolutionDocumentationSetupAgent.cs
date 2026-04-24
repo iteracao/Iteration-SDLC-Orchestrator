@@ -137,7 +137,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             phases.AddRange(writeTargets.Select((targetInfo, index) =>
                 new FileAwareAgentRunner.AgentPhaseDefinition(
                     Name: $"Prompt {index + 4}",
-                    Prompt: BuildSingleWritePrompt(index + 1, targetInfo.LogicalPath, targetInfo.PhysicalPath),
+                    Prompt: BuildSingleWritePrompt(targetInfo.LogicalPath, targetInfo.PhysicalPath),
                     RequiresSavedOutput: false,
                     AllowRepositoryDiscovery: false,
                     PurposeSummary: $"Write only {targetInfo.LogicalPath} when required by the decision artifact.",
@@ -172,7 +172,6 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                 ct,
                 requireRepositoryEvidence: false,
                 requireRepositoryDiscovery: false,
-                discoveryTools: null,
                 maxModelResponseSeconds: _maxModelResponseSeconds,
                 writableFiles: writableFiles);
 
@@ -325,10 +324,18 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 Goal:
 Load the full allowed repository evidence set using `get_next_file_batch` only.
 
-Return one tool call per interaction:
+You are in evidence-acquisition mode. This phase is mechanical. Do not analyze, summarize, classify, or explain any file content.
+
+Return exactly one tool call per interaction and nothing else:
 {"tool":"get_next_file_batch","args":{}}
 
-Continue until `HAS MORE: no`, then stop this phase.
+After each tool result:
+- if the runner continues the phase, call `get_next_file_batch` again using the exact JSON object above;
+- never summarize the previous batch;
+- never return Markdown or prose;
+- never call any other tool.
+
+The runner will automatically complete this phase after all allowed files are loaded.
 """;
     }
 
@@ -384,7 +391,7 @@ Return Markdown only using exactly this structure:
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildSingleWritePrompt(int stepNumber, string logicalPath, string physicalPath)
+    private static string BuildSingleWritePrompt(string logicalPath, string physicalPath)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Goal: handle only `{logicalPath}` in this step.");
@@ -532,12 +539,6 @@ Mode: ALIGNED | UPDATE | BOOTSTRAP
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? [];
-
-    private static List<string> NormalizeDocumentPaths(IEnumerable<string>? values, IReadOnlyList<string> stableTargets)
-    {
-        var stableSet = stableTargets.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return NormalizeStringList(values).Where(stableSet.Contains).ToList();
-    }
 
     private static DocumentActionParseResult ParseDocumentActions(IEnumerable<string> values, IReadOnlyList<string> stableTargets)
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -9,10 +10,10 @@ namespace Iteration.Orchestrator.AgentHost.Agents;
 
 internal static class FileAwareAgentRunner
 {
-    private const int MaxToolCallsPerPhase = 16;
-    private const int MaxListedFiles = 512;
-    private const int TargetBatchCharacters = 90000;
-    private const int MaxSearchHits = 12;
+    private const int DefaultMaxInteractionsPerPhase = 16;
+    private const int MaxDynamicInteractionsPerPhase = 240;
+    private const int NativeToolTargetBatchCharacters = 90000;
+    private const int FallbackJsonTargetBatchCharacters = 30000;
     private const int MaxToolObjectsPerResponse = 8;
 
     public static Task<string> RunAsync(
@@ -59,9 +60,8 @@ internal static class FileAwareAgentRunner
             requiredSolutionPaths,
             requireRepositoryEvidence,
             requireRepositoryDiscovery: false,
-            discoveryTools: null,
             maxModelResponseSeconds: maxModelResponseSeconds,
-            writableFiles: null);
+            writableFiles: writableFiles);
     }
 
     public static async Task<string> RunPromptAsync(
@@ -87,13 +87,24 @@ internal static class FileAwareAgentRunner
 
         var promptMessages = new[] { CreateUserMessage(prompt) };
         await LogModelInputMessagesAsync(logs, workflowRunId, logTitle, 1, promptMessages, ct);
-        await logs.AppendRawBlockAsync(
+
+        var modelCorrelationId = BuildCorrelationId(logTitle, 1, "model");
+        await LogTransportEventAsync(
+            logs,
             workflowRunId,
-            $"{logTitle} model request attempt 1",
-            BuildRawModelRequestLog(promptMessages, tools: null),
+            eventType: "model_sent",
+            phaseName: logTitle,
+            interactionNumber: 1,
+            toolName: null,
+            correlationId: modelCorrelationId,
+            durationMs: null,
+            summary: BuildModelRequestSummary(promptMessages, tools: null, supportsNativeToolCalls: conversationFactory.SupportsNativeToolCalls),
+            payloadPreview: BuildModelRequestPreview(promptMessages, tools: null, supportsNativeToolCalls: conversationFactory.SupportsNativeToolCalls),
+            rawPayload: BuildRawModelRequestLog(promptMessages, tools: null),
             ct);
 
         AgentConversationResponse response;
+        var modelStopwatch = Stopwatch.StartNew();
         try
         {
             response = await RunModelWithTimeoutAsync(
@@ -105,18 +116,36 @@ internal static class FileAwareAgentRunner
         }
         catch (Exception ex)
         {
-            await logs.AppendRawBlockAsync(
+            modelStopwatch.Stop();
+            await LogTransportEventAsync(
+                logs,
                 workflowRunId,
-                $"{logTitle} model failure attempt 1",
-                BuildRawExceptionLog(ex),
+                eventType: "model_received",
+                phaseName: logTitle,
+                interactionNumber: 1,
+                toolName: null,
+                correlationId: modelCorrelationId,
+                durationMs: modelStopwatch.ElapsedMilliseconds,
+                summary: $"failure; {ex.GetType().Name}: {ex.Message}",
+                payloadPreview: "model failure details stored in RAW log only",
+                rawPayload: BuildRawExceptionLog(ex),
                 ct);
             throw;
         }
 
-        await logs.AppendRawBlockAsync(
+        modelStopwatch.Stop();
+        await LogTransportEventAsync(
+            logs,
             workflowRunId,
-            $"{logTitle} model response attempt 1",
-            BuildRawModelResponseLog(response),
+            eventType: "model_received",
+            phaseName: logTitle,
+            interactionNumber: 1,
+            toolName: null,
+            correlationId: modelCorrelationId,
+            durationMs: modelStopwatch.ElapsedMilliseconds,
+            summary: BuildModelResponseSummary(response),
+            payloadPreview: BuildModelResponsePreview(response),
+            rawPayload: BuildRawModelResponseLog(response),
             ct);
 
         if (response.ToolCalls.Count > 0)
@@ -124,7 +153,7 @@ internal static class FileAwareAgentRunner
             throw new InvalidOperationException("Prompt-only execution received unexpected tool calls.");
         }
 
-        await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", response.Text, ct);
+        await logs.AppendLineAsync(workflowRunId, $"{logTitle}: model response accepted ({response.Text.Length} chars). Content omitted from normal workflow log.", ct);
         return response.Text;
     }
 
@@ -144,7 +173,6 @@ internal static class FileAwareAgentRunner
         IReadOnlyCollection<string>? requiredSolutionPaths = null,
         bool requireRepositoryEvidence = false,
         bool requireRepositoryDiscovery = false,
-        RepositoryDiscoveryTools? discoveryTools = null,
         int maxModelResponseSeconds = 180,
         IReadOnlyDictionary<string, string>? writableFiles = null)
     {
@@ -155,6 +183,8 @@ internal static class FileAwareAgentRunner
 
         var conversation = conversationFactory.CreateConversation(agentName, instructions);
         var responseTimeoutSeconds = maxModelResponseSeconds;
+        var supportsNativeToolCalls = conversationFactory.SupportsNativeToolCalls;
+        var targetBatchCharacters = DetermineTargetBatchCharacters(supportsNativeToolCalls);
         var requiredFrameworkPathSet = (requiredFrameworkPaths ?? Array.Empty<string>())
             .Select(NormalizePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +199,10 @@ internal static class FileAwareAgentRunner
         await logs.AppendLineAsync(
             workflowRunId,
             $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
+            ct);
+        await logs.AppendLineAsync(
+            workflowRunId,
+            $"Agent tool protocol: nativeToolCalls={(supportsNativeToolCalls ? "yes" : "no")}; fallbackJson={(supportsNativeToolCalls ? "no" : "yes")}; repositoryBatchTargetChars={targetBatchCharacters}.",
             ct);
         await logs.AppendLineAsync(workflowRunId, $"Model base instructions registered ({instructions.Length} chars).", ct);
 
@@ -200,12 +234,10 @@ internal static class FileAwareAgentRunner
                     phase,
                     phaseIndex,
                     phases.Count,
-                    repositoryRoot,
                     workflowRunId,
                     logs,
                     payloadStore,
                     artifacts,
-                    discoveryTools,
                     availableFileIndex,
                     pendingMessages,
                     state,
@@ -214,6 +246,8 @@ internal static class FileAwareAgentRunner
                     requiredSolutionPathSet,
                     requireRepositoryEvidence,
                     requireRepositoryDiscovery,
+                    supportsNativeToolCalls,
+                    targetBatchCharacters,
                     responseTimeoutSeconds,
                     writableFiles);
             }
@@ -232,12 +266,10 @@ internal static class FileAwareAgentRunner
         AgentPhaseDefinition phase,
         int phaseIndex,
         int totalPhases,
-        string repositoryRoot,
         Guid workflowRunId,
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         IArtifactStore? artifacts,
-        RepositoryDiscoveryTools? discoveryTools,
         AvailableFileIndex availableFileIndex,
         List<ChatMessage> pendingMessages,
         AgentExecutionState state,
@@ -246,6 +278,8 @@ internal static class FileAwareAgentRunner
         IReadOnlySet<string> requiredSolutionPathSet,
         bool requireRepositoryEvidence,
         bool requireRepositoryDiscovery,
+        bool supportsNativeToolCalls,
+        int targetBatchCharacters,
         int maxModelResponseSeconds,
         IReadOnlyDictionary<string, string>? writableFiles)
     {
@@ -267,6 +301,7 @@ internal static class FileAwareAgentRunner
             state,
             writableFiles,
             writtenPathsThisPhase,
+            targetBatchCharacters,
             () => nextUnreadFileIndex,
             value => nextUnreadFileIndex = value);
         var toolExecutor = new AgentToolExecutor(
@@ -278,19 +313,46 @@ internal static class FileAwareAgentRunner
             ? toolExecutor.GetAllowedDefinitions()
             : Array.Empty<AgentToolDefinition>();
 
-        for (var i = 0; i < MaxToolCallsPerPhase; i++)
+        var maxInteractions = CalculateMaxInteractionsForPhase(phase, availableFileIndex, targetBatchCharacters);
+        if (IsRepositoryBatchAcquisitionPhase(phase))
+        {
+            var estimatedBatches = EstimateTotalBatchCount(availableFileIndex, targetBatchCharacters);
+            await logs.AppendLineAsync(
+                workflowRunId,
+                $"{phase.Name}: evidence batch target={targetBatchCharacters} chars; estimatedBatches={estimatedBatches}; maxInteractions={maxInteractions}.",
+                ct);
+        }
+        else if (phase.RequireAllAvailableFilesRead)
+        {
+            await logs.AppendLineAsync(
+                workflowRunId,
+                $"{phase.Name}: requires repository evidence already loaded; maxInteractions={maxInteractions}.",
+                ct);
+        }
+
+        for (var i = 0; i < maxInteractions; i++)
         {
             var summarizedPhasePrompt = phase.SummarizePromptInLogs
                 ? BuildPhasePrompt(phase, phaseIndex, totalPhases, writableFiles)
                 : null;
             var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages, summarizedPhasePrompt);
-            await logs.AppendRawBlockAsync(
+            var modelCorrelationId = BuildCorrelationId(phase.Name, i + 1, "model");
+            await LogTransportEventAsync(
+                logs,
                 workflowRunId,
-                $"{phase.Name} interaction {i + 1} model request",
-                BuildRawModelRequestLog(currentMessages, nativeToolDefinitions),
+                eventType: "model_sent",
+                phaseName: phase.Name,
+                interactionNumber: i + 1,
+                toolName: null,
+                correlationId: modelCorrelationId,
+                durationMs: null,
+                summary: BuildModelRequestSummary(currentMessages, nativeToolDefinitions, supportsNativeToolCalls),
+                payloadPreview: BuildModelRequestPreview(currentMessages, nativeToolDefinitions, supportsNativeToolCalls),
+                rawPayload: BuildRawModelRequestLog(currentMessages, nativeToolDefinitions),
                 ct);
 
             AgentConversationResponse response;
+            var modelStopwatch = Stopwatch.StartNew();
             try
             {
                 response = await RunModelWithTimeoutAsync(
@@ -302,18 +364,36 @@ internal static class FileAwareAgentRunner
             }
             catch (Exception ex)
             {
-                await logs.AppendRawBlockAsync(
+                modelStopwatch.Stop();
+                await LogTransportEventAsync(
+                    logs,
                     workflowRunId,
-                    $"{phase.Name} interaction {i + 1} model failure",
-                    BuildRawExceptionLog(ex),
+                    eventType: "model_received",
+                    phaseName: phase.Name,
+                    interactionNumber: i + 1,
+                    toolName: null,
+                    correlationId: modelCorrelationId,
+                    durationMs: modelStopwatch.ElapsedMilliseconds,
+                    summary: $"failure; {ex.GetType().Name}: {ex.Message}",
+                    payloadPreview: "model failure details stored in RAW log only",
+                    rawPayload: BuildRawExceptionLog(ex),
                     ct);
                 throw;
             }
 
-            await logs.AppendRawBlockAsync(
+            modelStopwatch.Stop();
+            await LogTransportEventAsync(
+                logs,
                 workflowRunId,
-                $"{phase.Name} interaction {i + 1} model response",
-                BuildRawModelResponseLog(response),
+                eventType: "model_received",
+                phaseName: phase.Name,
+                interactionNumber: i + 1,
+                toolName: null,
+                correlationId: modelCorrelationId,
+                durationMs: modelStopwatch.ElapsedMilliseconds,
+                summary: BuildModelResponseSummary(response),
+                payloadPreview: BuildModelResponsePreview(response),
+                rawPayload: BuildRawModelResponseLog(response),
                 ct);
 
             var nativeToolAnalysis = AnalyzeNativeToolResponse(response);
@@ -392,6 +472,7 @@ internal static class FileAwareAgentRunner
                     state,
                     interaction,
                     pendingMessages,
+                    targetBatchCharacters,
                     out var earlyPhaseResult))
                 {
                     await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
@@ -556,6 +637,7 @@ internal static class FileAwareAgentRunner
                 state,
                 interaction,
                 pendingMessages,
+                targetBatchCharacters,
                 out var fallbackEarlyPhaseResult))
             {
                 await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
@@ -566,9 +648,99 @@ internal static class FileAwareAgentRunner
             continue;
         }
 
-        throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
+        throw new InvalidOperationException($"Agent exceeded maximum of {maxInteractions} interactions in phase '{phase.Name}'.");
     }
 
+
+    private static int DetermineTargetBatchCharacters(bool supportsNativeToolCalls)
+        => supportsNativeToolCalls ? NativeToolTargetBatchCharacters : FallbackJsonTargetBatchCharacters;
+
+    private static int CalculateMaxInteractionsForPhase(
+        AgentPhaseDefinition phase,
+        AvailableFileIndex availableFileIndex,
+        int targetBatchCharacters)
+    {
+        if (IsRepositoryBatchAcquisitionPhase(phase))
+        {
+            var estimatedBatchCount = EstimateTotalBatchCount(availableFileIndex, targetBatchCharacters);
+            var dynamicLimit = Math.Max(DefaultMaxInteractionsPerPhase, estimatedBatchCount * 3 + 4);
+            return Math.Min(MaxDynamicInteractionsPerPhase, dynamicLimit);
+        }
+
+        return DefaultMaxInteractionsPerPhase;
+    }
+
+    private static bool IsRepositoryBatchAcquisitionPhase(AgentPhaseDefinition phase)
+        => phase.RequireAllAvailableFilesRead &&
+           phase.AllowedToolActions?.Contains("get_next_file_batch", StringComparer.OrdinalIgnoreCase) == true;
+
+    private static async Task LogTransportEventAsync(
+        IWorkflowRunLogStore logs,
+        Guid workflowRunId,
+        string eventType,
+        string phaseName,
+        int interactionNumber,
+        string? toolName,
+        string correlationId,
+        long? durationMs,
+        string summary,
+        string payloadPreview,
+        string rawPayload,
+        CancellationToken ct)
+    {
+        await logs.AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = eventType,
+                Phase = phaseName,
+                Interaction = interactionNumber,
+                ToolName = toolName,
+                CorrelationId = correlationId,
+                DurationMs = durationMs,
+                Summary = summary,
+                PayloadPreview = payloadPreview,
+                PayloadChars = rawPayload?.Length ?? 0,
+                RawPayload = rawPayload
+            },
+            ct);
+    }
+
+    private static string BuildCorrelationId(string phaseName, int interactionNumber, string transport)
+    {
+        var phase = Regex.Replace(phaseName.ToLowerInvariant(), @"[^a-z0-9]+", "-", RegexOptions.CultureInvariant).Trim('-');
+        var channel = Regex.Replace(transport.ToLowerInvariant(), @"[^a-z0-9]+", "-", RegexOptions.CultureInvariant).Trim('-');
+        return $"{phase}-i{interactionNumber}-{channel}";
+    }
+
+    private static string BuildModelRequestSummary(IReadOnlyList<ChatMessage> messages, IReadOnlyList<AgentToolDefinition>? tools, bool supportsNativeToolCalls)
+        => $"sent; messages={messages.Count}; tools={tools?.Count ?? 0}; protocol={(supportsNativeToolCalls ? "native-tools" : "fallback-json")}";
+
+    private static string BuildModelRequestPreview(IReadOnlyList<ChatMessage> messages, IReadOnlyList<AgentToolDefinition>? tools, bool supportsNativeToolCalls)
+        => $"messages={messages.Count}; tools={tools?.Count ?? 0}; protocol={(supportsNativeToolCalls ? "native-tools" : "fallback-json")}; content=<raw-log-only>";
+
+    private static string BuildModelResponseSummary(AgentConversationResponse response)
+        => $"received; textChars={response.Text.Length}; toolCalls={response.ToolCalls.Count}; nativeTools={(response.SupportsNativeToolCalls ? "yes" : "no")}";
+
+    private static string BuildModelResponsePreview(AgentConversationResponse response)
+        => $"textChars={response.Text.Length}; toolCalls={response.ToolCalls.Count}; content=<raw-log-only>";
+
+    private static string BuildToolRequestSummary(AgentToolCall toolCall)
+    {
+        var normalizedToolName = AgentToolExecutor.NormalizeToolName(toolCall.Name);
+        return $"sent; tool={normalizedToolName}; native={(toolCall.IsNative ? "yes" : "no")}; args={CountObjectProperties(toolCall.Arguments)}";
+    }
+
+    private static string BuildToolRequestPreview(AgentToolCall toolCall)
+        => $"{BuildToolCallOutputLog(toolCall)}; content=<raw-log-only>";
+
+    private static string BuildToolResponseSummary(AgentToolExecutionResult result)
+        => $"received; modelPayloadChars={result.ModelPayload.Length}; logSummaryChars={result.LogSummary.Length}; finalOutputChars={result.FinalPhaseOutput?.Length ?? 0}";
+
+    private static string BuildToolResponsePreview(AgentToolExecutionResult result)
+        => string.IsNullOrWhiteSpace(result.LogSummary)
+            ? $"modelPayloadChars={result.ModelPayload.Length}; content=<raw-log-only>"
+            : $"{CleanLogText(result.LogSummary)}; content=<raw-log-only>";
 
     private static string BuildInvalidResponseRetryMessage(AgentPhaseDefinition phase)
     {
@@ -586,6 +758,9 @@ Rules:
 - one object only
 - no additional text
 - no multiple tool calls
+- do not summarize the previous batch
+- do not analyze files in this phase
+- continue the acquisition loop with this exact tool call
 """.Trim();
         }
 
@@ -607,6 +782,7 @@ Rules:
         AgentExecutionState state,
         IReadOnlyDictionary<string, string>? writableFiles,
         HashSet<string> writtenPathsThisPhase,
+        int targetBatchCharacters,
         Func<int> getNextUnreadFileIndex,
         Action<int> setNextUnreadFileIndex)
     {
@@ -686,7 +862,7 @@ Rules:
                     """),
                 (_, _) =>
                 {
-                    var batch = BuildNextFileBatch(availableFileIndex, getNextUnreadFileIndex());
+                    var batch = BuildNextFileBatch(availableFileIndex, getNextUnreadFileIndex(), targetBatchCharacters);
                     setNextUnreadFileIndex(batch.NextUnreadFileIndex);
                     foreach (var file in batch.Files)
                     {
@@ -879,15 +1055,26 @@ Rules:
         CancellationToken ct)
     {
         var normalizedToolName = AgentToolExecutor.NormalizeToolName(toolCall.Name);
-        await logs.AppendRawBlockAsync(
+        var toolCorrelationId = BuildCorrelationId(phase.Name, interactionNumber, $"tool-{normalizedToolName}");
+        await LogTransportEventAsync(
+            logs,
             workflowRunId,
-            $"{phase.Name} interaction {interactionNumber} tool request {normalizedToolName}",
-            BuildRawToolRequestLog(toolCall),
+            eventType: "tool_sent",
+            phaseName: phase.Name,
+            interactionNumber: interactionNumber,
+            toolName: normalizedToolName,
+            correlationId: toolCorrelationId,
+            durationMs: null,
+            summary: BuildToolRequestSummary(toolCall),
+            payloadPreview: BuildToolRequestPreview(toolCall),
+            rawPayload: BuildRawToolRequestLog(toolCall),
             ct);
 
+        var toolStopwatch = Stopwatch.StartNew();
         try
         {
             var result = await toolExecutor.ExecuteAsync(toolCall, ct);
+            toolStopwatch.Stop();
             AppendInteractionSection(
                 interaction,
                 "TOOL RESULT",
@@ -895,26 +1082,43 @@ Rules:
                     ? $"{normalizedToolName} executed."
                     : result.LogSummary);
 
-            await logs.AppendRawBlockAsync(
+            await LogTransportEventAsync(
+                logs,
                 workflowRunId,
-                $"{phase.Name} interaction {interactionNumber} tool response {normalizedToolName}",
-                BuildRawToolResponseLog(result),
+                eventType: "tool_received",
+                phaseName: phase.Name,
+                interactionNumber: interactionNumber,
+                toolName: normalizedToolName,
+                correlationId: toolCorrelationId,
+                durationMs: toolStopwatch.ElapsedMilliseconds,
+                summary: BuildToolResponseSummary(result),
+                payloadPreview: BuildToolResponsePreview(result),
+                rawPayload: BuildRawToolResponseLog(result),
                 ct);
 
             if (!string.IsNullOrWhiteSpace(result.FinalPhaseOutput))
             {
-                AppendInteractionSection(interaction, "WORKFLOW OUTPUT", result.FinalPhaseOutput!);
+                AppendInteractionSection(interaction, "WORKFLOW OUTPUT", $"Final workflow output captured ({result.FinalPhaseOutput!.Length} chars). Content omitted from normal workflow log.");
             }
 
             return result;
         }
         catch (InvalidOperationException ex)
         {
+            toolStopwatch.Stop();
             var toolPayload = $"ERROR: {ex.Message}";
-            await logs.AppendRawBlockAsync(
+            await LogTransportEventAsync(
+                logs,
                 workflowRunId,
-                $"{phase.Name} interaction {interactionNumber} tool failure {normalizedToolName}",
-                BuildRawExceptionLog(ex),
+                eventType: "tool_received",
+                phaseName: phase.Name,
+                interactionNumber: interactionNumber,
+                toolName: normalizedToolName,
+                correlationId: toolCorrelationId,
+                durationMs: toolStopwatch.ElapsedMilliseconds,
+                summary: $"failure; {ex.GetType().Name}: {ex.Message}",
+                payloadPreview: "tool failure details stored in RAW log only",
+                rawPayload: BuildRawExceptionLog(ex),
                 ct);
             AppendInteractionSection(interaction, "VALIDATION", $"Rejected tool call '{toolCall.Name}': {ex.Message}");
             AppendInteractionSection(interaction, "TOOL RESULT", toolPayload);
@@ -931,6 +1135,7 @@ Rules:
         AgentExecutionState state,
         StringBuilder interaction,
         List<ChatMessage> pendingMessages,
+        int targetBatchCharacters,
         out string? earlyPhaseResult)
     {
         earlyPhaseResult = null;
@@ -940,7 +1145,7 @@ Rules:
             phase.AutoLoadAllAvailableFilesAfterFindAvailableFiles)
         {
             pendingMessages.Add(CreateToolMessage(toolResult.ModelPayload));
-            var autoLoadResult = AutoLoadRepositoryEvidence(availableFileIndex, state);
+            var autoLoadResult = AutoLoadRepositoryEvidence(availableFileIndex, state, targetBatchCharacters);
             foreach (var payload in autoLoadResult.ToolPayloads)
             {
                 pendingMessages.Add(CreateToolMessage(payload));
@@ -1202,46 +1407,6 @@ Rules:
         return "text";
     }
 
-    private static string SummarizeInputMessageForLog(string content)
-    {
-        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out var nativeToolResult))
-        {
-            return BuildNativeToolResultLog(nativeToolResult);
-        }
-
-        var trimmed = content.TrimStart();
-        if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase))
-        {
-            return BuildBatchHeaderSummary(content);
-        }
-
-        if (trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
-        {
-            return BuildFilePayloadMetadataLog(content);
-        }
-
-        if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase))
-        {
-            return BuildArtifactContextMetadataLog(content);
-        }
-
-        if (trimmed.StartsWith("WORKFLOW INPUT FOR", StringComparison.OrdinalIgnoreCase))
-        {
-            return $"Workflow input payload queued ({content.Length} chars).";
-        }
-
-        return SanitizeModelMessageForLog(content);
-    }
-
-    private static string BuildBatchHeaderSummary(string payload)
-    {
-        var batch = ExtractHeaderValue(payload, "BATCH INDEX") ?? "?";
-        var total = ExtractHeaderValue(payload, "TOTAL BATCHES") ?? "?";
-        var hasMore = ExtractHeaderValue(payload, "HAS MORE") ?? "?";
-        var fileCount = ExtractHeaderValue(payload, "FILES IN BATCH") ?? "?";
-        return $"Tool result from previous interaction: batch {batch}/{total}; files={fileCount}; hasMore={hasMore}.";
-    }
-
     private static string BuildBatchResultLog(FileBatchResult batch)
     {
         var sb = new StringBuilder();
@@ -1265,31 +1430,6 @@ Rules:
             {
                 sb.AppendLine($"- ... {batch.Files.Count - 8} more file(s) omitted from log preview.");
             }
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string SummarizeFileListForLog(string fileListResult)
-    {
-        var lines = fileListResult.Replace("\r\n", "\n").Replace("\r", "\n")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (lines.Length == 0)
-        {
-            return "No files returned.";
-        }
-
-        var preview = lines.Take(12).ToList();
-        var sb = new StringBuilder();
-        sb.AppendLine($"File list returned: {lines.Length} path(s).");
-        foreach (var line in preview)
-        {
-            sb.AppendLine($"- {line}");
-        }
-
-        if (lines.Length > preview.Count)
-        {
-            sb.AppendLine($"- ... {lines.Length - preview.Count} more path(s) omitted from log preview.");
         }
 
         return sb.ToString().TrimEnd();
@@ -1505,7 +1645,7 @@ Rules:
             return BuildArtifactContextMetadataLog(content);
         }
 
-        return content;
+        return $"Model text omitted from normal workflow log ({content.Length} chars). See RAW log for full transport payload.";
     }
 
     private static string BuildNativeToolResultLog(AgentToolMessageProtocol.NativeToolResultEnvelope nativeToolResult)
@@ -1523,23 +1663,6 @@ Rules:
         var separator = normalized.IndexOf("\n\n", StringComparison.Ordinal);
         var artifactContentLength = separator >= 0 ? normalized[(separator + 2)..].Trim().Length : 0;
         return $"Artifact context queued into model message.\nArtifact: {artifactName}\nArtifact content chars: {artifactContentLength}\nFull message chars: {content.Length}\nContent omitted from log.";
-    }
-
-    private static string BuildToolRequestLog(string rawText, ToolRequest request)
-    {
-        var action = request.ResolvedAction;
-        if (string.Equals(action, "write_file", StringComparison.OrdinalIgnoreCase))
-        {
-            return "{\n" +
-                   $"  \"tool\": \"write_file\",\n" +
-                   $"  \"path\": \"{EscapeForLog(request.ResolvedPath ?? "<null>")}\",\n" +
-                   $"  \"contentLength\": {request.ResolvedContent?.Length ?? 0},\n" +
-                   $"  \"rawRequestChars\": {rawText.Length},\n" +
-                   "  \"content\": \"<omitted from log>\"\n" +
-                   "}";
-        }
-
-        return rawText.Trim();
     }
 
     private static string EscapeForLog(string value)
@@ -1727,55 +1850,6 @@ Rules:
         }
     }
 
-    private static bool TryParseToolRequest(string raw, out ToolRequest? request)
-    {
-        request = null;
-        var json = ExtractJsonObjectOrNull(raw);
-        if (json is null)
-        {
-            return false;
-        }
-
-        try
-        {
-            request = JsonSerializer.Deserialize<ToolRequest>(json, JsonOptions);
-            return request is not null && !string.IsNullOrWhiteSpace(request.ResolvedAction);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static string? ExtractJsonObjectOrNull(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return null;
-        }
-
-        var trimmed = raw.Trim();
-        if (trimmed.StartsWith("```", StringComparison.Ordinal))
-        {
-            var firstNewLine = trimmed.IndexOf('\n');
-            if (firstNewLine >= 0)
-            {
-                trimmed = trimmed[(firstNewLine + 1)..].Trim();
-                if (trimmed.EndsWith("```", StringComparison.Ordinal))
-                {
-                    trimmed = trimmed[..^3].Trim();
-                }
-            }
-        }
-
-        if (!trimmed.StartsWith("{", StringComparison.Ordinal) || !trimmed.EndsWith("}", StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        return trimmed;
-    }
-
     private static IReadOnlyList<ChatMessage> BuildPostToolMessages(string toolPayload)
     {
         return [CreateToolMessage(toolPayload)];
@@ -1926,7 +2000,7 @@ Rules:
 
         return paths.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
-    private static AutoLoadRepositoryEvidenceResult AutoLoadRepositoryEvidence(AvailableFileIndex availableFileIndex, AgentExecutionState state)
+    private static AutoLoadRepositoryEvidenceResult AutoLoadRepositoryEvidence(AvailableFileIndex availableFileIndex, AgentExecutionState state, int targetBatchCharacters)
     {
         var payloads = new List<string>();
         var nextUnreadFileIndex = 0;
@@ -1934,7 +2008,7 @@ Rules:
         var reviewedThisLoad = 0;
         while (nextUnreadFileIndex < availableFileIndex.FullPaths.Count)
         {
-            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
+            var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex, targetBatchCharacters);
             if (batch.Files.Count == 0)
             {
                 break;
@@ -1977,9 +2051,6 @@ Rules:
             throw new TimeoutException($"Model response exceeded {maxModelResponseSeconds} seconds.", ex);
         }
     }
-
-    private static string? NormalizeOptionalPath(string? relativePath)
-        => string.IsNullOrWhiteSpace(relativePath) ? null : NormalizePath(relativePath);
 
     private static AvailableFileIndex BuildAvailableFileIndex(string repositoryRoot, IReadOnlyCollection<string> allowedPaths)
     {
@@ -2042,7 +2113,7 @@ Rules:
         return string.Join(Environment.NewLine, fullPaths);
     }
 
-    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex)
+    private static FileBatchResult BuildNextFileBatch(AvailableFileIndex availableFileIndex, int nextUnreadFileIndex, int targetBatchCharacters)
     {
         if (nextUnreadFileIndex < 0)
         {
@@ -2051,8 +2122,10 @@ Rules:
 
         if (nextUnreadFileIndex >= availableFileIndex.FullPaths.Count)
         {
-            var emptyPayload = "END OF FILE BATCHES";
-            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, 0, 0);
+            var completedTotalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex, targetBatchCharacters);
+            var completedBatchNumber = Math.Max(1, completedTotalBatchesEstimate);
+            var emptyPayload = $"BATCH INDEX: {completedBatchNumber}\nTOTAL BATCHES: {completedTotalBatchesEstimate}\nHAS MORE: no\nFILES IN BATCH: 0\n\nEND OF FILE BATCHES";
+            return new FileBatchResult([], emptyPayload, nextUnreadFileIndex, false, completedBatchNumber, completedTotalBatchesEstimate);
         }
 
         var files = new List<FileReadResult>();
@@ -2074,7 +2147,7 @@ Rules:
             var normalizedPath = NormalizePath(fullPath);
             var blockText = BuildFullFileBatchBlock(fullPath, normalizedPath, originalContent);
 
-            if (files.Count > 0 && accumulatedCharacters + blockText.Length > TargetBatchCharacters)
+            if (files.Count > 0 && accumulatedCharacters + blockText.Length > targetBatchCharacters)
             {
                 currentIndex--;
                 break;
@@ -2091,8 +2164,8 @@ Rules:
             accumulatedCharacters += blockText.Length;
         }
 
-        var totalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex);
-        var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex);
+        var totalBatchesEstimate = EstimateTotalBatchCount(availableFileIndex, targetBatchCharacters);
+        var batchNumber = CalculateBatchNumber(availableFileIndex, nextUnreadFileIndex, targetBatchCharacters);
         var hasMore = currentIndex < availableFileIndex.FullPaths.Count;
         var payloadText = payload.Length == 0
             ? $"BATCH INDEX: {batchNumber}\nTOTAL BATCHES: {totalBatchesEstimate}\nHAS MORE: {(hasMore ? "yes" : "no")}\nFILES IN BATCH: 0\n\nEND OF FILE BATCHES"
@@ -2107,29 +2180,6 @@ Rules:
             totalBatchesEstimate);
     }
 
-
-    private static IReadOnlyList<string> DescribeBatchFilesForLog(IReadOnlyList<FileReadResult> files)
-    {
-        if (files.Count == 0)
-        {
-            return ["No files returned in this batch."];
-        }
-
-        var lines = new List<string>(files.Count);
-        for (var i = 0; i < files.Count; i++)
-        {
-            var file = files[i];
-            var positionLabel = i == 0
-                ? "First file"
-                : i == files.Count - 1
-                    ? "Last file"
-                    : "File";
-
-            lines.Add($"{positionLabel}: {file.FullPath} | chars={file.Content.Length}");
-        }
-
-        return lines;
-    }
 
     private static string BuildFullFileBatchBlock(string fullPath, string normalizedPath, string content)
     {
@@ -2156,7 +2206,7 @@ Rules:
         return sb.ToString().TrimEnd();
     }
 
-    private static int EstimateTotalBatchCount(AvailableFileIndex availableFileIndex)
+    private static int EstimateTotalBatchCount(AvailableFileIndex availableFileIndex, int targetBatchCharacters)
     {
         const int startIndex = 0;
 
@@ -2169,7 +2219,7 @@ Rules:
         var index = startIndex;
         while (index < availableFileIndex.FullPaths.Count)
         {
-            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index);
+            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index, targetBatchCharacters);
             if (batch.NextIndex <= index)
             {
                 break;
@@ -2182,7 +2232,7 @@ Rules:
         return Math.Max(1, count);
     }
 
-    private static int CalculateBatchNumber(AvailableFileIndex availableFileIndex, int startIndex)
+    private static int CalculateBatchNumber(AvailableFileIndex availableFileIndex, int startIndex, int targetBatchCharacters)
     {
         if (startIndex <= 0)
         {
@@ -2193,7 +2243,7 @@ Rules:
         var index = 0;
         while (index < startIndex)
         {
-            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index);
+            var batch = BuildNextFileBatchForEstimation(availableFileIndex, index, targetBatchCharacters);
             if (batch.NextIndex <= index)
             {
                 break;
@@ -2211,7 +2261,7 @@ Rules:
         return batchNumber;
     }
 
-    private static BatchEstimateResult BuildNextFileBatchForEstimation(AvailableFileIndex availableFileIndex, int startIndex)
+    private static BatchEstimateResult BuildNextFileBatchForEstimation(AvailableFileIndex availableFileIndex, int startIndex, int targetBatchCharacters)
     {
         var accumulatedCharacters = 0;
         var index = startIndex;
@@ -2231,7 +2281,7 @@ Rules:
             var normalizedPath = NormalizePath(fullPath);
             var blockLength = BuildFullFileBatchBlock(fullPath, normalizedPath, content).Length;
 
-            if (fileCount > 0 && accumulatedCharacters + blockLength > TargetBatchCharacters)
+            if (fileCount > 0 && accumulatedCharacters + blockLength > targetBatchCharacters)
             {
                 index--;
                 break;
@@ -2261,46 +2311,6 @@ Rules:
     private static ChatMessage CreateUserMessage(string content) => new(ChatRole.User, content);
 
     private static ChatMessage CreateToolMessage(string content) => new(ChatRole.Tool, content);
-
-    private static string FormatRepositoryTree(IReadOnlyList<RepositoryEntry> entries, string? scope)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"SCOPE: {scope ?? "."}");
-        sb.AppendLine($"ENTRY COUNT: {entries.Count}");
-
-        foreach (var entry in entries.Take(MaxListedFiles))
-        {
-            sb.AppendLine($"- {(entry.IsDirectory ? "[dir]" : "[file]")} {entry.RelativePath}");
-        }
-
-        if (entries.Count > MaxListedFiles)
-        {
-            sb.AppendLine($"... truncated to first {MaxListedFiles} entries ...");
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string FormatSearchHits(string query, IReadOnlyList<FileSearchHit> hits, string? scope)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"QUERY: {query}");
-        sb.AppendLine($"SCOPE: {scope ?? "."}");
-        sb.AppendLine($"HIT COUNT: {hits.Count}");
-
-        foreach (var hit in hits.Take(MaxSearchHits))
-        {
-            sb.AppendLine($"- {hit.RelativePath}");
-            sb.AppendLine($"  {hit.Snippet}");
-        }
-
-        if (hits.Count > MaxSearchHits)
-        {
-            sb.AppendLine($"... truncated to first {MaxSearchHits} hits ...");
-        }
-
-        return sb.ToString().TrimEnd();
-    }
 
     private static async Task LogIgnoredWorkflowRunIdAsync(
         string? requestedWorkflowRunId,
@@ -2358,9 +2368,6 @@ Rules:
         bool AutoLoadAllAvailableFilesAfterFindAvailableFiles = false,
         bool SummarizePromptInLogs = false);
 
-    internal sealed record RepositoryDiscoveryTools(
-        Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,
-        Func<string, string?, CancellationToken, Task<IReadOnlyList<FileSearchHit>>> SearchRepositoryAsync);
 
     private sealed class AgentExecutionState
     {

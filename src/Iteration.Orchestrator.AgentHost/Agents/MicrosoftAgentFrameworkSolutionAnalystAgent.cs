@@ -122,7 +122,6 @@ public sealed class MicrosoftAgentFrameworkSolutionAnalystAgent : ISolutionAnaly
                 ct,
                 requireRepositoryEvidence: true,
                 requireRepositoryDiscovery: false,
-                discoveryTools: null,
                 maxModelResponseSeconds: _maxModelResponseSeconds);
 
             var normalizedReportMarkdown = NormalizeMarkdown(reportMarkdown);

@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using Iteration.Orchestrator.Application.Abstractions;
 using Iteration.Orchestrator.Api.Contracts;
 using Iteration.Orchestrator.Application.Solutions;
@@ -187,13 +187,13 @@ public sealed class WorkflowRunsController : ControllerBase
         [FromServices] IWorkflowRunLogStore logs,
         CancellationToken ct)
     {
-        var logContent = await logs.ReadAsync(id, ct);
-        if (string.IsNullOrWhiteSpace(logContent))
+        var rawLogContent = await logs.ReadRawAsync(id, ct);
+        if (string.IsNullOrWhiteSpace(rawLogContent))
         {
             return NotFound(new { message = "Workflow prompt not found." });
         }
 
-        var promptSections = ExtractPromptSections(logContent);
+        var promptSections = ExtractPromptSectionsFromRawLog(rawLogContent);
         if (promptSections.Count == 0)
         {
             return NotFound(new { message = "Workflow prompt not found." });
@@ -455,47 +455,61 @@ public sealed class WorkflowRunsController : ControllerBase
         });
     }
 
-    private static List<LogSection> ExtractPromptSections(string logContent)
+    private static List<LogSection> ExtractPromptSectionsFromRawLog(string rawLogContent)
     {
-        if (string.IsNullOrWhiteSpace(logContent))
+        var sections = new List<LogSection>();
+        foreach (var line in rawLogContent.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
         {
-            return [];
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (!TryGetString(root, "EventType", out var eventType) ||
+                    !string.Equals(eventType, "model_sent", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!TryGetString(root, "RawPayload", out var rawPayload) || string.IsNullOrWhiteSpace(rawPayload))
+                {
+                    continue;
+                }
+
+                var phase = TryGetString(root, "Phase", out var phaseValue) && !string.IsNullOrWhiteSpace(phaseValue)
+                    ? phaseValue
+                    : "model request";
+                var interaction = root.TryGetProperty("Interaction", out var interactionElement) &&
+                                  interactionElement.ValueKind == JsonValueKind.Number &&
+                                  interactionElement.TryGetInt32(out var interactionValue)
+                    ? $" interaction {interactionValue}"
+                    : string.Empty;
+
+                sections.Add(new LogSection($"{phase}{interaction} model request", rawPayload));
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed legacy raw-log lines.
+            }
         }
 
-        var sections = ExtractLogSections(logContent);
-        var exactPromptSections = sections
-            .Where(section => string.Equals(section.Title, "PROMPT", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        if (exactPromptSections.Count > 0)
-        {
-            return exactPromptSections;
-        }
-
-        return sections
-            .Where(section =>
-                section.Title.StartsWith("PROMPT:", StringComparison.OrdinalIgnoreCase) ||
-                section.Title.StartsWith("PHASE PROMPT:", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        return sections;
     }
 
-    private static List<LogSection> ExtractLogSections(string logContent)
+    private static bool TryGetString(JsonElement element, string propertyName, out string value)
     {
-        if (string.IsNullOrWhiteSpace(logContent))
+        value = string.Empty;
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
         {
-            return [];
+            return false;
         }
 
-        var normalizedLog = logContent.Replace("\r\n", "\n");
-        var pattern = @"^\[[^\n]+\]\s==\s(?<title>.+?)\s==\s*\n(?<content>[\s\S]*?)(?=^\[[^\n]+\]\s==\s.+?\s==\s*\n|\z)";
-        var matches = Regex.Matches(normalizedLog, pattern, RegexOptions.Multiline);
-
-        return matches
-            .Select(match => new LogSection(
-                match.Groups["title"].Value.Trim(),
-                match.Groups["content"].Value.Trim()))
-            .Where(section => !string.IsNullOrWhiteSpace(section.Title))
-            .ToList();
+        value = property.GetString() ?? string.Empty;
+        return true;
     }
 
     private sealed record LogSection(string Title, string Content);
