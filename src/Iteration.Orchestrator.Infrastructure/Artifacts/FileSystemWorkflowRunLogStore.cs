@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Iteration.Orchestrator.Application.Abstractions;
 
@@ -6,7 +8,13 @@ namespace Iteration.Orchestrator.Infrastructure.Artifacts;
 
 public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
 {
-    private static readonly Regex ExcessBlankLinesRegex = new("\n{3,}", RegexOptions.Compiled);
+    private const int HighlightPreviewMaxChars = 500;
+    private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly JsonSerializerOptions RawJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = false
+    };
 
     private readonly string _rootPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -16,54 +24,126 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         _rootPath = rootPath;
     }
 
-    public async Task AppendLineAsync(Guid workflowRunId, string message, CancellationToken ct)
+    public Task AppendLineAsync(Guid workflowRunId, string message, CancellationToken ct)
+        => AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = "message",
+                Summary = message ?? string.Empty,
+                PayloadPreview = BuildPreview(message),
+                PayloadChars = message?.Length ?? 0,
+                RawPayload = message
+            },
+            ct);
+
+    public Task AppendSectionAsync(Guid workflowRunId, string title, CancellationToken ct)
+        => AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = "section",
+                Summary = title ?? string.Empty,
+                PayloadPreview = BuildPreview(title),
+                PayloadChars = title?.Length ?? 0,
+                RawPayload = title
+            },
+            ct);
+
+    public Task AppendKeyValuesAsync(Guid workflowRunId, string title, IReadOnlyDictionary<string, string?> values, CancellationToken ct)
     {
-        var line = $"[{DateTime.UtcNow:O}] {message}{Environment.NewLine}";
-        await AppendAsync(GetPath(workflowRunId), line, ct);
+        var payload = JsonSerializer.Serialize(values, RawJsonOptions);
+        var summary = string.IsNullOrWhiteSpace(title)
+            ? $"key_values count={values.Count}"
+            : $"{title} count={values.Count}";
+
+        return AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = "key_values",
+                Summary = summary,
+                PayloadPreview = BuildPreview(payload),
+                PayloadChars = payload.Length,
+                RawPayload = payload
+            },
+            ct);
     }
 
-    public async Task AppendSectionAsync(Guid workflowRunId, string title, CancellationToken ct)
+    public Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
-        var content = $"{Environment.NewLine}[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} =={Environment.NewLine}";
-        await AppendAsync(GetPath(workflowRunId), content, ct);
-    }
-
-    public async Task AppendKeyValuesAsync(Guid workflowRunId, string title, IReadOnlyDictionary<string, string?> values, CancellationToken ct)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine();
-        sb.AppendLine($"[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} ==");
-        foreach (var pair in values)
-        {
-            sb.AppendLine($"- {pair.Key}: {pair.Value ?? string.Empty}");
-        }
-
-        await AppendAsync(GetPath(workflowRunId), sb.ToString(), ct);
-    }
-
-    public async Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine();
-        sb.AppendLine($"[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} ==");
-        sb.AppendLine(content ?? string.Empty);
-        await AppendAsync(GetPath(workflowRunId), sb.ToString(), ct);
+        content ??= string.Empty;
+        return AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = InferBlockEventType(title),
+                Summary = BuildBlockSummary(title, content),
+                PayloadPreview = BuildPreview(content),
+                PayloadChars = content.Length,
+                RawPayload = content
+            },
+            ct);
     }
 
     public Task<string?> ReadAsync(Guid workflowRunId, CancellationToken ct)
         => ReadFileAsync(GetPath(workflowRunId), ct);
 
-    public async Task AppendRawBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
+    public Task AppendRawBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine();
-        sb.AppendLine($"[{DateTime.UtcNow:O}] == RAW: {title.ToUpperInvariant()} ==");
-        sb.AppendLine(content ?? string.Empty);
-        await AppendAsync(GetRawPath(workflowRunId), sb.ToString(), ct);
+        content ??= string.Empty;
+        return AppendEventAsync(
+            workflowRunId,
+            new WorkflowLogEvent
+            {
+                EventType = InferRawEventType(title),
+                Summary = BuildBlockSummary(title, content),
+                PayloadPreview = BuildPreview(content),
+                PayloadChars = content.Length,
+                RawPayload = content
+            },
+            ct);
     }
 
     public Task<string?> ReadRawAsync(Guid workflowRunId, CancellationToken ct)
         => ReadFileAsync(GetRawPath(workflowRunId), ct);
+
+    public async Task AppendEventAsync(Guid workflowRunId, WorkflowLogEvent logEvent, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(logEvent);
+
+        var timestamp = logEvent.Timestamp == default ? DateTimeOffset.UtcNow : logEvent.Timestamp;
+        var normalizedEvent = logEvent with
+        {
+            Timestamp = timestamp,
+            Level = NormalizeToken(logEvent.Level, "info"),
+            EventType = NormalizeToken(logEvent.EventType, "event"),
+            Phase = NormalizeNullable(logEvent.Phase),
+            Role = NormalizeNullable(logEvent.Role),
+            ToolName = NormalizeNullable(logEvent.ToolName),
+            Summary = NormalizeInline(logEvent.Summary),
+            PayloadPreview = BuildPreview(logEvent.PayloadPreview ?? logEvent.RawPayload),
+            PayloadChars = logEvent.PayloadChars > 0
+                ? logEvent.PayloadChars
+                : logEvent.RawPayload?.Length ?? logEvent.PayloadPreview?.Length ?? 0
+        };
+
+        var highlightLine = FormatHighlightLine(normalizedEvent);
+        var rawLine = JsonSerializer.Serialize(normalizedEvent, RawJsonOptions) + Environment.NewLine;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(GetPath(workflowRunId))!);
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            await File.AppendAllTextAsync(GetPath(workflowRunId), highlightLine, ct);
+            await File.AppendAllTextAsync(GetRawPath(workflowRunId), rawLine, ct);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     private static async Task<string?> ReadFileAsync(string path, CancellationToken ct)
     {
@@ -75,41 +155,131 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         return await File.ReadAllTextAsync(path, ct);
     }
 
-    private async Task AppendAsync(string path, string content, CancellationToken ct)
+    private static string FormatHighlightLine(WorkflowLogEvent logEvent)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var sb = new StringBuilder();
+        sb.Append(logEvent.Timestamp.UtcDateTime.ToString("O"));
+        sb.Append(" | ");
+        sb.Append(logEvent.Level);
+        sb.Append(" | ");
+        sb.Append(logEvent.EventType);
 
-        await _gate.WaitAsync(ct);
-        try
+        if (!string.IsNullOrWhiteSpace(logEvent.Phase))
         {
-            var normalizedContent = NormalizeLogContent(content, File.Exists(path));
-            await File.AppendAllTextAsync(path, normalizedContent, ct);
+            sb.Append(" | phase=");
+            sb.Append(logEvent.Phase);
         }
-        finally
+
+        if (logEvent.Interaction is not null)
         {
-            _gate.Release();
+            sb.Append(" | interaction=");
+            sb.Append(logEvent.Interaction.Value);
         }
+
+        if (!string.IsNullOrWhiteSpace(logEvent.Role))
+        {
+            sb.Append(" | role=");
+            sb.Append(logEvent.Role);
+        }
+
+        if (!string.IsNullOrWhiteSpace(logEvent.ToolName))
+        {
+            sb.Append(" | tool=");
+            sb.Append(logEvent.ToolName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(logEvent.Summary))
+        {
+            sb.Append(" | ");
+            sb.Append(logEvent.Summary);
+        }
+
+        sb.Append(" | chars=");
+        sb.Append(logEvent.PayloadChars);
+
+        if (!string.IsNullOrWhiteSpace(logEvent.PayloadPreview))
+        {
+            sb.Append(" | preview=\"");
+            sb.Append(EscapeHighlightValue(logEvent.PayloadPreview!));
+            sb.Append('"');
+        }
+
+        sb.Append(Environment.NewLine);
+        return sb.ToString();
     }
 
-    private static string NormalizeLogContent(string content, bool hasExistingContent)
+    private static string BuildBlockSummary(string? title, string content)
     {
-        var normalized = (content ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
-        normalized = ExcessBlankLinesRegex.Replace(normalized, "\n\n");
-
-        if (hasExistingContent)
+        var safeTitle = NormalizeInline(title);
+        if (string.IsNullOrWhiteSpace(safeTitle))
         {
-            normalized = normalized.TrimStart('\n');
-            if (!normalized.StartsWith("\n", StringComparison.Ordinal))
-            {
-                normalized = "\n" + normalized;
-            }
-        }
-        else
-        {
-            normalized = normalized.TrimStart('\n');
+            safeTitle = "block";
         }
 
-        return normalized.Replace("\n", Environment.NewLine);
+        return $"{safeTitle} chars={content.Length}";
+    }
+
+    private static string BuildPreview(string? content)
+    {
+        var preview = NormalizeInline(content);
+        if (preview.Length <= HighlightPreviewMaxChars)
+        {
+            return preview;
+        }
+
+        return preview[..HighlightPreviewMaxChars] + "…";
+    }
+
+    private static string NormalizeInline(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        var normalized = content.Replace("\r\n", "\\n", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\r", "\\n", StringComparison.Ordinal)
+            .Trim();
+
+        return WhitespaceRegex.Replace(normalized, " ");
+    }
+
+    private static string NormalizeToken(string? value, string fallback)
+    {
+        var normalized = NormalizeInline(value);
+        return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
+    }
+
+    private static string? NormalizeNullable(string? value)
+    {
+        var normalized = NormalizeInline(value);
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string EscapeHighlightValue(string value)
+        => value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    private static string InferBlockEventType(string? title)
+    {
+        var normalized = title ?? string.Empty;
+        if (normalized.Contains("prompt", StringComparison.OrdinalIgnoreCase)) return "prompt";
+        if (normalized.Contains("response", StringComparison.OrdinalIgnoreCase)) return "model_response";
+        if (normalized.Contains("interaction", StringComparison.OrdinalIgnoreCase)) return "interaction";
+        return "block";
+    }
+
+    private static string InferRawEventType(string? title)
+    {
+        var normalized = title ?? string.Empty;
+        if (normalized.Contains("model request", StringComparison.OrdinalIgnoreCase)) return "model_request";
+        if (normalized.Contains("model response", StringComparison.OrdinalIgnoreCase)) return "model_response";
+        if (normalized.Contains("model failure", StringComparison.OrdinalIgnoreCase)) return "model_failure";
+        if (normalized.Contains("tool request", StringComparison.OrdinalIgnoreCase)) return "tool_request";
+        if (normalized.Contains("tool response", StringComparison.OrdinalIgnoreCase)) return "tool_result";
+        if (normalized.Contains("tool failure", StringComparison.OrdinalIgnoreCase)) return "tool_failure";
+        return "raw";
     }
 
     private string GetPath(Guid workflowRunId)
