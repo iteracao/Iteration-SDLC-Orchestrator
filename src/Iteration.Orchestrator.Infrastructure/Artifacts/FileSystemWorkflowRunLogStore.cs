@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -73,17 +74,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     public Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
         content ??= string.Empty;
-        return AppendEventAsync(
-            workflowRunId,
-            new WorkflowLogEvent
-            {
-                EventType = InferBlockEventType(title),
-                Summary = BuildBlockSummary(title, content),
-                PayloadPreview = BuildPreview(content),
-                PayloadChars = content.Length,
-                RawPayload = content
-            },
-            ct);
+        return AppendEventAsync(workflowRunId, BuildBlockEvent(title, content, isRaw: false), ct);
     }
 
     public Task<string?> ReadAsync(Guid workflowRunId, CancellationToken ct)
@@ -92,17 +83,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     public Task AppendRawBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
         content ??= string.Empty;
-        return AppendEventAsync(
-            workflowRunId,
-            new WorkflowLogEvent
-            {
-                EventType = InferRawEventType(title),
-                Summary = BuildBlockSummary(title, content),
-                PayloadPreview = BuildPreview(content),
-                PayloadChars = content.Length,
-                RawPayload = content
-            },
-            ct);
+        return AppendEventAsync(workflowRunId, BuildBlockEvent(title, content, isRaw: true), ct);
     }
 
     public Task<string?> ReadRawAsync(Guid workflowRunId, CancellationToken ct)
@@ -208,16 +189,76 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         return sb.ToString();
     }
 
-    private static string BuildBlockSummary(string? title, string content)
+    private static WorkflowLogEvent BuildBlockEvent(string? title, string content, bool isRaw)
     {
-        var safeTitle = NormalizeInline(title);
-        if (string.IsNullOrWhiteSpace(safeTitle))
+        var eventType = isRaw ? InferRawEventType(title) : InferBlockEventType(title);
+        var metadata = ExtractBlockMetadata(title);
+
+        return new WorkflowLogEvent
         {
-            safeTitle = "block";
+            EventType = eventType,
+            Phase = metadata.Phase,
+            Interaction = metadata.Interaction,
+            ToolName = metadata.ToolName,
+            Summary = BuildCompactBlockSummary(eventType, title),
+            PayloadPreview = BuildPreview(content),
+            PayloadChars = content.Length,
+            RawPayload = content
+        };
+    }
+
+    private static string BuildCompactBlockSummary(string eventType, string? title)
+    {
+        return eventType switch
+        {
+            "model_request" => "request",
+            "model_response" => "response",
+            "model_failure" => "failure",
+            "tool_request" => "request",
+            "tool_result" => "result",
+            "tool_failure" => "failure",
+            "interaction" => "summary",
+            "prompt" => "phase prompt",
+            "section" => NormalizeInline(title),
+            _ => string.IsNullOrWhiteSpace(title) ? eventType : NormalizeInline(title)
+        };
+    }
+
+    private static BlockMetadata ExtractBlockMetadata(string? title)
+    {
+        var normalized = NormalizeInline(title);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return default;
         }
 
-        return $"{safeTitle} chars={content.Length}";
+        var match = Regex.Match(
+            normalized,
+            @"^(?<phase>.+?)\s+interaction\s+(?<interaction>\d+)\s+(?<kind>.+)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (!match.Success)
+        {
+            return default;
+        }
+
+        var kind = match.Groups["kind"].Value;
+        return new BlockMetadata(
+            NormalizeNullable(match.Groups["phase"].Value),
+            int.TryParse(match.Groups["interaction"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var interaction)
+                ? interaction
+                : null,
+            ExtractToolName(kind));
     }
+
+    private static string? ExtractToolName(string kind)
+    {
+        var normalized = NormalizeInline(kind);
+        var toolMatch = Regex.Match(normalized, @"tool\s+(request|response|failure)\s*[:=]?\s*(?<tool>[A-Za-z0-9_.-]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return toolMatch.Success ? NormalizeNullable(toolMatch.Groups["tool"].Value) : null;
+    }
+
+    private readonly record struct BlockMetadata(string? Phase, int? Interaction, string? ToolName);
 
     private static string BuildPreview(string? content)
     {
@@ -264,9 +305,9 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     private static string InferBlockEventType(string? title)
     {
         var normalized = title ?? string.Empty;
-        if (normalized.Contains("prompt", StringComparison.OrdinalIgnoreCase)) return "prompt";
-        if (normalized.Contains("response", StringComparison.OrdinalIgnoreCase)) return "model_response";
         if (normalized.Contains("interaction", StringComparison.OrdinalIgnoreCase)) return "interaction";
+        if (normalized.Contains("response", StringComparison.OrdinalIgnoreCase)) return "model_response";
+        if (normalized.Contains("prompt", StringComparison.OrdinalIgnoreCase)) return "prompt";
         return "block";
     }
 

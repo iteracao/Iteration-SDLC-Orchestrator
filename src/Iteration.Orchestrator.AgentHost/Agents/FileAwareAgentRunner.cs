@@ -1113,7 +1113,6 @@ Rules:
         string? summarizedPhasePrompt)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"{phaseName} - interaction {interactionNumber}");
         AppendInteractionSection(sb, "INPUT", BuildInputMessagesLog(inputMessages, summarizedPhasePrompt));
         return sb;
     }
@@ -1150,10 +1149,9 @@ Rules:
             var content = GetChatMessageText(message);
             var source = InferMessageSource(content);
             var summary = ShouldSummarizePhasePrompt(content, summarizedPhasePrompt)
-                ? $"Phase prompt input ({content.Length} chars). Content omitted from normal workflow log."
-                : SummarizeInputMessageForLog(content);
-            sb.AppendLine($"Message {index + 1}/{messages.Count} [{message.Role}; {source}; {content.Length} chars]");
-            sb.AppendLine(summary);
+                ? "phase-prompt omitted"
+                : BuildInputMessageMetadataForLog(content);
+            sb.AppendLine($"message={index + 1}/{messages.Count} role={message.Role} source={source} chars={content.Length} {summary}");
             if (index < messages.Count - 1)
             {
                 sb.AppendLine();
@@ -1166,6 +1164,42 @@ Rules:
     private static bool ShouldSummarizePhasePrompt(string content, string? summarizedPhasePrompt)
         => !string.IsNullOrWhiteSpace(summarizedPhasePrompt) &&
            string.Equals(content.TrimEnd(), summarizedPhasePrompt, StringComparison.Ordinal);
+
+    private static string BuildInputMessageMetadataForLog(string content)
+    {
+        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out var nativeToolResult))
+        {
+            return $"tool-result={nativeToolResult.ToolName}";
+        }
+
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase))
+        {
+            var batch = ExtractHeaderValue(content, "BATCH INDEX") ?? "?";
+            var total = ExtractHeaderValue(content, "TOTAL BATCHES") ?? "?";
+            var fileCount = ExtractHeaderValue(content, "FILES IN BATCH") ?? "?";
+            var hasMore = ExtractHeaderValue(content, "HAS MORE") ?? "?";
+            return $"batch={batch}/{total} files={fileCount} hasMore={hasMore}";
+        }
+
+        if (trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
+        {
+            var file = ExtractHeaderValue(content, "FILE") ?? "?";
+            return $"file={file}";
+        }
+
+        if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "artifact-context";
+        }
+
+        if (trimmed.StartsWith("WORKFLOW INPUT FOR", StringComparison.OrdinalIgnoreCase))
+        {
+            return "workflow-input";
+        }
+
+        return "text";
+    }
 
     private static string SummarizeInputMessageForLog(string content)
     {
