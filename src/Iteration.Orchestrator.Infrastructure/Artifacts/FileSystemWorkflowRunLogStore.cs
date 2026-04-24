@@ -19,13 +19,13 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     public async Task AppendLineAsync(Guid workflowRunId, string message, CancellationToken ct)
     {
         var line = $"[{DateTime.UtcNow:O}] {message}{Environment.NewLine}";
-        await AppendAsync(workflowRunId, line, ct);
+        await AppendAsync(GetPath(workflowRunId), line, ct);
     }
 
     public async Task AppendSectionAsync(Guid workflowRunId, string title, CancellationToken ct)
     {
         var content = $"{Environment.NewLine}[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} =={Environment.NewLine}";
-        await AppendAsync(workflowRunId, content, ct);
+        await AppendAsync(GetPath(workflowRunId), content, ct);
     }
 
     public async Task AppendKeyValuesAsync(Guid workflowRunId, string title, IReadOnlyDictionary<string, string?> values, CancellationToken ct)
@@ -38,7 +38,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
             sb.AppendLine($"- {pair.Key}: {pair.Value ?? string.Empty}");
         }
 
-        await AppendAsync(workflowRunId, sb.ToString(), ct);
+        await AppendAsync(GetPath(workflowRunId), sb.ToString(), ct);
     }
 
     public async Task AppendBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
@@ -47,12 +47,26 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         sb.AppendLine();
         sb.AppendLine($"[{DateTime.UtcNow:O}] == {title.ToUpperInvariant()} ==");
         sb.AppendLine(content ?? string.Empty);
-        await AppendAsync(workflowRunId, sb.ToString(), ct);
+        await AppendAsync(GetPath(workflowRunId), sb.ToString(), ct);
     }
 
-    public async Task<string?> ReadAsync(Guid workflowRunId, CancellationToken ct)
+    public Task<string?> ReadAsync(Guid workflowRunId, CancellationToken ct)
+        => ReadFileAsync(GetPath(workflowRunId), ct);
+
+    public async Task AppendRawBlockAsync(Guid workflowRunId, string title, string content, CancellationToken ct)
     {
-        var path = GetPath(workflowRunId);
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine($"[{DateTime.UtcNow:O}] == RAW: {title.ToUpperInvariant()} ==");
+        sb.AppendLine(content ?? string.Empty);
+        await AppendAsync(GetRawPath(workflowRunId), sb.ToString(), ct);
+    }
+
+    public Task<string?> ReadRawAsync(Guid workflowRunId, CancellationToken ct)
+        => ReadFileAsync(GetRawPath(workflowRunId), ct);
+
+    private static async Task<string?> ReadFileAsync(string path, CancellationToken ct)
+    {
         if (!File.Exists(path))
         {
             return null;
@@ -61,9 +75,8 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         return await File.ReadAllTextAsync(path, ct);
     }
 
-    private async Task AppendAsync(Guid workflowRunId, string content, CancellationToken ct)
+    private async Task AppendAsync(string path, string content, CancellationToken ct)
     {
-        var path = GetPath(workflowRunId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
         await _gate.WaitAsync(ct);
@@ -101,4 +114,7 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
 
     private string GetPath(Guid workflowRunId)
         => Path.Combine(_rootPath, "workflow-logs", $"{workflowRunId}.log");
+
+    private string GetRawPath(Guid workflowRunId)
+        => Path.Combine(_rootPath, "workflow-logs", $"{workflowRunId}.raw.log");
 }

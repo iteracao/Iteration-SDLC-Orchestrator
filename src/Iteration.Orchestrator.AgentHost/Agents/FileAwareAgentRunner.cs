@@ -100,7 +100,8 @@ internal static class FileAwareAgentRunner
             throw new InvalidOperationException("Prompt-only execution received unexpected tool calls.");
         }
 
-        await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", response.Text, ct);
+        await logs.AppendLineAsync(workflowRunId, $"Response received for {logTitle} ({response.Text.Length} chars). Full content is available in the RAW log.", ct);
+        await logs.AppendRawBlockAsync(workflowRunId, $"Response: {logTitle}", response.Text, ct);
         return response.Text;
     }
 
@@ -165,8 +166,8 @@ internal static class FileAwareAgentRunner
             if (phase.Mode == AgentPhaseMode.ContextOnly)
             {
                 pendingMessages.Add(CreateUserMessage(phase.Prompt));
-                await logs.AppendLineAsync(workflowRunId, $"Phase mode ({phase.Name}): ContextOnly. Prompt queued into agent conversation context with no model call.", ct);
-                await logs.AppendBlockAsync(workflowRunId, $"Model message QUEUED [{phase.Name}] role=user source=context-only-prompt format=text/plain", phase.Prompt, ct);
+                await logs.AppendLineAsync(workflowRunId, $"Model message queued [{phase.Name}] role=user source=context-only-prompt format=text/plain chars={phase.Prompt.Length}. Full content is available in the RAW log.", ct);
+                await logs.AppendRawBlockAsync(workflowRunId, $"Model message QUEUED [{phase.Name}] role=user source=context-only-prompt format=text/plain", phase.Prompt, ct);
                 phaseResult = "Context loaded.";
             }
             else
@@ -260,12 +261,14 @@ internal static class FileAwareAgentRunner
                 ? BuildPhasePrompt(phase, phaseIndex, totalPhases, writableFiles)
                 : null;
             var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages, summarizedPhasePrompt);
+            var rawInteraction = BeginRawInteractionLog(phase.Name, i + 1, currentMessages);
             var response = await RunModelWithTimeoutAsync(
                 conversation,
                 currentMessages,
                 nativeToolDefinitions,
                 maxModelResponseSeconds,
                 ct);
+            AppendRawInteractionSection(rawInteraction, "ASSISTANT RESPONSE", BuildRawAssistantResponseLog(response));
             var nativeToolAnalysis = AnalyzeNativeToolResponse(response);
 
             if (nativeToolAnalysis.State == NativeToolResponseState.MixedToolAndText)
@@ -274,7 +277,7 @@ internal static class FileAwareAgentRunner
                 AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(response.Text));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: mixed native tool call and final Markdown/text in the same assistant response.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -285,7 +288,7 @@ internal static class FileAwareAgentRunner
                 AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(response.ToolCalls));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: multiple native tool calls in one assistant response.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -294,13 +297,14 @@ internal static class FileAwareAgentRunner
             {
                 var nativeToolCall = nativeToolAnalysis.SingleToolCall!;
                 AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(nativeToolCall));
+                AppendRawInteractionSection(rawInteraction, "TOOL REQUEST", BuildRawToolCallLog(nativeToolCall));
 
                 if (phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
                 {
                     const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.";
                     AppendInteractionSection(interaction, "VALIDATION", "Rejected: native tool call returned in a Markdown-only phase.");
                     AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                     currentMessages = [CreateUserMessage(retryMessage)];
                     continue;
                 }
@@ -310,7 +314,7 @@ internal static class FileAwareAgentRunner
                     const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
                     AppendInteractionSection(interaction, "VALIDATION", $"Rejected: native tool call '{nativeToolCall.Name}' returned in a no-tool phase.");
                     AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                     currentMessages = [CreateUserMessage(retryMessage)];
                     continue;
                 }
@@ -325,9 +329,11 @@ internal static class FileAwareAgentRunner
                     logs,
                     ct);
 
+                AppendRawToolResult(rawInteraction, nativeToolCall, nativeToolResult);
+
                 if (!string.IsNullOrWhiteSpace(nativeToolResult.FinalPhaseOutput))
                 {
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                     return nativeToolResult.FinalPhaseOutput!;
                 }
 
@@ -344,11 +350,11 @@ internal static class FileAwareAgentRunner
                     pendingMessages,
                     out var earlyPhaseResult))
                 {
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                     return earlyPhaseResult!;
                 }
 
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 continue;
             }
 
@@ -361,7 +367,7 @@ internal static class FileAwareAgentRunner
                 AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: mixed tool call and final Markdown/text in the same assistant message.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -372,7 +378,7 @@ internal static class FileAwareAgentRunner
                 AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: multiple tool-call JSON objects in one assistant message.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -383,7 +389,7 @@ internal static class FileAwareAgentRunner
                 AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: tool call returned in a Markdown-only phase.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -396,7 +402,7 @@ internal static class FileAwareAgentRunner
                     var retryMessage = BuildInvalidResponseRetryMessage(phase);
                     AppendInteractionSection(interaction, "VALIDATION", "Rejected: this phase requires exactly one JSON tool-call object.");
                     AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                     currentMessages = [CreateUserMessage(retryMessage)];
                     continue;
                 }
@@ -414,7 +420,7 @@ internal static class FileAwareAgentRunner
                         var retryMessage = $"INVALID FINAL RESPONSE. Execute write_file first for these declared paths before returning final Markdown: {string.Join(", ", missingWritePaths)}.";
                         AppendInteractionSection(interaction, "VALIDATION", $"Rejected: final Markdown declared writes that were not executed: {string.Join(", ", missingWritePaths)}.");
                         AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                        await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                         currentMessages = [CreateUserMessage(retryMessage)];
                         continue;
                     }
@@ -462,19 +468,20 @@ internal static class FileAwareAgentRunner
                     AppendInteractionSection(interaction, "RESULT", "Markdown/text response accepted.");
                 }
 
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 return rawText;
             }
 
             var toolRequest = toolResponseState.SingleToolRequest!;
             var fallbackToolCall = BuildFallbackToolCall(toolRequest);
             AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(fallbackToolCall));
+            AppendRawInteractionSection(rawInteraction, "TOOL REQUEST", BuildRawToolCallLog(fallbackToolCall));
             if (!phase.AllowToolCalls)
             {
                 const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
                 AppendInteractionSection(interaction, "VALIDATION", $"Rejected: tool call '{toolRequest.ResolvedAction}' returned in a no-tool phase.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 currentMessages = [CreateUserMessage(retryMessage)];
                 continue;
             }
@@ -489,9 +496,11 @@ internal static class FileAwareAgentRunner
                 logs,
                 ct);
 
+            AppendRawToolResult(rawInteraction, fallbackToolCall, fallbackToolResult);
+
             if (!string.IsNullOrWhiteSpace(fallbackToolResult.FinalPhaseOutput))
             {
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 return fallbackToolResult.FinalPhaseOutput!;
             }
 
@@ -508,17 +517,30 @@ internal static class FileAwareAgentRunner
                 pendingMessages,
                 out var fallbackEarlyPhaseResult))
             {
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
                 return fallbackEarlyPhaseResult!;
             }
 
-            await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+            await LogInteractionAsync(logs, workflowRunId, phase.Name, i + 1, interaction, rawInteraction, ct);
             continue;
         }
 
         throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
     }
 
+
+    private static async Task LogInteractionAsync(
+        IWorkflowRunLogStore logs,
+        Guid workflowRunId,
+        string phaseName,
+        int interactionNumber,
+        StringBuilder highlightInteraction,
+        StringBuilder rawInteraction,
+        CancellationToken ct)
+    {
+        await logs.AppendBlockAsync(workflowRunId, $"{phaseName} interaction {interactionNumber}", highlightInteraction.ToString(), ct);
+        await logs.AppendRawBlockAsync(workflowRunId, $"{phaseName} interaction {interactionNumber}", rawInteraction.ToString(), ct);
+    }
 
     private static string BuildInvalidResponseRetryMessage(AgentPhaseDefinition phase)
     {
@@ -1039,6 +1061,126 @@ Rules:
         return count;
     }
 
+    private static StringBuilder BeginRawInteractionLog(
+        string phaseName,
+        int interactionNumber,
+        IReadOnlyList<ChatMessage> inputMessages)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"{phaseName} - interaction {interactionNumber}");
+        AppendRawInteractionSection(sb, "INPUT MESSAGES", BuildRawInputMessagesLog(inputMessages));
+        return sb;
+    }
+
+    private static void AppendRawInteractionSection(StringBuilder sb, string title, string content)
+    {
+        if (sb.Length > 0 && !sb.ToString().EndsWith("\n\n", StringComparison.Ordinal))
+        {
+            sb.AppendLine();
+        }
+
+        sb.AppendLine(title);
+        var cleaned = CleanLogText(content);
+        if (!string.IsNullOrWhiteSpace(cleaned))
+        {
+            sb.AppendLine(cleaned);
+        }
+    }
+
+    private static string BuildRawInputMessagesLog(IReadOnlyList<ChatMessage> messages)
+    {
+        if (messages.Count == 0)
+        {
+            return "No input messages.";
+        }
+
+        var sb = new StringBuilder();
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var content = GetChatMessageText(message);
+            sb.AppendLine($"--- MESSAGE {index + 1}/{messages.Count} ---");
+            sb.AppendLine($"Role: {message.Role}");
+            sb.AppendLine($"Source: {InferMessageSource(content)}");
+            sb.AppendLine($"Format: {InferMessageFormat(content)}");
+            sb.AppendLine($"Chars: {content.Length}");
+            sb.AppendLine("Content:");
+            sb.AppendLine(content);
+            if (index < messages.Count - 1)
+            {
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildRawAssistantResponseLog(AgentConversationResponse response)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Text chars: {response.Text?.Length ?? 0}");
+        sb.AppendLine($"Tool calls: {response.ToolCalls.Count}");
+        if (!string.IsNullOrWhiteSpace(response.Text))
+        {
+            sb.AppendLine("Text:");
+            sb.AppendLine(response.Text);
+        }
+
+        if (response.ToolCalls.Count > 0)
+        {
+            sb.AppendLine("Tool calls:");
+            foreach (var toolCall in response.ToolCalls)
+            {
+                sb.AppendLine(BuildRawToolCallLog(toolCall));
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildRawToolCallLog(AgentToolCall toolCall)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Tool: {AgentToolExecutor.NormalizeToolName(toolCall.Name)}");
+        sb.AppendLine($"Native: {toolCall.IsNative}");
+        if (!string.IsNullOrWhiteSpace(toolCall.NativeCallId))
+        {
+            sb.AppendLine($"NativeCallId: {toolCall.NativeCallId}");
+        }
+
+        sb.AppendLine("Arguments:");
+        sb.AppendLine(toolCall.Arguments.ValueKind == JsonValueKind.Undefined ? "<undefined>" : toolCall.Arguments.GetRawText());
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendRawToolResult(StringBuilder rawInteraction, AgentToolCall toolCall, AgentToolExecutionResult result)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Tool: {AgentToolExecutor.NormalizeToolName(toolCall.Name)}");
+        sb.AppendLine($"Log summary chars: {result.LogSummary?.Length ?? 0}");
+        if (!string.IsNullOrWhiteSpace(result.LogSummary))
+        {
+            sb.AppendLine("Log summary:");
+            sb.AppendLine(result.LogSummary);
+        }
+
+        sb.AppendLine($"Model payload chars: {result.ModelPayload?.Length ?? 0}");
+        if (!string.IsNullOrWhiteSpace(result.ModelPayload))
+        {
+            sb.AppendLine("Model payload:");
+            sb.AppendLine(result.ModelPayload);
+        }
+
+        sb.AppendLine($"Final phase output chars: {result.FinalPhaseOutput?.Length ?? 0}");
+        if (!string.IsNullOrWhiteSpace(result.FinalPhaseOutput))
+        {
+            sb.AppendLine("Final phase output:");
+            sb.AppendLine(result.FinalPhaseOutput);
+        }
+
+        AppendRawInteractionSection(rawInteraction, "TOOL RESPONSE", sb.ToString());
+    }
+
     private static StringBuilder BeginInteractionLog(
         string phaseName,
         int interactionNumber,
@@ -1227,23 +1369,24 @@ Rules:
     {
         await logs.AppendLineAsync(
             workflowRunId,
-            $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent.",
+            $"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent. Full content is available in the RAW log.",
             ct);
 
+        var highlight = new StringBuilder();
+        highlight.AppendLine($"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent.");
         for (var index = 0; index < messages.Count; index++)
         {
             var message = messages[index];
             var content = GetChatMessageText(message);
-            var source = InferMessageSource(content);
-            var format = InferMessageFormat(content);
-            var safeContent = SanitizeModelMessageForLog(content);
-
-            await logs.AppendBlockAsync(
-                workflowRunId,
-                $"Model message OUT [{phaseName}] attempt={attempt} index={index + 1}/{messages.Count} role={message.Role} source={source} format={format} chars={content.Length}",
-                safeContent,
-                ct);
+            highlight.AppendLine($"- Message {index + 1}/{messages.Count}: role={message.Role}; source={InferMessageSource(content)}; format={InferMessageFormat(content)}; chars={content.Length}.");
         }
+
+        await logs.AppendBlockAsync(workflowRunId, $"Model input summary [{phaseName}] attempt={attempt}", highlight.ToString(), ct);
+
+        var raw = new StringBuilder();
+        raw.AppendLine($"Model input ({phaseName}) attempt {attempt}: {messages.Count} message(s) sent.");
+        raw.AppendLine(BuildRawInputMessagesLog(messages));
+        await logs.AppendRawBlockAsync(workflowRunId, $"Model input [{phaseName}] attempt={attempt}", raw.ToString(), ct);
     }
 
     private static string GetChatMessageText(ChatMessage message)

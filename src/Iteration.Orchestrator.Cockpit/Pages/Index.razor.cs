@@ -712,6 +712,14 @@ public partial class Index : ComponentBase, IDisposable
         _viewerOpen = true;
     }
 
+    private async Task OpenWorkflowRawLogAsync(Guid workflowRunId)
+    {
+        var client = HttpClientFactory.CreateClient("api");
+        _activeWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId, $"api/workflow-runs/{workflowRunId}/raw-log");
+        _activeWorkflowArtifact = null;
+        _viewerOpen = true;
+    }
+
     private async Task OpenWorkflowArtifactAsync(Guid workflowRunId, string fileName)
     {
         var client = HttpClientFactory.CreateClient("api");

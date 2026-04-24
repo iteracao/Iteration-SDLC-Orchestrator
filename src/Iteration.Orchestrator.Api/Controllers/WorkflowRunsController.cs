@@ -321,6 +321,27 @@ public sealed class WorkflowRunsController : ControllerBase
         });
     }
 
+    [HttpGet("{id:guid}/raw-log")]
+    public async Task<IActionResult> GetRawLog(
+        Guid id,
+        [FromServices] IWorkflowRunLogStore logs,
+        CancellationToken ct)
+    {
+        var content = await logs.ReadRawAsync(id, ct);
+        if (content is null)
+        {
+            return NotFound(new { message = "Workflow raw log not found." });
+        }
+
+        return Ok(new
+        {
+            workflowRunId = id,
+            fileName = $"{id}.raw.log",
+            content,
+            artifactFiles = Array.Empty<string>()
+        });
+    }
+
     [HttpPost("validate")]
     public async Task<IActionResult> Validate(
         [FromBody] ValidateWorkflowRunRequest request,
