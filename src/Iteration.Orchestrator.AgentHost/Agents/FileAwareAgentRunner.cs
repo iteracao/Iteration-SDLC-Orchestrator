@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -1120,6 +1121,12 @@ Rules:
     {
         var sb = new StringBuilder();
         sb.AppendLine($"get_next_file_batch -> batch {batch.BatchNumber}/{batch.TotalBatchesEstimate}; files={batch.Files.Count}; hasMore={(batch.HasMore ? "yes" : "no")}; payloadChars={batch.Payload.Length}.");
+        var payloadBatch = ExtractHeaderValue(batch.Payload, "BATCH INDEX");
+        if (int.TryParse(payloadBatch, NumberStyles.Integer, CultureInfo.InvariantCulture, out var payloadBatchNumber) &&
+            payloadBatchNumber != batch.BatchNumber)
+        {
+            sb.AppendLine($"WARNING: batch metadata mismatch; payload batch={payloadBatchNumber}, result batch={batch.BatchNumber}.");
+        }
 
         if (batch.Files.Count > 0)
         {
@@ -1965,7 +1972,7 @@ Rules:
                 break;
             }
 
-            if (batch.NextIndex >= startIndex)
+            if (batch.NextIndex > startIndex)
             {
                 return batchNumber;
             }
