@@ -707,7 +707,7 @@ public partial class Index : ComponentBase, IDisposable
     private async Task OpenWorkflowLogAsync(Guid workflowRunId)
     {
         var client = HttpClientFactory.CreateClient("api");
-        _activeWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId, $"api/workflow-runs/{workflowRunId}/log");
+        _activeWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId, $"api/workflow-runs/{workflowRunId}/log", $"{workflowRunId}.log");
         _activeWorkflowArtifact = null;
         _viewerOpen = true;
     }
@@ -715,7 +715,7 @@ public partial class Index : ComponentBase, IDisposable
     private async Task OpenWorkflowRawLogAsync(Guid workflowRunId)
     {
         var client = HttpClientFactory.CreateClient("api");
-        _activeWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId, $"api/workflow-runs/{workflowRunId}/raw-log");
+        _activeWorkflowLog = await GetWorkflowLogContentAsync(client, workflowRunId, $"api/workflow-runs/{workflowRunId}/raw-log", $"{workflowRunId}.raw.log");
         _activeWorkflowArtifact = null;
         _viewerOpen = true;
     }
@@ -810,7 +810,7 @@ public partial class Index : ComponentBase, IDisposable
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            var latestLog = await GetWorkflowLogContentAsync(client, workflowRunId.Value, $"api/workflow-runs/{workflowRunId.Value}/log");
+            var latestLog = await GetWorkflowLogContentAsync(client, workflowRunId.Value, $"api/workflow-runs/{workflowRunId.Value}/log", $"{workflowRunId.Value}.log");
             var changed = !AreWorkflowLogsEquivalent(_documentationWorkflowLog, latestLog);
             _documentationWorkflowLog = latestLog;
             return changed;
@@ -994,7 +994,7 @@ public partial class Index : ComponentBase, IDisposable
         }
     }
 
-    private async Task<WorkflowLogContent> GetWorkflowLogContentAsync(HttpClient client, Guid workflowRunId, string endpoint)
+    private async Task<WorkflowLogContent> GetWorkflowLogContentAsync(HttpClient client, Guid workflowRunId, string endpoint, string fallbackFileName)
     {
         try
         {
@@ -1004,7 +1004,7 @@ public partial class Index : ComponentBase, IDisposable
                 return new WorkflowLogContent
                 {
                     WorkflowRunId = workflowRunId,
-                    FileName = $"{workflowRunId}.log",
+                    FileName = fallbackFileName,
                     IsUnavailable = true,
                     Message = await ReadApiErrorAsync(response)
                 };
@@ -1014,11 +1014,12 @@ public partial class Index : ComponentBase, IDisposable
             var payload = await response.Content.ReadFromJsonAsync<WorkflowLogContent>() ?? new WorkflowLogContent
             {
                 WorkflowRunId = workflowRunId,
-                FileName = $"{workflowRunId}.log",
+                FileName = fallbackFileName,
                 IsUnavailable = true,
                 Message = "Log not available for this workflow run."
             };
 
+            payload.FileName = string.IsNullOrWhiteSpace(payload.FileName) ? fallbackFileName : payload.FileName;
             payload.Content = NormalizeViewerContent(payload.Content, false);
             return payload;
         }
@@ -1027,7 +1028,7 @@ public partial class Index : ComponentBase, IDisposable
             return new WorkflowLogContent
             {
                 WorkflowRunId = workflowRunId,
-                FileName = $"{workflowRunId}.log",
+                FileName = fallbackFileName,
                 IsUnavailable = true,
                 Message = $"Failed to load log. {ex.Message}"
             };

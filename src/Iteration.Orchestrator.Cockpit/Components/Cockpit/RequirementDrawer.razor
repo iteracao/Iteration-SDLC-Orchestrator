@@ -29,7 +29,7 @@
                                 @if (ShowValidateButton) { <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="ValidateBusy" OnClick="Validate">Validate</MudButton> }
                                 @if (ShowCancelWorkflowButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="CancelWorkflowBusy" OnClick="CancelWorkflow">Cancel</MudButton> }
                                 @if (ShowViewLogButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ViewLog">View Log</MudButton> }
-                                @if (ShowViewRawLogButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ViewRawLog">View RAW</MudButton> }
+                                @if (ShowViewLogButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ViewRaw">View RAW</MudButton> }
                                 @if (ShowViewReportButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="ViewReportDisabled" OnClick="ViewReport">View Report</MudButton> }
                                 @if (ShowDeleteRequirementButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="RequirementMutationBusy" OnClick="DeleteRequirement">Delete</MudButton> }
                                 @if (ShowCancelRequirementButton) { <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="RequirementMutationBusy" OnClick="CancelRequirement">Cancel Requirement</MudButton> }
@@ -116,8 +116,7 @@
     [Parameter] public EventCallback CancelWorkflow { get; set; }
     [Parameter] public bool ShowViewLogButton { get; set; }
     [Parameter] public EventCallback ViewLog { get; set; }
-    [Parameter] public bool ShowViewRawLogButton { get; set; }
-    [Parameter] public EventCallback ViewRawLog { get; set; }
+    [Parameter] public EventCallback ViewRaw { get; set; }
     [Parameter] public bool ShowViewReportButton { get; set; }
     [Parameter] public bool ViewReportDisabled { get; set; }
     [Parameter] public EventCallback ViewReport { get; set; }
