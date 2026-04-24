@@ -110,7 +110,9 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         };
 
         var highlightLine = FormatHighlightLine(normalizedEvent);
-        var rawLine = JsonSerializer.Serialize(normalizedEvent, RawJsonOptions) + Environment.NewLine;
+        var rawLine = ShouldWriteRawEvent(normalizedEvent)
+            ? JsonSerializer.Serialize(normalizedEvent, RawJsonOptions) + "\n"
+            : null;
 
         Directory.CreateDirectory(Path.GetDirectoryName(GetPath(workflowRunId))!);
 
@@ -118,7 +120,10 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
         try
         {
             await File.AppendAllTextAsync(GetPath(workflowRunId), highlightLine, ct);
-            await File.AppendAllTextAsync(GetRawPath(workflowRunId), rawLine, ct);
+            if (rawLine is not null)
+            {
+                await File.AppendAllTextAsync(GetRawPath(workflowRunId), rawLine, ct);
+            }
         }
         finally
         {
@@ -193,14 +198,16 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     {
         var eventType = isRaw ? InferRawEventType(title) : InferBlockEventType(title);
         var metadata = ExtractBlockMetadata(title);
+        var summary = BuildCompactBlockSummary(eventType, title);
 
         return new WorkflowLogEvent
         {
+            Level = summary == "failure" ? "error" : "info",
             EventType = eventType,
             Phase = metadata.Phase,
             Interaction = metadata.Interaction,
             ToolName = metadata.ToolName,
-            Summary = BuildCompactBlockSummary(eventType, title),
+            Summary = summary,
             PayloadPreview = BuildPreview(content),
             PayloadChars = content.Length,
             RawPayload = content
@@ -211,12 +218,12 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     {
         return eventType switch
         {
-            "model_request" => "request",
-            "model_response" => "response",
-            "model_failure" => "failure",
-            "tool_request" => "request",
-            "tool_result" => "result",
-            "tool_failure" => "failure",
+            "model_sent" => "sent",
+            "model_received" when (title ?? string.Empty).Contains("failure", StringComparison.OrdinalIgnoreCase) => "failure",
+            "model_received" => "received",
+            "tool_sent" => "sent",
+            "tool_received" when (title ?? string.Empty).Contains("failure", StringComparison.OrdinalIgnoreCase) => "failure",
+            "tool_received" => "received",
             "interaction" => "summary",
             "prompt" => "phase prompt",
             "section" => NormalizeInline(title),
@@ -254,9 +261,15 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     private static string? ExtractToolName(string kind)
     {
         var normalized = NormalizeInline(kind);
-        var toolMatch = Regex.Match(normalized, @"tool\s+(request|response|failure)\s*[:=]?\s*(?<tool>[A-Za-z0-9_.-]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var toolMatch = Regex.Match(normalized, @"tool\s+(request|response|result|failure)\s*[:=]?\s*(?<tool>[A-Za-z0-9_.-]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return toolMatch.Success ? NormalizeNullable(toolMatch.Groups["tool"].Value) : null;
     }
+
+    private static bool ShouldWriteRawEvent(WorkflowLogEvent logEvent)
+        => string.Equals(logEvent.EventType, "model_sent", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(logEvent.EventType, "model_received", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(logEvent.EventType, "tool_sent", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(logEvent.EventType, "tool_received", StringComparison.OrdinalIgnoreCase);
 
     private readonly record struct BlockMetadata(string? Phase, int? Interaction, string? ToolName);
 
@@ -314,12 +327,13 @@ public sealed class FileSystemWorkflowRunLogStore : IWorkflowRunLogStore
     private static string InferRawEventType(string? title)
     {
         var normalized = title ?? string.Empty;
-        if (normalized.Contains("model request", StringComparison.OrdinalIgnoreCase)) return "model_request";
-        if (normalized.Contains("model response", StringComparison.OrdinalIgnoreCase)) return "model_response";
-        if (normalized.Contains("model failure", StringComparison.OrdinalIgnoreCase)) return "model_failure";
-        if (normalized.Contains("tool request", StringComparison.OrdinalIgnoreCase)) return "tool_request";
-        if (normalized.Contains("tool response", StringComparison.OrdinalIgnoreCase)) return "tool_result";
-        if (normalized.Contains("tool failure", StringComparison.OrdinalIgnoreCase)) return "tool_failure";
+        if (normalized.Contains("model request", StringComparison.OrdinalIgnoreCase)) return "model_sent";
+        if (normalized.Contains("model response", StringComparison.OrdinalIgnoreCase)) return "model_received";
+        if (normalized.Contains("model failure", StringComparison.OrdinalIgnoreCase)) return "model_received";
+        if (normalized.Contains("tool request", StringComparison.OrdinalIgnoreCase)) return "tool_sent";
+        if (normalized.Contains("tool response", StringComparison.OrdinalIgnoreCase)) return "tool_received";
+        if (normalized.Contains("tool result", StringComparison.OrdinalIgnoreCase)) return "tool_received";
+        if (normalized.Contains("tool failure", StringComparison.OrdinalIgnoreCase)) return "tool_received";
         return "raw";
     }
 

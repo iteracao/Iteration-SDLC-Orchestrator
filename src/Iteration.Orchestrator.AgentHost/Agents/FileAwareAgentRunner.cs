@@ -878,9 +878,10 @@ Rules:
         IWorkflowRunLogStore logs,
         CancellationToken ct)
     {
+        var normalizedToolName = AgentToolExecutor.NormalizeToolName(toolCall.Name);
         await logs.AppendRawBlockAsync(
             workflowRunId,
-            $"{phase.Name} interaction {interactionNumber} tool request",
+            $"{phase.Name} interaction {interactionNumber} tool request {normalizedToolName}",
             BuildRawToolRequestLog(toolCall),
             ct);
 
@@ -891,12 +892,12 @@ Rules:
                 interaction,
                 "TOOL RESULT",
                 string.IsNullOrWhiteSpace(result.LogSummary)
-                    ? $"{AgentToolExecutor.NormalizeToolName(toolCall.Name)} executed."
+                    ? $"{normalizedToolName} executed."
                     : result.LogSummary);
 
             await logs.AppendRawBlockAsync(
                 workflowRunId,
-                $"{phase.Name} interaction {interactionNumber} tool response",
+                $"{phase.Name} interaction {interactionNumber} tool response {normalizedToolName}",
                 BuildRawToolResponseLog(result),
                 ct);
 
@@ -912,7 +913,7 @@ Rules:
             var toolPayload = $"ERROR: {ex.Message}";
             await logs.AppendRawBlockAsync(
                 workflowRunId,
-                $"{phase.Name} interaction {interactionNumber} tool failure",
+                $"{phase.Name} interaction {interactionNumber} tool failure {normalizedToolName}",
                 BuildRawExceptionLog(ex),
                 ct);
             AppendInteractionSection(interaction, "VALIDATION", $"Rejected tool call '{toolCall.Name}': {ex.Message}");
