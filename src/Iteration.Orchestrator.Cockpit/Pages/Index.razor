@@ -120,6 +120,8 @@
                              LogLoading="@_documentationWorkflowLogLoading"
                              CopyLogDisabled="@(!CanCopyDocumentationWorkflowLog)"
                              CopyLog="CopyDocumentationWorkflowLogToClipboardAsync"
+                             ViewRawDisabled="@(CurrentDocumentationWorkflowRun is null)"
+                             ViewRaw="@(async () => { if (CurrentDocumentationWorkflowRun is not null) await OpenWorkflowRawLogAsync(CurrentDocumentationWorkflowRun.Id); })"
                              RunDisabled="@(DocumentationWorkflowRunDisabled || SelectedSolutionState.CurrentTarget is null)"
                              RunWorkflow="RunDocumentationWorkflowAsync"
                              Close="CloseDocumentationWorkflowModal" />
