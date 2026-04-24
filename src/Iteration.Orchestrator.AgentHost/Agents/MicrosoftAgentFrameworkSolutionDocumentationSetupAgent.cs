@@ -92,7 +92,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
                     AllowToolCalls: false,
-                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName),
+                    SavedMarkdownArtifactFileName: BoundariesArtifactFileName,
+                    SummarizePromptInLogs: true),
                 new(
                     Name: "Prompt 2A",
                     Prompt: BuildRepositoryAcquisitionPrompt(),
@@ -104,7 +105,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequireCompletionValidation: false,
                     AllowedToolActions: ["get_next_file_batch"],
                     RequireAllAvailableFilesRead: true,
-                    AutoCompleteWhenAllAvailableFilesRead: true),
+                    AutoCompleteWhenAllAvailableFilesRead: true,
+                    SummarizePromptInLogs: true),
                 new(
                     Name: "Prompt 2B",
                     Prompt: BuildDocumentationContextPrompt(),
@@ -116,7 +118,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: RepositoryStateArtifactFileName,
                     InjectSavedMarkdownIntoNextPhase: true,
-                    RequireAllAvailableFilesRead: true),
+                    RequireAllAvailableFilesRead: true,
+                    SummarizePromptInLogs: true),
                 new(
                     Name: "Prompt 3",
                     Prompt: BuildDecisionPrompt(writeTargets),
@@ -127,7 +130,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     RequireCompletionValidation: true,
                     AllowToolCalls: false,
                     SavedMarkdownArtifactFileName: FinalDecisionArtifactFileName,
-                    InjectSavedMarkdownIntoNextPhase: true)
+                    InjectSavedMarkdownIntoNextPhase: true,
+                    SummarizePromptInLogs: true)
             };
 
             phases.AddRange(writeTargets.Select((targetInfo, index) =>
@@ -139,7 +143,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     PurposeSummary: $"Write only {targetInfo.LogicalPath} when required by the decision artifact.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: false,
-                    AllowedToolActions: ["write_file"])));
+                    AllowedToolActions: ["write_file"],
+                    SummarizePromptInLogs: true)));
 
             phases.Add(
                 new FileAwareAgentRunner.AgentPhaseDefinition(
@@ -150,7 +155,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                     PurposeSummary: "Return the final setup-documentation result after all required writes are complete.",
                     Mode: FileAwareAgentRunner.AgentPhaseMode.Interactive,
                     RequireCompletionValidation: true,
-                    AllowToolCalls: false));
+                    AllowToolCalls: false,
+                    SummarizePromptInLogs: true));
 
             var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
                 _conversationFactory,
@@ -204,7 +210,6 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         var documents = new List<TextDocumentInput>();
 
         await _logs.AppendSectionAsync(workflowRunId, "Framework Context", ct);
-        await _logs.AppendLineAsync(workflowRunId, "Loading setup-documentation framework context for Prompt 1.", ct);
 
         if (string.IsNullOrWhiteSpace(agentDefinition.PromptText))
         {
@@ -213,7 +218,6 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         }
 
         documents.Add(new TextDocumentInput(AgentPromptPath, agentDefinition.PromptText));
-        await _logs.AppendLineAsync(workflowRunId, $"Framework context: loaded {AgentPromptPath} | chars={agentDefinition.PromptText.Length}", ct);
 
         foreach (var path in GetRequiredFrameworkContextPaths(profileCode))
         {
@@ -228,7 +232,6 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
                 }
 
                 documents.Add(new TextDocumentInput(path, content));
-                await _logs.AppendLineAsync(workflowRunId, $"Framework context: loaded {path} | chars={content.Length}", ct);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidOperationException)
             {
@@ -237,10 +240,14 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(profileSummary))
-        {
-            await _logs.AppendLineAsync(workflowRunId, "Framework context: active profile summary registered for setup-documentation.", ct);
-        }
+        var totalChars = documents.Sum(document => document.Content.Length);
+        var profileSummaryText = string.IsNullOrWhiteSpace(profileSummary)
+            ? "no active profile summary"
+            : "active profile summary registered";
+        await _logs.AppendLineAsync(
+            workflowRunId,
+            $"Loaded setup-documentation framework/profile context: {documents.Count} documents; {totalChars} chars; {profileSummaryText}.",
+            ct);
 
         return documents;
     }
@@ -307,14 +314,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         {
             sb.AppendLine($"- {target.LogicalPath} -> {target.PhysicalPath}");
         }
-        sb.AppendLine("## Authority Order");
-        sb.AppendLine("1. Source code");
-        sb.AppendLine("2. Valid stable docs");
-        sb.AppendLine("3. Local repository docs");
-        sb.AppendLine("## Path Rules");
-        sb.AppendLine("- All write_file calls must use the full physical path exactly as listed above.");
-        sb.AppendLine("- Logical paths are for decision and reporting only.");
-        sb.AppendLine("- Never guess, shorten, or transform a path.");
+        sb.AppendLine("## Rule Source");
+        sb.AppendLine("Use the loaded setup-documentation framework/profile rules as authoritative for evidence, authority order, and managed-document boundaries.");
         return sb.ToString().TrimEnd();
     }
 
@@ -324,20 +325,10 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 Goal:
 Load the full allowed repository evidence set using `get_next_file_batch` only.
 
-Use native tool calling when available.
-If native tools are unavailable, return exactly one JSON object and nothing else:
+Return one tool call per interaction:
 {"tool":"get_next_file_batch","args":{}}
 
-After each tool result:
-- if `HAS MORE: yes`, call `get_next_file_batch` exactly once again
-- if `HAS MORE: no`, stop this phase
-
-Rules:
-- no prose
-- no Markdown
-- no multiple tool calls
-- do not call again before receiving the previous tool result
-- do not skip batches
+Continue until `HAS MORE: no`, then stop this phase.
 """;
     }
 
@@ -350,11 +341,7 @@ Build the repository-state Markdown using ONLY the repository evidence loaded in
 Rules:
 - This is a synthesis phase.
 - Tool calls are forbidden in this phase.
-- Use only the evidence already loaded.
-- Do not invent, assume, or infer missing information.
-- If something is not present in the evidence, state it as unknown.
-- Do not suggest new documents.
-- Do not expand the managed document list.
+- Apply the loaded setup-documentation framework/profile evidence rules.
 
 Return Markdown only using exactly this structure:
 # Repository State
@@ -385,10 +372,9 @@ Return Markdown only using exactly this structure:
         sb.AppendLine("Rules:");
         sb.AppendLine("- Determine one mode only: ALIGNED, UPDATE, or BOOTSTRAP.");
         sb.AppendLine("- This is a decision step only. Tool calls are forbidden.");
-        sb.AppendLine("- Base the decision only on repository-state evidence and the current stable document state.");
         sb.AppendLine("- `## Actions` must include exactly one entry for each managed document.");
         sb.AppendLine("- Every action must use one of: CREATE <logical path>, UPDATE <logical path>, KEEP <logical path>, NO WRITE.");
-        sb.AppendLine("- Do not suggest new documents or extra targets.");
+        sb.AppendLine("- Apply the loaded setup-documentation framework/profile decision rules.");
         sb.AppendLine();
         sb.AppendLine("Return Markdown only using exactly this structure:");
         sb.AppendLine("# Decision");
@@ -413,8 +399,7 @@ Return Markdown only using exactly this structure:
         sb.AppendLine("- If the decision says KEEP or NO WRITE for this target, do not call any tool.");
         sb.AppendLine("- If the decision says CREATE or UPDATE for this target, call `write_file` exactly once.");
         sb.AppendLine("- Any `write_file` call must use the exact full physical path shown above.");
-        sb.AppendLine("- Do not write any other file.");
-        sb.AppendLine("- Never mix tool calls and Markdown in the same response.");
+        sb.AppendLine("- Apply the loaded setup-documentation framework/profile write constraints.");
         sb.AppendLine();
         sb.AppendLine("If writing is required, use native tool calling when available.");
         sb.AppendLine("If native tools are unavailable, return exactly one JSON object in this shape:");
@@ -436,8 +421,7 @@ Return the final workflow result only after all prior write steps are complete.
 Rules:
 - Tool calls are forbidden in this step.
 - Summarize the final mode and outcomes based on the decision artifact and any completed write steps.
-- Use logical managed-document paths in the final report.
-- Do not claim a write happened unless it already succeeded in a prior step.
+- Apply the loaded setup-documentation framework/profile final-report rules.
 
 Return Markdown only using exactly this structure:
 # Decision

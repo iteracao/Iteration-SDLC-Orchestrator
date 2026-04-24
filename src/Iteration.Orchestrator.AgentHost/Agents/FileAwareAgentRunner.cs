@@ -152,7 +152,14 @@ internal static class FileAwareAgentRunner
         {
             var phase = phases[phaseIndex];
             await logs.AppendSectionAsync(workflowRunId, $"Agent phase {phaseIndex + 1}: {phase.Name}", ct);
-            await logs.AppendBlockAsync(workflowRunId, $"Phase prompt: {phase.Name}", phase.Prompt, ct);
+            if (phase.SummarizePromptInLogs)
+            {
+                await logs.AppendLineAsync(workflowRunId, BuildPhasePromptSummary(phase), ct);
+            }
+            else
+            {
+                await logs.AppendBlockAsync(workflowRunId, $"Phase prompt: {phase.Name}", phase.Prompt, ct);
+            }
 
             string phaseResult;
             if (phase.Mode == AgentPhaseMode.ContextOnly)
@@ -249,7 +256,10 @@ internal static class FileAwareAgentRunner
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
-            var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages);
+            var summarizedPhasePrompt = phase.SummarizePromptInLogs
+                ? BuildPhasePrompt(phase, phaseIndex, totalPhases, writableFiles)
+                : null;
+            var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages, summarizedPhasePrompt);
             var response = await RunModelWithTimeoutAsync(
                 conversation,
                 currentMessages,
@@ -1029,13 +1039,20 @@ Rules:
         return count;
     }
 
-    private static StringBuilder BeginInteractionLog(string phaseName, int interactionNumber, IReadOnlyList<ChatMessage> inputMessages)
+    private static StringBuilder BeginInteractionLog(
+        string phaseName,
+        int interactionNumber,
+        IReadOnlyList<ChatMessage> inputMessages,
+        string? summarizedPhasePrompt)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"{phaseName} - interaction {interactionNumber}");
-        AppendInteractionSection(sb, "INPUT", BuildInputMessagesLog(inputMessages));
+        AppendInteractionSection(sb, "INPUT", BuildInputMessagesLog(inputMessages, summarizedPhasePrompt));
         return sb;
     }
+
+    private static string BuildPhasePromptSummary(AgentPhaseDefinition phase)
+        => $"Phase prompt registered for {phase.Name} ({phase.Prompt.Length} chars). Content omitted from normal workflow log.";
 
     private static void AppendInteractionSection(StringBuilder sb, string title, string content)
     {
@@ -1052,7 +1069,7 @@ Rules:
         }
     }
 
-    private static string BuildInputMessagesLog(IReadOnlyList<ChatMessage> messages)
+    private static string BuildInputMessagesLog(IReadOnlyList<ChatMessage> messages, string? summarizedPhasePrompt)
     {
         if (messages.Count == 0)
         {
@@ -1065,7 +1082,9 @@ Rules:
             var message = messages[index];
             var content = GetChatMessageText(message);
             var source = InferMessageSource(content);
-            var summary = SummarizeInputMessageForLog(content);
+            var summary = ShouldSummarizePhasePrompt(content, summarizedPhasePrompt)
+                ? $"Phase prompt input ({content.Length} chars). Content omitted from normal workflow log."
+                : SummarizeInputMessageForLog(content);
             sb.AppendLine($"Message {index + 1}/{messages.Count} [{message.Role}; {source}; {content.Length} chars]");
             sb.AppendLine(summary);
             if (index < messages.Count - 1)
@@ -1076,6 +1095,10 @@ Rules:
 
         return sb.ToString().TrimEnd();
     }
+
+    private static bool ShouldSummarizePhasePrompt(string content, string? summarizedPhasePrompt)
+        => !string.IsNullOrWhiteSpace(summarizedPhasePrompt) &&
+           string.Equals(content.TrimEnd(), summarizedPhasePrompt, StringComparison.Ordinal);
 
     private static string SummarizeInputMessageForLog(string content)
     {
@@ -2128,7 +2151,8 @@ Rules:
         bool InjectSavedMarkdownIntoNextPhase = false,
         bool RequireAllAvailableFilesRead = false,
         bool AutoCompleteWhenAllAvailableFilesRead = false,
-        bool AutoLoadAllAvailableFilesAfterFindAvailableFiles = false);
+        bool AutoLoadAllAvailableFilesAfterFindAvailableFiles = false,
+        bool SummarizePromptInLogs = false);
 
     internal sealed record RepositoryDiscoveryTools(
         Func<string?, CancellationToken, Task<IReadOnlyList<RepositoryEntry>>> ListRepositoryTreeAsync,
