@@ -9,6 +9,7 @@ Iteration SDLC Orchestrator is a modular monolith that manages SDLC work around 
 Current code and files confirm these active capabilities:
 
 - implemented: setup persists `Solution`, `SolutionTarget`, `WorkflowRun`, `AgentTaskRun`, and setup artifacts/logs
+- implemented: `setup-documentation` can bootstrap or refresh the stable target docs under `AI/solutions/<target-storage-code>/`
 - implemented: requirements, backlog, open questions, decisions, and workflow runs are loaded and filtered by `targetSolutionId`
 - implemented: requirement-driven workflows exist for `analyze-request`, `design-solution-change`, `plan-implementation`, and `implement-solution-change`
 - implemented: workflow execution is queued and completed in a background hosted service
@@ -36,4 +37,4 @@ Current behavior is still transitional in one important place: document browsing
 - Stable target-solution knowledge lives under `AI/solutions/<target-storage-code>/` in the repository being orchestrated. For this repository, that workspace is `AI/solutions/iteration-sdlc-orchestrator/dev/`.
 - Workflow artifacts under `data/runs/<workflowRunId>/` and workflow logs under `data/workflow-logs/` are runtime evidence, not the stable target-solution documentation set.
 - Recent architectural changes were made directly in code and structure, not exclusively through workflow-generated documentation. The target docs therefore need to be maintained as a manual reality check.
-- The current implementation workflow produces persisted implementation reports, but the agent runtime is still read-only and does not mutate repository files yet. This is the most important implementation/runtime gap to keep in mind when reading the rest of the docs.
+- The current implementation workflow produces persisted implementation reports, but it still does not mutate repository files yet. The runner now supports bounded writes for `setup-documentation`, not for implementation code changes. This remains the most important implementation/runtime gap to keep in mind when reading the rest of the docs.

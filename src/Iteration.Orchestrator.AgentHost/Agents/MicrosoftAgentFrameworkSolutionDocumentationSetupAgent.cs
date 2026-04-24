@@ -222,7 +222,8 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 Goal:
 Load the full allowed repository evidence set using `get_next_file_batch` only.
 
-Return exactly one tool call per response:
+Use native tool calling when available.
+If native tools are unavailable, return exactly one JSON object and nothing else:
 {"tool":"get_next_file_batch","args":{}}
 
 After each tool result:
@@ -313,7 +314,8 @@ Return Markdown only using exactly this structure:
         sb.AppendLine("- Do not write any other file.");
         sb.AppendLine("- Never mix tool calls and Markdown in the same response.");
         sb.AppendLine();
-        sb.AppendLine("If writing is required, return exactly one JSON object in this shape:");
+        sb.AppendLine("If writing is required, use native tool calling when available.");
+        sb.AppendLine("If native tools are unavailable, return exactly one JSON object in this shape:");
         sb.AppendLine($@"{{""tool"":""write_file"",""args"":{{""path"":""{physicalPath}"",""content"":""<markdown content>""}}}}");
         sb.AppendLine();
         sb.AppendLine("If no write is required, return Markdown only using exactly this structure:");

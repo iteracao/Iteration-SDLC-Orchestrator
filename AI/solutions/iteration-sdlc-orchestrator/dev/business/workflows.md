@@ -33,7 +33,7 @@ What the current code does:
 - calls `FileSystemSolutionSetupService`
 - prepares setup artifacts
 - commits `Solution`, `SolutionTarget`, `WorkflowRun`, and `AgentTaskRun` only after preparation succeeds
-- returns `NextWorkflowCode = "update-target-documentation"` as the handoff hint for the next workflow
+- returns `NextWorkflowCode = "update-target-documentation"` as a legacy handoff hint even though the runnable follow-up workflow is now `setup-documentation`
 
 Filesystem/bootstrap behavior:
 
@@ -72,10 +72,50 @@ Important current limitations:
 - setup does not bootstrap docs from repository truth; it only seeds missing templates
 - setup does not scaffold `design/latest-design.md` or `delivery/latest-plan.md`
 - setup does not generate solution knowledge or perform lifecycle normalization
-- real documentation understanding/update is intentionally deferred to the next workflow, `update-target-documentation`
-- `update-target-documentation` is a prepared handoff target, not an already implemented setup sub-step
+- source-grounded documentation understanding/update now happens through the separate `setup-documentation` workflow rather than inside `setup-solution`
+- the legacy `update-target-documentation` handoff value no longer matches the implemented follow-up workflow name
 
-### 2. Analyze Request
+### 2. Setup Documentation
+
+Source:
+
+- API: `POST api/workflow-runs/setup-documentation`
+- runtime handler: `SetupDocumentationHandler`
+
+Trigger and actual inputs:
+
+- `TargetSolutionId`
+- `RequestedBy`
+
+What the current code does:
+
+- creates and queues a target-scoped `WorkflowRun`
+- loads the canonical managed doc set under `AI/solutions/<target-storage-code>/`
+- gathers allowed repository/context files for the selected target
+- runs a phased documentation agent that first establishes the doc contract, then loads repository evidence, then synthesizes the repository state, then decides per-document actions
+- allows `write_file` only for the canonical managed doc paths for that target
+- persists input, output, visible report, and workflow log artifacts
+
+Persisted outputs:
+
+- `setup-documentation.input.json`
+- `setup-documentation.output.json`
+- `repository-state.md`
+- `setup-documentation-report.md`
+- `workflow-report.md`
+
+Workflow state result:
+
+- the run moves from `Pending` -> `Running` -> `Completed` on success
+- because this is target-scoped and not requirement-scoped, validating the run does not advance any requirement lifecycle
+
+Current notes:
+
+- this workflow is the implemented path for bootstrapping or refreshing stable target docs from repository evidence
+- it can write only the managed target docs, not arbitrary repository files
+- document browsing in the cockpit is still solution-based even though the workflow itself is target-scoped
+
+### 3. Analyze Request
 
 Source:
 
@@ -115,7 +155,7 @@ Current notes:
 - the final workflow result is a plain Markdown report, not a JSON workflow output envelope
 - prompts and responses for all three phases are logged, but only the final report is saved as a run artifact
 
-### 3. Design Solution Change
+### 4. Design Solution Change
 
 Source:
 
@@ -157,7 +197,7 @@ Current notes:
 - design is correctly blocked on an analyzed requirement
 - the report is persisted, but no stable `design/latest-design.md` maintenance path is implemented automatically
 
-### 4. Plan Implementation
+### 5. Plan Implementation
 
 Source:
 
@@ -201,7 +241,7 @@ Current notes:
 - generated backlog slices are ordered by `PlanningOrder`
 - backlog creation through planning is the main architectural direction, but direct backlog creation API support still exists
 
-### 5. Implement Solution Change
+### 6. Implement Solution Change
 
 Source:
 

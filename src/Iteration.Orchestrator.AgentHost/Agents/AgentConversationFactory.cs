@@ -20,7 +20,10 @@ public interface IAgentConversationFactory
 
 public interface IAgentConversation
 {
-    Task<string> RunAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct);
+    Task<AgentConversationResponse> RunAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<AgentToolDefinition>? tools,
+        CancellationToken ct);
 }
 
 public sealed class SelectedAgentConversationFactory : IAgentConversationFactory
@@ -59,11 +62,14 @@ internal sealed class OllamaAgentConversation : IAgentConversation
         _agent = chatClient.AsAIAgent(name: agentName, instructions: instructions);
     }
 
-    public async Task<string> RunAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct)
+    public async Task<AgentConversationResponse> RunAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<AgentToolDefinition>? tools,
+        CancellationToken ct)
     {
         _session ??= await _agent.CreateSessionAsync(ct);
         var rawResponse = await _agent.RunAsync(messages, session: _session, cancellationToken: ct);
-        return rawResponse.Text ?? string.Empty;
+        return new AgentConversationResponse(rawResponse.Text ?? string.Empty);
     }
 }
 
@@ -82,7 +88,10 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
         _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, selection.TimeoutSeconds));
     }
 
-    public async Task<string> RunAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct)
+    public async Task<AgentConversationResponse> RunAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<AgentToolDefinition>? tools,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_selection.ApiKey))
         {
@@ -91,7 +100,7 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_selection.BaseUrl.TrimEnd('/')}/responses");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _selection.ApiKey);
-        request.Content = JsonContent.Create(BuildPayload(messages));
+        request.Content = JsonContent.Create(BuildPayload(messages, tools));
 
         using var response = await SendWithRateLimitRetriesAsync(request, ct);
         var responseContent = await response.Content.ReadAsStringAsync(ct);
@@ -103,7 +112,10 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
             _previousResponseId = idElement.GetString();
         }
 
-        return ExtractOutputText(document.RootElement);
+        return new AgentConversationResponse(
+            ExtractOutputText(document.RootElement),
+            ExtractToolCalls(document.RootElement),
+            supportsNativeToolCalls: true);
     }
 
 
@@ -155,7 +167,7 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
         clone.VersionPolicy = request.VersionPolicy;
         return clone;
     }
-    private object BuildPayload(IReadOnlyList<ChatMessage> messages)
+    private object BuildPayload(IReadOnlyList<ChatMessage> messages, IReadOnlyList<AgentToolDefinition>? tools)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -169,23 +181,39 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
             payload["previous_response_id"] = _previousResponseId;
         }
 
+        if (tools is { Count: > 0 })
+        {
+            payload["tools"] = tools.Select(MapToolDefinition).ToArray();
+            payload["parallel_tool_calls"] = false;
+        }
+
         return payload;
     }
 
     private static object MapMessage(ChatMessage message)
     {
         var normalizedRole = message.Role.ToString();
+        var text = message.Text ?? string.Empty;
+        if (normalizedRole.Equals("tool", StringComparison.OrdinalIgnoreCase))
+        {
+            if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(text, out var nativeToolResult))
+            {
+                return new Dictionary<string, object?>
+                {
+                    ["type"] = "function_call_output",
+                    ["call_id"] = nativeToolResult.CallId,
+                    ["output"] = nativeToolResult.Payload
+                };
+            }
+
+            text = $"TOOL RESULT\n{text}";
+        }
+
         var role = normalizedRole.Equals("assistant", StringComparison.OrdinalIgnoreCase)
             ? "assistant"
             : normalizedRole.Equals("system", StringComparison.OrdinalIgnoreCase)
                 ? "developer"
                 : "user";
-
-        var text = message.Text ?? string.Empty;
-        if (normalizedRole.Equals("tool", StringComparison.OrdinalIgnoreCase))
-        {
-            text = $"TOOL RESULT\n{text}";
-        }
 
         return new
         {
@@ -193,6 +221,15 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
             content = text
         };
     }
+
+    private static object MapToolDefinition(AgentToolDefinition tool)
+        => new Dictionary<string, object?>
+        {
+            ["type"] = "function",
+            ["name"] = tool.Name,
+            ["description"] = tool.Description,
+            ["parameters"] = tool.ParametersSchema
+        };
 
     private static string ExtractOutputText(JsonElement root)
     {
@@ -238,5 +275,65 @@ internal sealed class OpenAiResponsesConversation : IAgentConversation
         }
 
         return sb.ToString();
+    }
+
+    private static IReadOnlyList<AgentToolCall> ExtractToolCalls(JsonElement root)
+    {
+        if (!root.TryGetProperty("output", out var outputElement) || outputElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<AgentToolCall>();
+        }
+
+        var toolCalls = new List<AgentToolCall>();
+        foreach (var item in outputElement.EnumerateArray())
+        {
+            if (!item.TryGetProperty("type", out var typeElement) ||
+                typeElement.ValueKind != JsonValueKind.String ||
+                !string.Equals(typeElement.GetString(), "function_call", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!item.TryGetProperty("name", out var nameElement) || nameElement.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var arguments = ParseArguments(item);
+            var callId = item.TryGetProperty("call_id", out var callIdElement) && callIdElement.ValueKind == JsonValueKind.String
+                ? callIdElement.GetString()
+                : null;
+
+            toolCalls.Add(new AgentToolCall(
+                nameElement.GetString() ?? string.Empty,
+                arguments,
+                callId,
+                isNative: true));
+        }
+
+        return toolCalls;
+    }
+
+    private static JsonElement ParseArguments(JsonElement functionCallItem)
+    {
+        if (functionCallItem.TryGetProperty("arguments", out var argumentsElement))
+        {
+            if (argumentsElement.ValueKind == JsonValueKind.String)
+            {
+                var rawArguments = argumentsElement.GetString();
+                if (!string.IsNullOrWhiteSpace(rawArguments))
+                {
+                    using var argsDocument = JsonDocument.Parse(rawArguments);
+                    return argsDocument.RootElement.Clone();
+                }
+            }
+            else if (argumentsElement.ValueKind == JsonValueKind.Object)
+            {
+                return argumentsElement.Clone();
+            }
+        }
+
+        using var emptyArgsDocument = JsonDocument.Parse("{}");
+        return emptyArgsDocument.RootElement.Clone();
     }
 }

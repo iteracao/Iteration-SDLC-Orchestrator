@@ -345,7 +345,7 @@ Current setup behavior includes:
 - run filesystem setup/bootstrap first
 - write setup artifacts under `data/runs/<workflowRunId>/`
 - persist `Solution`, `SolutionTarget`, `WorkflowRun`, and `AgentTaskRun` only after preparation succeeds
-- return handoff metadata for the next workflow through `NextWorkflowCode = "update-target-documentation"`
+- return handoff metadata through the legacy value `NextWorkflowCode = "update-target-documentation"`, even though the implemented follow-up workflow is now `setup-documentation`
 
 Repository handling in current code:
 
@@ -376,7 +376,7 @@ Documentation bootstrap:
 - setup preserves existing files
 - setup does not bootstrap those docs from repository truth
 - setup does not generate solution knowledge or interpret repository contents
-- setup now explicitly defers real target-documentation understanding/update to the next workflow, `update-target-documentation`
+- source-grounded target-documentation understanding/update now lives in the separate `setup-documentation` workflow
 
 Persistence order:
 
@@ -393,7 +393,7 @@ Current non-goals:
 
 - setup does not invoke an AI agent, even though it still creates an `AgentTaskRun` for workflow bookkeeping consistency
 - setup does not normalize the broader requirement/backlog lifecycle
-- setup does not implement `update-target-documentation`; it only prepares the handoff
+- setup does not perform repository-truth documentation synthesis itself; it only prepares the repository and docs workspace for the separate `setup-documentation` run
 
 Current limitation:
 
@@ -406,6 +406,7 @@ Current limitation:
 
 Agents currently run through `WorkflowRunExecutor`, which dispatches by workflow code:
 
+- `setup-documentation`
 - `analyze-request`
 - `design-solution-change`
 - `plan-implementation`
@@ -416,10 +417,10 @@ Each workflow execution persists an `AgentTaskRun` with the serialized input pay
 The active execution model is the file-aware loop in `FileAwareAgentRunner`:
 
 - the model is prompted with instructions and a structured prompt
-- if it needs more evidence, it can return only `{"action":"read_file","path":"relative/path"}`
-- the orchestrator validates the requested path against the allowed path list
-- the orchestrator reads the file, injects the content back into the prompt history, and continues the loop
-- the loop is capped at 12 tool calls
+- depending on workflow phase, it can request workflow input, batched repository file loading, exact-path file reads, persisted workflow output, or approved-path writes
+- the orchestrator validates the requested action and file paths against the allowed action/path set for that phase
+- the orchestrator injects the resulting file or tool payload back into the prompt history and continues the loop
+- the loop is capped at 16 tool interactions per phase
 
 Allowed file scope is bounded to paths that the runtime advertises up front:
 
@@ -428,7 +429,7 @@ Allowed file scope is bounded to paths that the runtime advertises up front:
 - stable target docs under `AI/solutions/<target-storage-code>/...`
 - profile rule documents loaded from `AI/framework/profiles/...`
 
-This is a bounded read-only execution model. The agent cannot browse arbitrary files and cannot mutate repository content.
+This is still a bounded execution model. The agent cannot browse arbitrary files. Approved-path writes now exist for the `setup-documentation` workflow so it can update managed target docs, but implementation workflows still do not mutate repository code.
 
 ---
 
@@ -496,8 +497,8 @@ So the separation exists, but the workflow-to-doc maintenance loop is not fully 
 - setup seeds docs but does not bootstrap them from repository truth
 - later workflow handlers expect optional stable docs that setup does not scaffold
 - cockpit shows later pipeline lanes that are not yet backed by runtime handlers
-- setup is deterministic and transaction-safe now, but it still leaves real documentation understanding/update to the next workflow
-- cancellation is implemented for `Pending`, `Completed`, and `Error` runs, and the cockpit now uses non-terminating run cancellation unless requirement termination is explicitly requested
+- setup is deterministic and transaction-safe now, but it still leaves repository-truth documentation synthesis to the separate `setup-documentation` workflow
+- domain and executor-side cancellation behavior now covers `Pending`, `Running`, `Completed`, and `Error` runs, but UI/application cancellation rules still need to stay aligned with that runtime behavior
 
 ---
 

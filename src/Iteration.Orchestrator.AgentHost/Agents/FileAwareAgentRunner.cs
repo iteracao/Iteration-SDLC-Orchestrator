@@ -78,7 +78,7 @@ internal static class FileAwareAgentRunner
         var responseTimeoutSeconds = maxModelResponseSeconds;
 
         await logs.AppendSectionAsync(workflowRunId, logTitle, ct);
-        await logs.AppendBlockAsync(workflowRunId, $"Model base instructions: {logTitle}", instructions, ct);
+        await logs.AppendLineAsync(workflowRunId, $"Model base instructions registered for {logTitle} ({instructions.Length} chars).", ct);
         await logs.AppendLineAsync(
             workflowRunId,
             $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
@@ -87,14 +87,20 @@ internal static class FileAwareAgentRunner
         var promptMessages = new[] { CreateUserMessage(prompt) };
         await LogModelInputMessagesAsync(logs, workflowRunId, logTitle, 1, promptMessages, ct);
 
-        var rawText = await RunModelWithTimeoutAsync(
+        var response = await RunModelWithTimeoutAsync(
             conversation,
             promptMessages,
+            tools: null,
             responseTimeoutSeconds,
             ct);
 
-        await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", rawText, ct);
-        return rawText;
+        if (response.ToolCalls.Count > 0)
+        {
+            throw new InvalidOperationException("Prompt-only execution received unexpected tool calls.");
+        }
+
+        await logs.AppendBlockAsync(workflowRunId, $"Response: {logTitle}", response.Text, ct);
+        return response.Text;
     }
 
     public static async Task<string> RunMultiStepAsync(
@@ -139,7 +145,7 @@ internal static class FileAwareAgentRunner
             workflowRunId,
             $"Provider '{conversationFactory.ProviderName}' selected model '{conversationFactory.SelectedModel}' using per-response timeout of {responseTimeoutSeconds} seconds. OpenAI config complete: {conversationFactory.IsOpenAiConfigurationComplete}.",
             ct);
-        await logs.AppendBlockAsync(workflowRunId, "Model message OUT [base] role=system source=base-instructions format=text/plain", instructions, ct);
+        await logs.AppendLineAsync(workflowRunId, $"Model base instructions registered ({instructions.Length} chars).", ct);
 
         for (var phaseIndex = 0; phaseIndex < phases.Count; phaseIndex++)
         {
@@ -220,17 +226,128 @@ internal static class FileAwareAgentRunner
 
         var nextUnreadFileIndex = 0;
         var writtenPathsThisPhase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var toolRegistry = CreateToolRegistry(
+            workflowRunId,
+            phase.Name,
+            logs,
+            payloadStore,
+            availableFileIndex,
+            state,
+            writableFiles,
+            writtenPathsThisPhase,
+            () => nextUnreadFileIndex,
+            value => nextUnreadFileIndex = value);
+        var toolExecutor = new AgentToolExecutor(
+            toolRegistry,
+            phase.AllowToolCalls
+                ? phase.AllowedToolActions
+                : Array.Empty<string>());
+        var nativeToolDefinitions = phase.AllowToolCalls
+            ? toolExecutor.GetAllowedDefinitions()
+            : Array.Empty<AgentToolDefinition>();
 
         for (var i = 0; i < MaxToolCallsPerPhase; i++)
         {
             var interaction = BeginInteractionLog(phase.Name, i + 1, currentMessages);
-            var rawText = await RunModelWithTimeoutAsync(conversation, currentMessages, maxModelResponseSeconds, ct);
+            var response = await RunModelWithTimeoutAsync(
+                conversation,
+                currentMessages,
+                nativeToolDefinitions,
+                maxModelResponseSeconds,
+                ct);
+            var nativeToolAnalysis = AnalyzeNativeToolResponse(response);
+
+            if (nativeToolAnalysis.State == NativeToolResponseState.MixedToolAndText)
+            {
+                var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(response.Text));
+                AppendInteractionSection(interaction, "VALIDATION", "Rejected: mixed native tool call and final Markdown/text in the same assistant response.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
+                continue;
+            }
+
+            if (nativeToolAnalysis.State == NativeToolResponseState.MultipleToolCalls)
+            {
+                var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(response.ToolCalls));
+                AppendInteractionSection(interaction, "VALIDATION", "Rejected: multiple native tool calls in one assistant response.");
+                AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                currentMessages = [CreateUserMessage(retryMessage)];
+                continue;
+            }
+
+            if (nativeToolAnalysis.State == NativeToolResponseState.SingleToolCall)
+            {
+                var nativeToolCall = nativeToolAnalysis.SingleToolCall!;
+                AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(nativeToolCall));
+
+                if (phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
+                {
+                    const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.";
+                    AppendInteractionSection(interaction, "VALIDATION", "Rejected: native tool call returned in a Markdown-only phase.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateUserMessage(retryMessage)];
+                    continue;
+                }
+
+                if (!phase.AllowToolCalls)
+                {
+                    const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
+                    AppendInteractionSection(interaction, "VALIDATION", $"Rejected: native tool call '{nativeToolCall.Name}' returned in a no-tool phase.");
+                    AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    currentMessages = [CreateUserMessage(retryMessage)];
+                    continue;
+                }
+
+                var nativeToolResult = await ExecuteToolCallAsync(
+                    toolExecutor,
+                    nativeToolCall,
+                    interaction,
+                    workflowRunId,
+                    phase,
+                    i + 1,
+                    logs,
+                    ct);
+
+                if (!string.IsNullOrWhiteSpace(nativeToolResult.FinalPhaseOutput))
+                {
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    return nativeToolResult.FinalPhaseOutput!;
+                }
+
+                currentMessages = BuildPostToolMessages(nativeToolCall, nativeToolResult.ModelPayload);
+
+                if (HandlePostToolExecution(
+                    nativeToolCall,
+                    nativeToolResult,
+                    phase,
+                    workflowRunId,
+                    availableFileIndex,
+                    state,
+                    interaction,
+                    pendingMessages,
+                    out var earlyPhaseResult))
+                {
+                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                    return earlyPhaseResult!;
+                }
+
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                continue;
+            }
+
+            var rawText = response.Text;
             var toolResponseState = AnalyzeToolResponse(rawText);
-            AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
 
             if (toolResponseState.State == ToolResponseState.MixedToolAndText)
             {
                 var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: mixed tool call and final Markdown/text in the same assistant message.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
                 await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
@@ -241,6 +358,7 @@ internal static class FileAwareAgentRunner
             if (toolResponseState.State == ToolResponseState.MultipleToolObjects)
             {
                 var retryMessage = BuildInvalidResponseRetryMessage(phase);
+                AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: multiple tool-call JSON objects in one assistant message.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
                 await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
@@ -251,6 +369,7 @@ internal static class FileAwareAgentRunner
             if (toolResponseState.State == ToolResponseState.SingleToolObject && phase.ResponseMode == AgentPhaseResponseMode.MarkdownOnly)
             {
                 const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only the final Markdown output. Do not return JSON. Do not call any tools.";
+                AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 AppendInteractionSection(interaction, "VALIDATION", "Rejected: tool call returned in a Markdown-only phase.");
                 AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
                 await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
@@ -260,6 +379,7 @@ internal static class FileAwareAgentRunner
 
             if (toolResponseState.State == ToolResponseState.NoToolObject)
             {
+                AppendInteractionSection(interaction, "OUTPUT [assistant]", SanitizeModelMessageForLog(rawText));
                 if (phase.ResponseMode == AgentPhaseResponseMode.ToolCallsOnly)
                 {
                     var retryMessage = BuildInvalidResponseRetryMessage(phase);
@@ -335,21 +455,9 @@ internal static class FileAwareAgentRunner
                 return rawText;
             }
 
-            var toolRequest = toolResponseState.SingleToolRequest;
-            var normalizedAction = toolRequest!.ResolvedAction.Trim().ToLowerInvariant();
-            AppendInteractionSection(interaction, "TOOL REQUEST", BuildToolRequestLog(rawText, toolRequest));
-
-            if (phase.AllowToolCalls && phase.AllowedToolActions is { Count: > 0 }
-                && !phase.AllowedToolActions.Contains(normalizedAction, StringComparer.OrdinalIgnoreCase))
-            {
-                var disallowedActionPayload = $"ERROR: action '{toolRequest.ResolvedAction}' is not allowed in this phase. Use only: {string.Join(", ", phase.AllowedToolActions)}.";
-                AppendInteractionSection(interaction, "VALIDATION", $"Rejected: tool action '{toolRequest.ResolvedAction}' is not allowed in this phase.");
-                AppendInteractionSection(interaction, "NEXT INPUT [tool]", disallowedActionPayload);
-                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                currentMessages = [CreateToolMessage(disallowedActionPayload)];
-                continue;
-            }
-
+            var toolRequest = toolResponseState.SingleToolRequest!;
+            var fallbackToolCall = BuildFallbackToolCall(toolRequest);
+            AppendInteractionSection(interaction, "OUTPUT [assistant -> tool]", BuildToolCallOutputLog(fallbackToolCall));
             if (!phase.AllowToolCalls)
             {
                 const string retryMessage = "TOOLS ARE NOT ALLOWED IN THIS PHASE. Return only a short plain Markdown response. Do not return JSON. Do not call any tools.";
@@ -360,223 +468,41 @@ internal static class FileAwareAgentRunner
                 continue;
             }
 
-            switch (normalizedAction)
+            var fallbackToolResult = await ExecuteToolCallAsync(
+                toolExecutor,
+                fallbackToolCall,
+                interaction,
+                workflowRunId,
+                phase,
+                i + 1,
+                logs,
+                ct);
+
+            if (!string.IsNullOrWhiteSpace(fallbackToolResult.FinalPhaseOutput))
             {
-                case "get_workflow_input":
-                {
-                    await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
-                    var inputPayload = await payloadStore.GetInputAsync(workflowRunId, ct);
-                    state.WorkflowInputLoaded = true;
-                    var toolPayload = $"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}";
-                    AppendInteractionSection(interaction, "TOOL RESULT", $"get_workflow_input -> {inputPayload.InputPayloadJson.Length} chars.");
-                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", SanitizeModelMessageForLog(toolPayload));
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = [CreateToolMessage(toolPayload)];
-                    continue;
-                }
-                case "find_available_files":
-                {
-                    if (state.FilesAlreadyListed)
-                    {
-                        AppendInteractionSection(interaction, "TOOL RESULT", "find_available_files -> cached file list returned.");
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(state.AvailableFilesPayload)];
-                        continue;
-                    }
-
-                    var matchingPaths = FindAvailableFiles(availableFileIndex);
-                    var fileListResult = FormatAvailableFiles(matchingPaths);
-                    state.FilesAlreadyListed = true;
-                    state.AvailableFilesPayload = fileListResult;
-                    state.RepositoryDiscoveryUsed = true;
-                    AppendInteractionSection(interaction, "TOOL RESULT", $"find_available_files -> {matchingPaths.Count} file path(s) returned.");
-
-                    if (phase.AutoLoadAllAvailableFilesAfterFindAvailableFiles)
-                    {
-                        pendingMessages.Add(CreateToolMessage(fileListResult));
-                        var autoLoadResult = AutoLoadRepositoryEvidence(availableFileIndex, state);
-                        foreach (var payload in autoLoadResult.ToolPayloads)
-                        {
-                            pendingMessages.Add(CreateToolMessage(payload));
-                        }
-
-                        AppendInteractionSection(interaction, "RESULT", $"Repository evidence loaded automatically. Batches prepared: {autoLoadResult.BatchCount}; files reviewed: {autoLoadResult.FilesReviewed}.");
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        return "Repository evidence acquisition completed.";
-                    }
-
-                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", SummarizeFileListForLog(fileListResult));
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = BuildPostToolMessages(fileListResult);
-                    continue;
-                }
-                case "get_next_file_batch":
-                {
-                    var batch = BuildNextFileBatch(availableFileIndex, nextUnreadFileIndex);
-                    nextUnreadFileIndex = batch.NextUnreadFileIndex;
-
-                    foreach (var file in batch.Files)
-                    {
-                        state.ReadPaths.Add(file.NormalizedPath);
-                    }
-
-                    AppendInteractionSection(interaction, "TOOL RESULT", BuildBatchResultLog(batch));
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = BuildPostToolMessages(batch.Payload);
-
-                    if (phase.AutoCompleteWhenAllAvailableFilesRead &&
-                        phase.RequireAllAvailableFilesRead &&
-                        availableFileIndex.FullPaths.Count > 0 &&
-                        availableFileIndex.NormalizedFullPaths.Keys.All(path => state.ReadPaths.Contains(path)))
-                    {
-                        await logs.AppendLineAsync(
-                            workflowRunId,
-                            $"{phase.Name}: repository evidence acquisition completed after all allowed files were reviewed.",
-                            ct);
-                        return "Repository evidence acquisition completed.";
-                    }
-
-                    continue;
-                }
-                case "read_file":
-                case "get_file":
-                {
-                    if (!state.FilesAlreadyListed)
-                    {
-                        const string toolPayload = "ERROR: call find_available_files first.";
-                        AppendInteractionSection(interaction, "TOOL RESULT", "get_file rejected: find_available_files has not been called yet.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(toolPayload)];
-                        continue;
-                    }
-
-                    var requestedPath = toolRequest.ResolvedPath;
-                    if (string.IsNullOrWhiteSpace(requestedPath))
-                    {
-                        var toolPayload = "ERROR: get_file requires a non-empty 'path' with an exact full physical path previously returned by find_available_files.";
-                        AppendInteractionSection(interaction, "TOOL RESULT", "get_file rejected: missing path.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(toolPayload)];
-                        continue;
-                    }
-
-                    requestedPath = requestedPath.Trim();
-                    var fileRead = TryReadFileByPhysicalPath(availableFileIndex, requestedPath);
-                    if (fileRead is null)
-                    {
-                        var toolPayload = "ERROR: path not allowed. Use only an exact full physical path returned by find_available_files for this run.";
-                        AppendInteractionSection(interaction, "TOOL RESULT", $"get_file rejected: path is not allowed or does not exist: {requestedPath}.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(toolPayload)];
-                        continue;
-                    }
-
-                    state.ReadPaths.Add(fileRead.NormalizedPath);
-                    var toolPayloadForFile = BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content);
-                    AppendInteractionSection(interaction, "TOOL RESULT", $"get_file -> {fileRead.FullPath} ({fileRead.Content.Length} chars). Complete file loaded.");
-                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", BuildFilePayloadMetadataLog(toolPayloadForFile));
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = BuildPostToolMessages(toolPayloadForFile);
-                    continue;
-                }
-                case "write_file":
-                {
-                    var requestedPath = toolRequest.ResolvedPath;
-                    var content = toolRequest.ResolvedContent;
-
-                    if (string.IsNullOrWhiteSpace(requestedPath))
-                    {
-                        var writePathErrorPayload = BuildWriteFilePathErrorMessage(writableFiles);
-                        AppendInteractionSection(interaction, "TOOL RESULT", "write_file rejected: missing path.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writePathErrorPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(writePathErrorPayload)];
-                        continue;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(content))
-                    {
-                        var writeContentErrorPayload = BuildWriteFileContentErrorMessage();
-                        AppendInteractionSection(interaction, "TOOL RESULT", "write_file rejected: empty content.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeContentErrorPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(writeContentErrorPayload)];
-                        continue;
-                    }
-
-                    requestedPath = requestedPath.Trim();
-                    if (writableFiles is null || !writableFiles.TryGetValue(requestedPath, out var fullWritePath))
-                    {
-                        var writeNotApprovedPayload = BuildWriteFileNotApprovedErrorMessage(writableFiles);
-                        AppendInteractionSection(interaction, "TOOL RESULT", $"write_file rejected: path is not approved: {requestedPath}.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeNotApprovedPayload);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateToolMessage(writeNotApprovedPayload)];
-                        continue;
-                    }
-
-                    var folder = Path.GetDirectoryName(fullWritePath);
-                    if (!string.IsNullOrWhiteSpace(folder))
-                    {
-                        Directory.CreateDirectory(folder);
-                    }
-
-                    var normalizedContent = content.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd() + Environment.NewLine;
-                    await File.WriteAllTextAsync(fullWritePath, normalizedContent, ct);
-                    writtenPathsThisPhase.Add(requestedPath);
-                    var writeSuccessPayload = $"OK: wrote '{requestedPath}'.";
-                    AppendInteractionSection(interaction, "TOOL RESULT", $"write_file -> wrote {normalizedContent.Length} chars to '{requestedPath}'.");
-                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", writeSuccessPayload);
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = [CreateToolMessage(writeSuccessPayload)];
-                    continue;
-                }
-                case "save_workflow_output":
-                {
-                    if (toolRequest.ResolvedOutput is not JsonElement output)
-                    {
-                        var retryMessage = "save_workflow_output requires an 'output' JSON object. Retry with a valid output payload.";
-                        AppendInteractionSection(interaction, "TOOL RESULT", "save_workflow_output rejected: missing output object.");
-                        AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateUserMessage(retryMessage)];
-                        continue;
-                    }
-
-                    try
-                    {
-                        await LogIgnoredWorkflowRunIdAsync(toolRequest.ResolvedWorkflowRunId, workflowRunId, phase.Name, normalizedAction, logs, ct);
-                        ValidateWorkflowOutputPayload(output);
-                        var outputJson = output.GetRawText();
-                        await payloadStore.SaveOutputAsync(workflowRunId, outputJson, ct);
-                        AppendInteractionSection(interaction, "TOOL RESULT", $"save_workflow_output -> saved output for workflow run {workflowRunId}.");
-                        AppendInteractionSection(interaction, "WORKFLOW OUTPUT", outputJson);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        return outputJson;
-                    }
-                    catch (Exception ex)
-                    {
-                        var retryMessage = $"save_workflow_output failed validation: {ex.Message} Retry with a valid output object.";
-                        AppendInteractionSection(interaction, "TOOL RESULT", $"save_workflow_output failed validation: {ex.Message}");
-                        AppendInteractionSection(interaction, "NEXT INPUT [user]", retryMessage);
-                        await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                        currentMessages = [CreateUserMessage(retryMessage)];
-                        continue;
-                    }
-                }
-                default:
-                {
-                    var toolPayload = $"ERROR: unsupported tool action '{toolRequest.ResolvedAction}'. Allowed actions for this phase must be followed exactly.";
-                    AppendInteractionSection(interaction, "TOOL RESULT", $"Unsupported tool action '{toolRequest.ResolvedAction}'.");
-                    AppendInteractionSection(interaction, "NEXT INPUT [tool]", toolPayload);
-                    await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
-                    currentMessages = [CreateToolMessage(toolPayload)];
-                    continue;
-                }
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                return fallbackToolResult.FinalPhaseOutput!;
             }
+
+            currentMessages = BuildPostToolMessages(fallbackToolCall, fallbackToolResult.ModelPayload);
+
+            if (HandlePostToolExecution(
+                fallbackToolCall,
+                fallbackToolResult,
+                phase,
+                workflowRunId,
+                availableFileIndex,
+                state,
+                interaction,
+                pendingMessages,
+                out var fallbackEarlyPhaseResult))
+            {
+                await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+                return fallbackEarlyPhaseResult!;
+            }
+
+            await logs.AppendBlockAsync(workflowRunId, $"{phase.Name} interaction {i + 1}", interaction.ToString(), ct);
+            continue;
         }
 
         throw new InvalidOperationException($"Agent exceeded maximum of {MaxToolCallsPerPhase} tool interactions in phase '{phase.Name}'.");
@@ -609,6 +535,497 @@ Rules:
         }
 
         return "INVALID RESPONSE. Return either one valid JSON tool-call object or the expected final Markdown/text response for this phase, but do not mix both.";
+    }
+
+    private static AgentToolRegistry CreateToolRegistry(
+        Guid workflowRunId,
+        string phaseName,
+        IWorkflowRunLogStore logs,
+        IWorkflowPayloadStore payloadStore,
+        AvailableFileIndex availableFileIndex,
+        AgentExecutionState state,
+        IReadOnlyDictionary<string, string>? writableFiles,
+        HashSet<string> writtenPathsThisPhase,
+        Func<int> getNextUnreadFileIndex,
+        Action<int> setNextUnreadFileIndex)
+    {
+        return new AgentToolRegistry(
+        [
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "get_workflow_input",
+                    "Returns the workflow input payload for the active workflow run.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "workflowRunId": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                    """),
+                async (args, cancellationToken) =>
+                {
+                    await LogIgnoredWorkflowRunIdAsync(
+                        GetOptionalStringProperty(args, "workflowRunId"),
+                        workflowRunId,
+                        phaseName,
+                        "get_workflow_input",
+                        logs,
+                        cancellationToken);
+
+                    var inputPayload = await payloadStore.GetInputAsync(workflowRunId, cancellationToken);
+                    state.WorkflowInputLoaded = true;
+                    var modelPayload = $"WORKFLOW INPUT FOR {workflowRunId}\n{inputPayload.InputPayloadJson}";
+                    return new AgentToolExecutionResult(
+                        modelPayload,
+                        $"get_workflow_input -> {inputPayload.InputPayloadJson.Length} chars.");
+                }),
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "find_available_files",
+                    "Returns the allowed repository files available to this workflow phase.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                    """),
+                (_, _) =>
+                {
+                    if (state.FilesAlreadyListed)
+                    {
+                        return Task.FromResult(new AgentToolExecutionResult(
+                            state.AvailableFilesPayload,
+                            "find_available_files -> cached file list returned."));
+                    }
+
+                    var matchingPaths = FindAvailableFiles(availableFileIndex);
+                    var fileListResult = FormatAvailableFiles(matchingPaths);
+                    state.FilesAlreadyListed = true;
+                    state.AvailableFilesPayload = fileListResult;
+                    state.RepositoryDiscoveryUsed = true;
+                    return Task.FromResult(new AgentToolExecutionResult(
+                        fileListResult,
+                        $"find_available_files -> {matchingPaths.Count} file path(s) returned."));
+                }),
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "get_next_file_batch",
+                    "Returns the next batch of allowed repository evidence files for the current workflow phase.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                    """),
+                (_, _) =>
+                {
+                    var batch = BuildNextFileBatch(availableFileIndex, getNextUnreadFileIndex());
+                    setNextUnreadFileIndex(batch.NextUnreadFileIndex);
+                    foreach (var file in batch.Files)
+                    {
+                        state.ReadPaths.Add(file.NormalizedPath);
+                    }
+
+                    return Task.FromResult(new AgentToolExecutionResult(
+                        batch.Payload,
+                        BuildBatchResultLog(batch)));
+                }),
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "get_file",
+                    "Returns one allowed repository file by full physical path.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["path"],
+                      "additionalProperties": false
+                    }
+                    """),
+                (args, _) =>
+                {
+                    if (!state.FilesAlreadyListed)
+                    {
+                        const string toolPayload = "ERROR: call find_available_files first.";
+                        return Task.FromResult(new AgentToolExecutionResult(
+                            toolPayload,
+                            "get_file rejected: find_available_files has not been called yet."));
+                    }
+
+                    var requestedPath = GetOptionalStringProperty(args, "path");
+                    if (string.IsNullOrWhiteSpace(requestedPath))
+                    {
+                        const string toolPayload = "ERROR: get_file requires a non-empty 'path' with an exact full physical path previously returned by find_available_files.";
+                        return Task.FromResult(new AgentToolExecutionResult(
+                            toolPayload,
+                            "get_file rejected: missing path."));
+                    }
+
+                    requestedPath = requestedPath.Trim();
+                    var fileRead = TryReadFileByPhysicalPath(availableFileIndex, requestedPath);
+                    if (fileRead is null)
+                    {
+                        const string toolPayload = "ERROR: path not allowed. Use only an exact full physical path returned by find_available_files for this run.";
+                        return Task.FromResult(new AgentToolExecutionResult(
+                            toolPayload,
+                            $"get_file rejected: path is not allowed or does not exist: {requestedPath}."));
+                    }
+
+                    state.ReadPaths.Add(fileRead.NormalizedPath);
+                    var toolPayloadForFile = BuildFullFileBatchBlock(fileRead.FullPath, fileRead.NormalizedPath, fileRead.Content);
+                    return Task.FromResult(new AgentToolExecutionResult(
+                        toolPayloadForFile,
+                        $"get_file -> {fileRead.FullPath} ({fileRead.Content.Length} chars). Complete file loaded."));
+                }),
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "write_file",
+                    "Writes Markdown content to an approved managed documentation file.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "description": "Full approved physical path."
+                        },
+                        "content": {
+                          "type": "string",
+                          "description": "Complete Markdown file content."
+                        }
+                      },
+                      "required": ["path", "content"],
+                      "additionalProperties": false
+                    }
+                    """),
+                async (args, cancellationToken) =>
+                {
+                    var requestedPath = GetOptionalStringProperty(args, "path");
+                    var content = GetOptionalStringProperty(args, "content");
+
+                    if (string.IsNullOrWhiteSpace(requestedPath))
+                    {
+                        var writePathErrorPayload = BuildWriteFilePathErrorMessage(writableFiles);
+                        return new AgentToolExecutionResult(
+                            writePathErrorPayload,
+                            "write_file rejected: missing path.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(content))
+                    {
+                        var writeContentErrorPayload = BuildWriteFileContentErrorMessage();
+                        return new AgentToolExecutionResult(
+                            writeContentErrorPayload,
+                            "write_file rejected: empty content.");
+                    }
+
+                    requestedPath = requestedPath.Trim();
+                    if (writableFiles is null || !writableFiles.TryGetValue(requestedPath, out var fullWritePath))
+                    {
+                        var writeNotApprovedPayload = BuildWriteFileNotApprovedErrorMessage(writableFiles);
+                        return new AgentToolExecutionResult(
+                            writeNotApprovedPayload,
+                            $"write_file rejected: path is not approved: {requestedPath}.");
+                    }
+
+                    var folder = Path.GetDirectoryName(fullWritePath);
+                    if (!string.IsNullOrWhiteSpace(folder))
+                    {
+                        Directory.CreateDirectory(folder);
+                    }
+
+                    var normalizedContent = content.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd() + Environment.NewLine;
+                    await File.WriteAllTextAsync(fullWritePath, normalizedContent, cancellationToken);
+                    writtenPathsThisPhase.Add(requestedPath);
+                    return new AgentToolExecutionResult(
+                        $"OK: wrote '{requestedPath}'.",
+                        $"write_file -> wrote {normalizedContent.Length} chars to '{requestedPath}'.");
+                }),
+            new DelegateAgentTool(
+                AgentToolDefinition.Create(
+                    "save_workflow_output",
+                    "Saves the final workflow output JSON payload for the active workflow run.",
+                    """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "workflowRunId": {
+                          "type": "string"
+                        },
+                        "output": {
+                          "type": "object"
+                        }
+                      },
+                      "required": ["output"],
+                      "additionalProperties": false
+                    }
+                    """),
+                async (args, cancellationToken) =>
+                {
+                    if (!TryGetProperty(args, "output", out var output) || output.ValueKind != JsonValueKind.Object)
+                    {
+                        return new AgentToolExecutionResult(
+                            "ERROR: save_workflow_output requires an 'output' JSON object. Retry with a valid output payload.",
+                            "save_workflow_output rejected: missing output object.");
+                    }
+
+                    await LogIgnoredWorkflowRunIdAsync(
+                        GetOptionalStringProperty(args, "workflowRunId"),
+                        workflowRunId,
+                        phaseName,
+                        "save_workflow_output",
+                        logs,
+                        cancellationToken);
+
+                    try
+                    {
+                        ValidateWorkflowOutputPayload(output);
+                        var outputJson = output.GetRawText();
+                        await payloadStore.SaveOutputAsync(workflowRunId, outputJson, cancellationToken);
+                        return new AgentToolExecutionResult(
+                            outputJson,
+                            $"save_workflow_output -> saved output for workflow run {workflowRunId}.",
+                            finalPhaseOutput: outputJson);
+                    }
+                    catch (Exception ex)
+                    {
+                        return new AgentToolExecutionResult(
+                            $"ERROR: save_workflow_output failed validation: {ex.Message} Retry with a valid output object.",
+                            $"save_workflow_output failed validation: {ex.Message}");
+                    }
+                })
+        ]);
+    }
+
+    private static async Task<AgentToolExecutionResult> ExecuteToolCallAsync(
+        AgentToolExecutor toolExecutor,
+        AgentToolCall toolCall,
+        StringBuilder interaction,
+        Guid workflowRunId,
+        AgentPhaseDefinition phase,
+        int interactionNumber,
+        IWorkflowRunLogStore logs,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await toolExecutor.ExecuteAsync(toolCall, ct);
+            AppendInteractionSection(
+                interaction,
+                "TOOL RESULT",
+                string.IsNullOrWhiteSpace(result.LogSummary)
+                    ? $"{AgentToolExecutor.NormalizeToolName(toolCall.Name)} executed."
+                    : result.LogSummary);
+
+            if (!string.IsNullOrWhiteSpace(result.FinalPhaseOutput))
+            {
+                AppendInteractionSection(interaction, "WORKFLOW OUTPUT", result.FinalPhaseOutput!);
+            }
+
+            return result;
+        }
+        catch (InvalidOperationException ex)
+        {
+            var toolPayload = $"ERROR: {ex.Message}";
+            AppendInteractionSection(interaction, "VALIDATION", $"Rejected tool call '{toolCall.Name}': {ex.Message}");
+            AppendInteractionSection(interaction, "TOOL RESULT", toolPayload);
+            return new AgentToolExecutionResult(toolPayload, toolPayload);
+        }
+    }
+
+    private static bool HandlePostToolExecution(
+        AgentToolCall toolCall,
+        AgentToolExecutionResult toolResult,
+        AgentPhaseDefinition phase,
+        Guid workflowRunId,
+        AvailableFileIndex availableFileIndex,
+        AgentExecutionState state,
+        StringBuilder interaction,
+        List<ChatMessage> pendingMessages,
+        out string? earlyPhaseResult)
+    {
+        earlyPhaseResult = null;
+        var normalizedToolName = AgentToolExecutor.NormalizeToolName(toolCall.Name);
+
+        if (string.Equals(normalizedToolName, "find_available_files", StringComparison.OrdinalIgnoreCase) &&
+            phase.AutoLoadAllAvailableFilesAfterFindAvailableFiles)
+        {
+            pendingMessages.Add(CreateToolMessage(toolResult.ModelPayload));
+            var autoLoadResult = AutoLoadRepositoryEvidence(availableFileIndex, state);
+            foreach (var payload in autoLoadResult.ToolPayloads)
+            {
+                pendingMessages.Add(CreateToolMessage(payload));
+            }
+
+            AppendInteractionSection(interaction, "RESULT", $"Repository evidence loaded automatically. Batches prepared: {autoLoadResult.BatchCount}; files reviewed: {autoLoadResult.FilesReviewed}.");
+            earlyPhaseResult = "Repository evidence acquisition completed.";
+            return true;
+        }
+
+        if (string.Equals(normalizedToolName, "get_next_file_batch", StringComparison.OrdinalIgnoreCase) &&
+            phase.AutoCompleteWhenAllAvailableFilesRead &&
+            phase.RequireAllAvailableFilesRead &&
+            availableFileIndex.FullPaths.Count > 0 &&
+            availableFileIndex.NormalizedFullPaths.Keys.All(path => state.ReadPaths.Contains(path)))
+        {
+            AppendInteractionSection(interaction, "RESULT", "Repository evidence acquisition completed after all allowed files were reviewed.");
+            earlyPhaseResult = "Repository evidence acquisition completed.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static NativeToolResponseAnalysis AnalyzeNativeToolResponse(AgentConversationResponse response)
+    {
+        var toolCalls = response.ToolCalls;
+        if (toolCalls.Count == 0)
+        {
+            return new NativeToolResponseAnalysis(NativeToolResponseState.NoToolCall, null);
+        }
+
+        if (toolCalls.Count > 1)
+        {
+            return new NativeToolResponseAnalysis(NativeToolResponseState.MultipleToolCalls, null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Text))
+        {
+            return new NativeToolResponseAnalysis(NativeToolResponseState.MixedToolAndText, null);
+        }
+
+        return new NativeToolResponseAnalysis(NativeToolResponseState.SingleToolCall, toolCalls[0]);
+    }
+
+    private static string BuildToolCallOutputLog(IReadOnlyList<AgentToolCall> toolCalls)
+        => string.Join(Environment.NewLine, toolCalls.Select(BuildToolCallOutputLog));
+
+    private static string BuildToolCallOutputLog(AgentToolCall toolCall)
+    {
+        var normalizedToolName = AgentToolExecutor.NormalizeToolName(toolCall.Name);
+        return normalizedToolName switch
+        {
+            "get_next_file_batch" => "get_next_file_batch()",
+            "find_available_files" => "find_available_files()",
+            "get_workflow_input" => BuildToolCallWithSingleOptionalStringArgument(normalizedToolName, "workflowRunId", toolCall.Arguments),
+            "get_file" => BuildToolCallWithSingleOptionalStringArgument(normalizedToolName, "path", toolCall.Arguments),
+            "write_file" => BuildWriteFileToolCallLog(toolCall.Arguments),
+            "save_workflow_output" => "save_workflow_output(output=<object>)",
+            _ => $"{normalizedToolName}({CountObjectProperties(toolCall.Arguments)} arg(s))"
+        };
+    }
+
+    private static string BuildToolCallWithSingleOptionalStringArgument(string toolName, string argumentName, JsonElement arguments)
+    {
+        var argumentValue = GetOptionalStringProperty(arguments, argumentName);
+        return string.IsNullOrWhiteSpace(argumentValue)
+            ? $"{toolName}()"
+            : $"{toolName}({argumentName}=\"{EscapeForLog(argumentValue)}\")";
+    }
+
+    private static string BuildWriteFileToolCallLog(JsonElement arguments)
+    {
+        var path = GetOptionalStringProperty(arguments, "path") ?? "<missing>";
+        var contentLength = GetOptionalStringProperty(arguments, "content")?.Length ?? 0;
+        return $"write_file(path=\"{EscapeForLog(path)}\", contentLength={contentLength})";
+    }
+
+    private static AgentToolCall BuildFallbackToolCall(ToolRequest request)
+        => new(request.ResolvedAction, BuildFallbackArguments(request));
+
+    private static JsonElement BuildFallbackArguments(ToolRequest request)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            if (request.Args is { ValueKind: JsonValueKind.Object } args)
+            {
+                foreach (var property in args.EnumerateObject())
+                {
+                    if (IsNormalizedArgumentProperty(property.Name))
+                    {
+                        continue;
+                    }
+
+                    property.WriteTo(writer);
+                }
+            }
+
+            WriteStringPropertyIfPresent(writer, "path", request.ResolvedPath);
+            WriteStringPropertyIfPresent(writer, "query", request.ResolvedQuery);
+            WriteStringPropertyIfPresent(writer, "content", request.ResolvedContent);
+            WriteStringPropertyIfPresent(writer, "workflowRunId", request.ResolvedWorkflowRunId);
+            if (request.ResolvedOutput is JsonElement output)
+            {
+                writer.WritePropertyName("output");
+                output.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        using var document = JsonDocument.Parse(stream.ToArray());
+        return document.RootElement.Clone();
+    }
+
+    private static bool IsNormalizedArgumentProperty(string propertyName)
+        => string.Equals(propertyName, "path", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, "filePath", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, "query", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, "content", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, "workflowRunId", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, "output", StringComparison.OrdinalIgnoreCase);
+
+    private static void WriteStringPropertyIfPresent(Utf8JsonWriter writer, string propertyName, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            writer.WriteString(propertyName, value);
+        }
+    }
+
+    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(propertyName, out value))
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string? GetOptionalStringProperty(JsonElement element, string propertyName)
+        => TryGetProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int CountObjectProperties(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return 0;
+        }
+
+        var count = 0;
+        foreach (var _ in element.EnumerateObject())
+        {
+            count++;
+        }
+
+        return count;
     }
 
     private static StringBuilder BeginInteractionLog(string phaseName, int interactionNumber, IReadOnlyList<ChatMessage> inputMessages)
@@ -661,6 +1078,11 @@ Rules:
 
     private static string SummarizeInputMessageForLog(string content)
     {
+        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out var nativeToolResult))
+        {
+            return BuildNativeToolResultLog(nativeToolResult);
+        }
+
         var trimmed = content.TrimStart();
         if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase))
         {
@@ -799,6 +1221,11 @@ Rules:
 
     private static string InferMessageSource(string content)
     {
+        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out var nativeToolResult))
+        {
+            return $"tool-result:{AgentToolExecutor.NormalizeToolName(nativeToolResult.ToolName)}";
+        }
+
         var trimmed = content.TrimStart();
         if (trimmed.StartsWith("PHASE ", StringComparison.OrdinalIgnoreCase)) return "phase-prompt";
         if (trimmed.StartsWith("SAVED MARKDOWN CONTEXT FROM PREVIOUS PHASE:", StringComparison.OrdinalIgnoreCase)) return "artifact-context";
@@ -814,6 +1241,11 @@ Rules:
 
     private static string InferMessageFormat(string content)
     {
+        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out _))
+        {
+            return "application/vnd.agent-tool-result";
+        }
+
         var trimmed = content.TrimStart();
         if (trimmed.StartsWith("{") && trimmed.EndsWith("}")) return "application/json";
         if (trimmed.StartsWith("#", StringComparison.Ordinal)) return "text/markdown";
@@ -822,6 +1254,11 @@ Rules:
 
     private static string SanitizeModelMessageForLog(string content)
     {
+        if (AgentToolMessageProtocol.TryParseNativeToolResultMessage(content, out var nativeToolResult))
+        {
+            return BuildNativeToolResultLog(nativeToolResult);
+        }
+
         var trimmed = content.TrimStart();
         if (trimmed.StartsWith("BATCH INDEX:", StringComparison.OrdinalIgnoreCase) ||
             trimmed.StartsWith("FILE:", StringComparison.OrdinalIgnoreCase))
@@ -835,6 +1272,12 @@ Rules:
         }
 
         return content;
+    }
+
+    private static string BuildNativeToolResultLog(AgentToolMessageProtocol.NativeToolResultEnvelope nativeToolResult)
+    {
+        var payloadSummary = SanitizeModelMessageForLog(nativeToolResult.Payload);
+        return $"Structured tool result for {AgentToolExecutor.NormalizeToolName(nativeToolResult.ToolName)} (callId={nativeToolResult.CallId}).\n{payloadSummary}";
     }
 
     private static string BuildArtifactContextMetadataLog(string content)
@@ -1104,6 +1547,22 @@ Rules:
         return [CreateToolMessage(toolPayload)];
     }
 
+    private static IReadOnlyList<ChatMessage> BuildPostToolMessages(AgentToolCall toolCall, string toolPayload)
+    {
+        if (toolCall.IsNative && !string.IsNullOrWhiteSpace(toolCall.NativeCallId))
+        {
+            return
+            [
+                CreateToolMessage(AgentToolMessageProtocol.BuildNativeToolResultMessage(
+                    toolCall.NativeCallId!,
+                    AgentToolExecutor.NormalizeToolName(toolCall.Name),
+                    toolPayload))
+            ];
+        }
+
+        return BuildPostToolMessages(toolPayload);
+    }
+
     private static ToolResponseAnalysis AnalyzeToolResponse(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -1265,9 +1724,10 @@ Rules:
     private static string NormalizePath(string relativePath)
         => relativePath.Replace('\\', '/').Trim();
 
-    private static async Task<string> RunModelWithTimeoutAsync(
+    private static async Task<AgentConversationResponse> RunModelWithTimeoutAsync(
         IAgentConversation conversation,
         IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<AgentToolDefinition>? tools,
         int maxModelResponseSeconds,
         CancellationToken ct)
     {
@@ -1276,7 +1736,7 @@ Rules:
 
         try
         {
-            return await conversation.RunAsync(messages, timeoutCts.Token);
+            return await conversation.RunAsync(messages, tools, timeoutCts.Token);
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {
@@ -1685,6 +2145,16 @@ Rules:
     }
 
     private sealed record ToolResponseAnalysis(ToolResponseState State, ToolRequest? SingleToolRequest);
+
+    private enum NativeToolResponseState
+    {
+        NoToolCall,
+        SingleToolCall,
+        MultipleToolCalls,
+        MixedToolAndText
+    }
+
+    private sealed record NativeToolResponseAnalysis(NativeToolResponseState State, AgentToolCall? SingleToolCall);
 
     private sealed record AutoLoadRepositoryEvidenceResult(IReadOnlyList<string> ToolPayloads, int BatchCount, int FilesReviewed);
 

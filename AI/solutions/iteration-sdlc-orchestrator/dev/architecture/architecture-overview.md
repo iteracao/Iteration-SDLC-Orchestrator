@@ -18,7 +18,8 @@ This document summarizes the architecture that is actually implemented in the re
 - `Iteration.Orchestrator.Api` is the composition root and orchestration entry point
 - workflow start endpoints create `WorkflowRun` rows and queue them through `IWorkflowExecutionQueue`
 - `WorkflowExecutionBackgroundService` dequeues run ids and invokes `WorkflowRunExecutor`
-- `WorkflowRunExecutor` dispatches by workflow code to the analyze, design, plan, or implement handler
+- startup recovery now marks orphaned `Pending` or `Running` runs terminal if the host restarts mid-execution
+- `WorkflowRunExecutor` dispatches by workflow code to the setup-documentation, analyze, design, plan, or implement handler
 
 ### Persistence and runtime evidence
 
@@ -73,8 +74,9 @@ The MudBlazor provider setup is currently centralized in `App.razor` with `MudTh
 
 ### Agent execution architecture
 
-The current workflow agents run through Microsoft Agent Framework wrappers over Ollama.
+The current workflow agents run through Microsoft Agent Framework wrappers over a selected LLM provider.
 
+- startup selects OpenAI when `OpenAI` configuration is complete; otherwise it falls back to Ollama
 - framework prompt text and output schema are loaded from `AI/framework/agents/...`
 - workflow metadata and profile rules are loaded from `AI/framework/workflows/...` and `AI/framework/profiles/...`
 - each agent class adds hardcoded orchestration rules and a hardcoded prompt frame in C#
@@ -82,12 +84,12 @@ The current workflow agents run through Microsoft Agent Framework wrappers over 
 
 `FileAwareAgentRunner` is the active execution loop:
 
-- only `read_file` tool requests are supported
-- file access is bounded to advertised relative paths
-- file reads are limited to 20,000 characters per file
-- the loop is capped at 12 tool calls
+- tool access is bounded to the actions allowed for the current phase
+- supported actions now include bounded workflow-input loading, full-file batch loading, explicit file reads, persisted workflow output, and approved-path `write_file`
+- the runner uses exact allowed full paths for reads/writes and can require full repository evidence consumption before synthesis
+- the loop is capped at 16 tool interactions per phase
 
-This means the current workflow agents are evidence-gathering, read-only agents. They can inspect files and produce structured JSON, but they cannot modify repository files.
+This does not mean every workflow can mutate the repository. The current write path is used for `setup-documentation` to update managed target docs only. Analyze, design, plan, and implementation workflows still behave as evidence-gathering workflows, and implementation still does not apply code changes to the target repository.
 
 ## Key Constraints
 

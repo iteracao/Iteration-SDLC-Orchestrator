@@ -17,6 +17,7 @@ In other words:
 ## Current scope
 
 - Setup a solution and bootstrap its AI workspace
+- Run `setup-documentation` for a target to bootstrap or refresh stable docs
 - Create first-class requirements
 - Run `analyze-request` from a requirement
 - Persist workflow runs, reports, open questions, and decisions
@@ -26,7 +27,7 @@ In other words:
 ## Current implementation state
 
 - Domain, application, infrastructure, solution bridge, API, cockpit, and AI framework starter files are included
-- Microsoft Agent Framework + Ollama analyst integration is wired in
+- Microsoft Agent Framework-based agents are wired with startup OpenAI selection and Ollama fallback
 - Config loading works from the local `AI/framework` folder
 - Solution bridge is read-only
 - SQLite is used for persistence

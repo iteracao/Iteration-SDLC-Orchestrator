@@ -34,13 +34,14 @@ Current limitation:
 Responsibilities:
 
 - setup command/handler and request validation/normalization
+- setup-documentation command/handler for target-doc bootstrap and refresh
 - workflow start handlers and background execution handlers
 - persistence of workflow-linked reports, generated requirements, questions, decisions, and backlog slices
 - prompt-input preparation through repository file discovery and solution-knowledge loading
 
 Current limitation:
 
-- there are handlers only for setup, analyze, design, plan, and implement
+- there are handlers only for setup, setup-documentation, analyze, design, plan, and implement
 
 ### `Iteration.Orchestrator.Domain`
 
@@ -73,13 +74,14 @@ Current limitation:
 Responsibilities:
 
 - Microsoft Agent Framework wrappers for analyst, designer, planner, and implementation workflows
+- provider-selecting conversation layer with OpenAI-first configuration and Ollama fallback
 - prompt assembly from framework prompt/schema plus hardcoded orchestration rules
-- iterative file-aware execution with bounded `read_file` access
+- iterative file-aware execution with bounded batched reads and approved-path writes where explicitly enabled
 - normalization of model output into persisted JSON payloads
 
 Current limitation:
 
-- agent execution is read-only; there is no write/apply tool and no repository mutation path
+- approved-path writes currently exist only for managed documentation files in `setup-documentation`; there is still no repository code mutation path for implementation workflows
 
 ### `Iteration.Orchestrator.SolutionBridge`
 
