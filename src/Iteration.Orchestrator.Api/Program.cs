@@ -136,6 +136,7 @@ builder.Services.AddScoped<ISolutionDocumentationSetupAgent>(sp =>
         sp.GetRequiredService<IWorkflowRunLogStore>(),
         sp.GetRequiredService<IWorkflowPayloadStore>(),
         sp.GetRequiredService<IArtifactStore>(),
+        sp.GetRequiredService<IConfigCatalog>(),
         selectedProvider.TimeoutSeconds);
 });
 builder.Services.AddScoped<ISolutionPlannerAgent>(sp =>

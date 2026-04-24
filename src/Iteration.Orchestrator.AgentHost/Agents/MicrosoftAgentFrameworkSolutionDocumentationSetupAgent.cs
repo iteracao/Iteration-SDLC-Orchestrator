@@ -10,11 +10,18 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
     private const string BoundariesArtifactFileName = "01-boundaries.md";
     private const string RepositoryStateArtifactFileName = "repository-state.md";
     private const string FinalDecisionArtifactFileName = "03-decision.md";
+    private const string AgentPromptPath = "AI/framework/agents/solution-documenter/prompt.md";
+    private const string AgentRulesPath = "AI/framework/agents/solution-documenter/rules.md";
+    private const string AgentWorkflowPath = "AI/framework/agents/solution-documenter/workflows/setup-documentation.md";
+    private const string WorkflowDoctrinePath = "AI/framework/workflows/setup-documentation/workflow.md";
+    private const string SdlcRulePath = "AI/framework/rules/sdlc/setup-documentation.md";
+    private const string DotNetWebEnterpriseDocumentationRulePath = "AI/framework/profiles/dotnet-web-enterprise/rules/documentation.md";
 
     private readonly IAgentConversationFactory _conversationFactory;
     private readonly IWorkflowRunLogStore _logs;
     private readonly IWorkflowPayloadStore _payloadStore;
     private readonly IArtifactStore _artifacts;
+    private readonly IConfigCatalog _config;
     private readonly int _maxModelResponseSeconds;
 
     public MicrosoftAgentFrameworkSolutionDocumentationSetupAgent(
@@ -22,12 +29,14 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         IWorkflowRunLogStore logs,
         IWorkflowPayloadStore payloadStore,
         IArtifactStore artifacts,
+        IConfigCatalog config,
         int maxModelResponseSeconds)
     {
         _conversationFactory = conversationFactory;
         _logs = logs;
         _payloadStore = payloadStore;
         _artifacts = artifacts;
+        _config = config;
         _maxModelResponseSeconds = maxModelResponseSeconds;
     }
 
@@ -50,6 +59,13 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
 
         try
         {
+            var frameworkContextDocuments = await LoadRequiredFrameworkContextAsync(
+                target.ProfileCode,
+                agentDefinition,
+                request.ProfileSummary,
+                request.WorkflowRunId,
+                ct);
+
             var knowledgeRoot = StableDocumentationCatalog.BuildKnowledgeRoot(request.RepositoryPath, request.SolutionCode);
             var managedDocumentMap = request.StableDocumentTargets.ToDictionary(
                 logicalPath => logicalPath,
@@ -139,7 +155,7 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
             var rawMarkdown = await FileAwareAgentRunner.RunMultiStepAsync(
                 _conversationFactory,
                 agentDefinition.Name,
-                BuildInstructions(agentDefinition, request),
+                BuildInstructions(frameworkContextDocuments, request.ProfileSummary),
                 phases,
                 request.RepositoryPath,
                 request.AllowedContextFiles,
@@ -178,13 +194,99 @@ public sealed class MicrosoftAgentFrameworkSolutionDocumentationSetupAgent : ISo
         }
     }
 
-    private static string BuildInstructions(AgentDefinition agentDefinition, SolutionDocumentationSetupRequest request)
+    private async Task<IReadOnlyList<TextDocumentInput>> LoadRequiredFrameworkContextAsync(
+        string profileCode,
+        AgentDefinition agentDefinition,
+        string profileSummary,
+        Guid workflowRunId,
+        CancellationToken ct)
+    {
+        var documents = new List<TextDocumentInput>();
+
+        await _logs.AppendSectionAsync(workflowRunId, "Framework Context", ct);
+        await _logs.AppendLineAsync(workflowRunId, "Loading setup-documentation framework context for Prompt 1.", ct);
+
+        if (string.IsNullOrWhiteSpace(agentDefinition.PromptText))
+        {
+            await _logs.AppendLineAsync(workflowRunId, $"Framework context: NOT FOUND {AgentPromptPath} | chars=0", CancellationToken.None);
+            throw new InvalidOperationException($"Required setup-documentation framework context is empty: {AgentPromptPath}.");
+        }
+
+        documents.Add(new TextDocumentInput(AgentPromptPath, agentDefinition.PromptText));
+        await _logs.AppendLineAsync(workflowRunId, $"Framework context: loaded {AgentPromptPath} | chars={agentDefinition.PromptText.Length}", ct);
+
+        foreach (var path in GetRequiredFrameworkContextPaths(profileCode))
+        {
+            var relativePath = ToFrameworkRelativePath(path);
+            try
+            {
+                var content = await _config.ReadFrameworkTextAsync(relativePath, ct);
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    await _logs.AppendLineAsync(workflowRunId, $"Framework context: NOT FOUND {path} | chars=0", CancellationToken.None);
+                    throw new InvalidOperationException($"Required setup-documentation framework context is empty: {path}.");
+                }
+
+                documents.Add(new TextDocumentInput(path, content));
+                await _logs.AppendLineAsync(workflowRunId, $"Framework context: loaded {path} | chars={content.Length}", ct);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidOperationException)
+            {
+                await _logs.AppendLineAsync(workflowRunId, $"Framework context: NOT FOUND {path} | error={ex.GetType().Name}", CancellationToken.None);
+                throw new InvalidOperationException($"Required setup-documentation framework context could not be loaded: {path}.", ex);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(profileSummary))
+        {
+            await _logs.AppendLineAsync(workflowRunId, "Framework context: active profile summary registered for setup-documentation.", ct);
+        }
+
+        return documents;
+    }
+
+    private static IReadOnlyList<string> GetRequiredFrameworkContextPaths(string profileCode)
+        => string.Equals(profileCode, "dotnet-web-enterprise", StringComparison.OrdinalIgnoreCase)
+            ? [AgentRulesPath, AgentWorkflowPath, WorkflowDoctrinePath, SdlcRulePath, DotNetWebEnterpriseDocumentationRulePath]
+            : throw new InvalidOperationException($"Setup-documentation framework context does not yet support profile '{profileCode}'.");
+
+    private static string ToFrameworkRelativePath(string repositoryRelativePath)
+    {
+        const string frameworkPrefix = "AI/framework/";
+        return repositoryRelativePath.StartsWith(frameworkPrefix, StringComparison.OrdinalIgnoreCase)
+            ? repositoryRelativePath[frameworkPrefix.Length..]
+            : repositoryRelativePath;
+    }
+
+    private static string BuildInstructions(IReadOnlyList<TextDocumentInput> frameworkContextDocuments, string profileSummary)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(agentDefinition.PromptText.Trim());
+        for (var index = 0; index < frameworkContextDocuments.Count; index++)
+        {
+            var document = frameworkContextDocuments[index];
+            sb.AppendLine($"FRAMEWORK CONTEXT FILE: {document.Path}");
+            sb.AppendLine(document.Content.Trim());
+            if (index < frameworkContextDocuments.Count - 1)
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(profileSummary))
+        {
+            sb.AppendLine();
+            sb.AppendLine();
+            sb.AppendLine("ACTIVE PROFILE");
+            sb.AppendLine(profileSummary.Trim());
+        }
+
         sb.AppendLine();
-        sb.AppendLine("Follow the current phase prompt exactly.");
-        sb.AppendLine("Use only direct evidence. Do not invent drift, repository state, questions, or write actions.");
+        sb.AppendLine();
+        sb.AppendLine("EXECUTION REQUIREMENTS");
+        sb.AppendLine("- Load the framework doctrine above before interpreting the phase prompt.");
+        sb.AppendLine("- Follow the current phase prompt exactly.");
+        sb.AppendLine("- Use only direct evidence. Do not invent drift, repository state, questions, or write actions.");
         return sb.ToString().TrimEnd();
     }
 
