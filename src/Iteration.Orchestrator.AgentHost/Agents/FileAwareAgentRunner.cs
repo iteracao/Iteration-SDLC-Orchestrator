@@ -2078,8 +2078,76 @@ Rules:
             normalizedMap[normalizedFullPath] = fullPath;
         }
 
-        files.Sort(StringComparer.OrdinalIgnoreCase);
+        files.Sort(CompareAvailableContextFiles);
         return new AvailableFileIndex(files, normalizedMap);
+    }
+
+    private static int CompareAvailableContextFiles(string leftPath, string rightPath)
+    {
+        var leftCategory = GetContextFileSortCategory(leftPath);
+        var rightCategory = GetContextFileSortCategory(rightPath);
+
+        var categoryComparison = leftCategory.CompareTo(rightCategory);
+        if (categoryComparison != 0)
+        {
+            return categoryComparison;
+        }
+
+        var leftSize = TryGetFileLength(leftPath);
+        var rightSize = TryGetFileLength(rightPath);
+
+        var sizeComparison = leftSize.CompareTo(rightSize);
+        if (sizeComparison != 0)
+        {
+            return sizeComparison;
+        }
+
+        return StringComparer.OrdinalIgnoreCase.Compare(leftPath, rightPath);
+    }
+
+    private static int GetContextFileSortCategory(string path)
+    {
+        var extension = Path.GetExtension(path);
+
+        if (string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        if (string.Equals(extension, ".sln", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(extension, ".csproj", StringComparison.OrdinalIgnoreCase))
+        {
+            return 1;
+        }
+
+        if (string.Equals(extension, ".json", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(extension, ".props", StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
+        if (string.Equals(extension, ".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return 3;
+        }
+
+        return 4;
+    }
+
+    private static long TryGetFileLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (IOException)
+        {
+            return long.MaxValue;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return long.MaxValue;
+        }
     }
 
     private static FileReadResult? TryReadFileByPhysicalPath(AvailableFileIndex availableFileIndex, string requestedPath)
