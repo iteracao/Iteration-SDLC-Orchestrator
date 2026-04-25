@@ -2069,7 +2069,8 @@ Rules:
                 : Path.GetFullPath(Path.Combine(repositoryRoot, allowedPath));
 
             var normalizedFullPath = NormalizePath(fullPath);
-            if (normalizedMap.ContainsKey(normalizedFullPath))
+            if (IsMigrationContextFile(normalizedFullPath) ||
+                normalizedMap.ContainsKey(normalizedFullPath))
             {
                 continue;
             }
@@ -2080,6 +2081,12 @@ Rules:
 
         files.Sort(CompareAvailableContextFiles);
         return new AvailableFileIndex(files, normalizedMap);
+    }
+
+    private static bool IsMigrationContextFile(string normalizedPath)
+    {
+        var segments = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return segments.Any(segment => string.Equals(segment, "Migrations", StringComparison.OrdinalIgnoreCase));
     }
 
     private static int CompareAvailableContextFiles(string leftPath, string rightPath)
